@@ -1,0 +1,12 @@
+# Deploy: conecte o repo no Netlify; build: npm run build, publish: dist
+# A home do app (app.html) funcionará em iframe no painel Nuvemshop (sem X-Frame-Options do tunnel)
+
+[build]
+  command = "npm install --legacy-peer-deps && npm run build"
+  publish = "dist"
+
+# Permitir que o painel Nuvemshop abra app.html em iframe
+[[headers]]
+  for = "/app.html"
+  [headers.values]
+    Content-Security-Policy = "frame-ancestors 'self' https://*.mitiendanube.com https://*.lojavirtualnuvem.com.br https://*.tiendanube.com https://*.nuvemshop.com.br https://*.nuvemshop.com"
