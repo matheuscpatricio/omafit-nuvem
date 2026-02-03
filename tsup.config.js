@@ -1,7 +1,7 @@
 import { defineConfig } from "tsup";
 
 export default defineConfig({
-  entry: ["src/main.tsx"],
+  entry: ["src/main.tsx", "src/admin.tsx", "src/home.ts"],
   format: ["esm"],
   target: "esnext",
   clean: true,

@@ -4,7 +4,11 @@
 	"type": "module",
 	"scripts": {
 		"dev": "concurrently -k -n BUILD,SERVE -c blue,green \"tsup --sourcemap inline --watch\" \"node server.js\"",
-		"build": "tsup",
+		"expose": "node expose.js",
+		"expose:direct": "npx -y cloudflared tunnel --url http://localhost:8080",
+		"dev:public": "concurrently -k -n BUILD,SERVE,EXPOSE -c blue,green,yellow \"tsup --sourcemap inline --watch\" \"node server.js\" \"node expose.js\"",
+		"postbuild": "node copy-assets.js",
+		"build": "tsup && node copy-assets.js",
 		"test": "vitest run",
 		"test:watch": "vitest watch",
 		"test:coverage": "vitest run --coverage",
@@ -14,14 +18,19 @@
 	"author": "Tiendanube / Nuvemshop",
 	"devDependencies": {
 		"@biomejs/biome": "^1.9.4",
-		"@tiendanube/nube-sdk-ui": "^0.14.0",
 		"@tiendanube/nube-sdk-jsx": "^0.13.0",
 		"@tiendanube/nube-sdk-types": "^0.42.0",
+		"@tiendanube/nube-sdk-ui": "^0.14.0",
 		"@vitest/coverage-v8": "^3.0.9",
 		"concurrently": "^9.1.2",
 		"serve": "^14.2.4",
-		"tsup": "^8.3.0",
+		"tsup": "^8.5.1",
 		"typescript": "^5.6.2",
 		"vitest": "^3.0.9"
+	},
+	"dependencies": {
+		"@nimbus-ds/components": "^5.48.0",
+		"@nimbus-ds/styles": "^9.53.0",
+		"@tiendanube/nexo": "^1.0.0"
 	}
 }
