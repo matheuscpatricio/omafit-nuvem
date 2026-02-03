@@ -2,7 +2,6 @@
 # A home do app (app.html) funcionará em iframe no painel Nuvemshop (sem X-Frame-Options do tunnel)
 
 [build]
-  command = "bash build.sh"
   publish = "dist"
 
 [build.environment]

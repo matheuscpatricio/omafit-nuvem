@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 set -e
-# Carregar nvm no Netlify (PATH do Node/npm)
-[ -s "$HOME/.nvm/nvm.sh" ] && \. "$HOME/.nvm/nvm.sh"
+# Netlify: garantir Node/npm no PATH (nvm)
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+# Usar Node 20 se .nvmrc existir
+[ -f .nvmrc ] && nvm use
 npm install --legacy-peer-deps
 npx tsup
 node copy-assets.js
