@@ -1,0 +1,2 @@
+# Scripts com LF no Git (Netlify usa Linux)
+*.sh text eol=lf
