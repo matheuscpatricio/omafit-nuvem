@@ -54,7 +54,50 @@ const appHtml = `<!DOCTYPE html>
 </head>
 <body>
   <div id="app"></div>
-  <script type="module" src="/home.min.js"></script>
+  <script type="module">
+    const omafitDebugLog = (message, data, hypothesisId = "H1") => {
+      // #region agent log
+      fetch('http://127.0.0.1:7523/ingest/ebd119e5-639e-45b4-9806-782ca57f574c',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b68c2f'},body:JSON.stringify({sessionId:'b68c2f',runId:'pre-fix',hypothesisId,location:'app.html:inline',message,data,timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+    };
+
+    const homeModuleUrl = \`/home.min.js?debug=b68c2f-v1\`;
+    omafitDebugLog("app_html_boot", {
+      href: window.location.href,
+      userAgent: navigator.userAgent,
+      homeModuleUrl,
+      clientId: new URLSearchParams(window.location.search).get("client_id") || new URLSearchParams(window.location.search).get("clientId") || null,
+    }, "H1");
+
+    window.addEventListener("error", (event) => {
+      omafitDebugLog("window_error", {
+        message: event.message,
+        filename: event.filename,
+        lineno: event.lineno,
+        colno: event.colno,
+      }, "H3");
+    });
+
+    window.addEventListener("unhandledrejection", (event) => {
+      omafitDebugLog("unhandled_rejection", {
+        reason: String(event.reason),
+      }, "H3");
+    });
+
+    import(homeModuleUrl)
+      .then(() => {
+        omafitDebugLog("home_module_import_success", {
+          homeModuleUrl,
+        }, "H1");
+      })
+      .catch((error) => {
+        omafitDebugLog("home_module_import_failure", {
+          homeModuleUrl,
+          message: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : null,
+        }, "H2");
+      });
+  </script>
 </body>
 </html>`;
 
