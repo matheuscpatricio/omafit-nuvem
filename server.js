@@ -1277,7 +1277,10 @@ async function handleApi(req, res, reqUrl) {
 			return true;
 		}
 		const config = await getWidgetConfig(storeContext.storeId);
-		const publicId = await resolveWidgetPublicId(storeContext.storeId, storeContext.storeUrl);
+		const resolvedStoreUrl =
+			storeContext.storeUrl ||
+			normalizeStoreUrl(session?.store?.url || session?.store?.domain || "");
+		const publicId = await resolveWidgetPublicId(storeContext.storeId, resolvedStoreUrl);
 		sendJson(res, 200, {
 			config,
 			widgetUrl: getWidgetBaseUrl(req),

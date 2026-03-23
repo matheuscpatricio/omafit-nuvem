@@ -94,10 +94,12 @@ function shouldHideForProduct(product: ProductDetails | null, config: Storefront
 	return categoryIds.some((categoryId) => config.excluded_collections.includes(categoryId));
 }
 
-async function loadStorefrontConfig(storeId: number) {
+async function loadStorefrontConfig(storeId: number, storeDomain?: string) {
 	try {
-		debugLog("load_config_start", { storeId }, "H2");
-		const response = await fetch(`/api/storefront/widget-config?store_id=${encodeURIComponent(String(storeId))}`);
+		debugLog("load_config_start", { storeId, storeDomain: storeDomain || null }, "H2");
+		const response = await fetch(
+			`/api/storefront/widget-config?store_id=${encodeURIComponent(String(storeId))}&store_domain=${encodeURIComponent(storeDomain || "")}`,
+		);
 		if (!response.ok) throw new Error("request failed");
 		const data = await response.json();
 		debugLog(
@@ -265,7 +267,10 @@ export function App(nube: NubeSDK) {
 				</Text>,
 			);
 		}
-		const { config, widgetUrl, publicId } = await loadStorefrontConfig(state.store.id);
+		const { config, widgetUrl, publicId } = await loadStorefrontConfig(
+			state.store.id,
+			state.store.domain,
+		);
 		renderWidget(nube, config, widgetUrl, publicId);
 	};
 

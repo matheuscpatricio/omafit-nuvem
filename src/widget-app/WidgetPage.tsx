@@ -353,7 +353,9 @@ export function WidgetPage() {
 			if (!params.storeId) return;
 			try {
 				const [configResponse, chartResponse] = await Promise.all([
-					fetch(`/api/storefront/widget-config?store_id=${encodeURIComponent(params.storeId)}`),
+					fetch(
+						`/api/storefront/widget-config?store_id=${encodeURIComponent(params.storeId)}&store_domain=${encodeURIComponent(params.storeDomain)}`,
+					),
 					fetch(`/api/size-charts?store_id=${encodeURIComponent(params.storeId)}`),
 				]);
 				const configPayload = await configResponse.json().catch(() => ({}));

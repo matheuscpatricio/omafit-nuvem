@@ -116,7 +116,8 @@ function getProductContext(): LegacyProductContext | null {
 }
 
 async function loadConfig(appBaseUrl: string, storeId: string) {
-	const endpoint = `${appBaseUrl}/api/storefront/widget-config?store_id=${encodeURIComponent(storeId)}`;
+	const store = getStoreContext();
+	const endpoint = `${appBaseUrl}/api/storefront/widget-config?store_id=${encodeURIComponent(storeId)}&store_domain=${encodeURIComponent(store?.domain || "")}`;
 	try {
 		debugLog("load_config_start", { endpoint, storeId }, "L1");
 		const response = await fetch(endpoint, { mode: "cors" });
