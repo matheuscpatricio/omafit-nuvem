@@ -1,0 +1,311 @@
+import { createContext, useContext, useMemo, type ReactNode } from "react";
+
+type LocaleKey = "pt-BR" | "en" | "es";
+
+type Dictionary = Record<string, string>;
+
+const translations: Record<LocaleKey, Dictionary> = {
+	"pt-BR": {
+		"nav.dashboard": "Dashboard",
+		"nav.billing": "Planos",
+		"nav.widget": "Widget",
+		"nav.sizeCharts": "Tabelas",
+		"nav.analytics": "Analytics",
+		"nav.reconnect": "Reconectar com a Nuvemshop",
+		"common.loading": "Carregando...",
+		"common.save": "Salvar",
+		"common.cancel": "Cancelar",
+		"common.refresh": "Sincronizar agora",
+		"common.connected": "Conectado",
+		"common.disconnected": "Desconectado",
+		"common.active": "Ativo",
+		"common.inactive": "Inativo",
+		"common.openSupport": "Abrir suporte",
+		"common.noData": "Sem dados disponiveis ainda.",
+		"dashboard.title": "Central Omafit",
+		"dashboard.subtitle": "Visao geral da operacao Omafit na sua loja Nuvemshop.",
+		"dashboard.syncHint":
+			"Use a sincronizacao para atualizar loja, webhooks e dados comerciais reaproveitados do backend atual.",
+		"dashboard.quickActions": "Acoes rapidas",
+		"dashboard.widgetAction": "Configurar widget",
+		"dashboard.analyticsAction": "Ver analytics",
+		"dashboard.billingAction": "Gerenciar plano",
+		"dashboard.sizeChartsAction": "Editar tabelas",
+		"dashboard.storeName": "Loja",
+		"dashboard.storeId": "Store ID",
+		"dashboard.storeUrl": "Dominio",
+		"dashboard.plan": "Plano atual",
+		"dashboard.imagesUsed": "Imagens geradas",
+		"dashboard.webhooks": "Webhooks",
+		"dashboard.authStatus": "Autenticacao",
+		"dashboard.lastSync": "Ultima sincronizacao",
+		"dashboard.reconnectNeeded":
+			"A loja ainda nao concluiu o OAuth da Nuvemshop. Clique no botao abaixo para autorizar o app.",
+		"dashboard.connectedDescription":
+			"O backend ja esta apto a consultar a API da Nuvemshop, sincronizar a loja e registrar webhooks.",
+		"billing.title": "Planos e billing",
+		"billing.subtitle":
+			"A camada comercial da Nuvemshop usa o mesmo modelo de entitlement do Omafit, com adaptacao de plataforma.",
+		"billing.currentPlan": "Plano ativo",
+		"billing.status": "Status",
+		"billing.remaining": "Saldo do mes",
+		"billing.extra": "Imagens excedentes",
+		"billing.activate": "Ativar este plano",
+		"billing.planIncludes": "Imagens incluidas",
+		"billing.pricePerExtra": "Preco por imagem extra",
+		"widget.title": "Configuracao do widget",
+		"widget.subtitle":
+			"Controle o CTA da loja, a identidade visual e as categorias onde o widget nao deve aparecer.",
+		"widget.linkText": "Texto do botao",
+		"widget.logoUrl": "URL do logo",
+		"widget.primaryColor": "Cor principal",
+		"widget.enable": "Widget ativo na loja",
+		"widget.categories": "Categorias excluidas",
+		"widget.categoriesHint":
+			"Produtos pertencentes a essas categorias nao exibem o CTA do Omafit na PDP.",
+		"widget.preview": "Preview do CTA",
+		"widget.saved": "Configuracao salva com sucesso.",
+		"sizeCharts.title": "Tabelas de medidas",
+		"sizeCharts.subtitle":
+			"Configure tabelas por categoria e genero, reaproveitando a estrutura do app Shopify.",
+		"sizeCharts.addChart": "Adicionar tabela",
+		"sizeCharts.collection": "Categoria",
+		"sizeCharts.gender": "Genero",
+		"sizeCharts.collectionType": "Tipo da colecao",
+		"sizeCharts.elasticity": "Elasticidade",
+		"sizeCharts.measurements": "Referencias de medida",
+		"sizeCharts.sizeRows": "Linhas de tamanhos",
+		"sizeCharts.addRow": "Adicionar linha",
+		"sizeCharts.saved": "Tabelas salvas com sucesso.",
+		"analytics.title": "Analytics Omafit",
+		"analytics.subtitle":
+			"Indicadores adaptados do app Shopify, combinando uso, recomendacoes e impacto operacional.",
+		"analytics.period": "Periodo",
+		"analytics.sessions": "Sessoes",
+		"analytics.revenue": "Receita atribuida",
+		"analytics.orders": "Pedidos com Omafit",
+		"analytics.returns": "Devolucoes",
+		"analytics.avgMale": "Perfil medio masculino",
+		"analytics.avgFemale": "Perfil medio feminino",
+		"analytics.topCollections": "Uso por categoria",
+		"analytics.topSizes": "Tamanhos recomendados",
+		"analytics.bodyTypes": "Distribuicao de biotipos",
+		"analytics.recommendations": "Recomendacoes por categoria e genero",
+		"analytics.reload": "Recarregar analytics",
+		"feedback.saved": "Alteracoes salvas com sucesso.",
+		"feedback.error": "Nao foi possivel concluir a operacao.",
+	},
+	en: {
+		"nav.dashboard": "Dashboard",
+		"nav.billing": "Plans",
+		"nav.widget": "Widget",
+		"nav.sizeCharts": "Size charts",
+		"nav.analytics": "Analytics",
+		"nav.reconnect": "Reconnect to Nuvemshop",
+		"common.loading": "Loading...",
+		"common.save": "Save",
+		"common.cancel": "Cancel",
+		"common.refresh": "Sync now",
+		"common.connected": "Connected",
+		"common.disconnected": "Disconnected",
+		"common.active": "Active",
+		"common.inactive": "Inactive",
+		"common.openSupport": "Open support",
+		"common.noData": "No data available yet.",
+		"dashboard.title": "Omafit control center",
+		"dashboard.subtitle": "Operational overview for Omafit on your Nuvemshop store.",
+		"dashboard.syncHint": "Use sync to refresh store info, webhooks and commercial data.",
+		"dashboard.quickActions": "Quick actions",
+		"dashboard.widgetAction": "Configure widget",
+		"dashboard.analyticsAction": "Open analytics",
+		"dashboard.billingAction": "Manage plan",
+		"dashboard.sizeChartsAction": "Edit size charts",
+		"dashboard.storeName": "Store",
+		"dashboard.storeId": "Store ID",
+		"dashboard.storeUrl": "Domain",
+		"dashboard.plan": "Current plan",
+		"dashboard.imagesUsed": "Images generated",
+		"dashboard.webhooks": "Webhooks",
+		"dashboard.authStatus": "Authentication",
+		"dashboard.lastSync": "Last sync",
+		"dashboard.reconnectNeeded": "The store still needs to complete the Nuvemshop OAuth flow.",
+		"dashboard.connectedDescription":
+			"The backend can already access the Nuvemshop API, sync store data and manage webhooks.",
+		"billing.title": "Plans and billing",
+		"billing.subtitle": "Commercial entitlements adapted from the Shopify implementation.",
+		"billing.currentPlan": "Current plan",
+		"billing.status": "Status",
+		"billing.remaining": "Monthly balance",
+		"billing.extra": "Extra images",
+		"billing.activate": "Activate this plan",
+		"billing.planIncludes": "Included images",
+		"billing.pricePerExtra": "Extra image price",
+		"widget.title": "Widget settings",
+		"widget.subtitle": "Manage CTA copy, visual identity and excluded categories.",
+		"widget.linkText": "Button label",
+		"widget.logoUrl": "Logo URL",
+		"widget.primaryColor": "Primary color",
+		"widget.enable": "Widget enabled on storefront",
+		"widget.categories": "Excluded categories",
+		"widget.categoriesHint": "Products in these categories will not show Omafit CTA.",
+		"widget.preview": "CTA preview",
+		"widget.saved": "Configuration saved.",
+		"sizeCharts.title": "Size charts",
+		"sizeCharts.subtitle": "Configure charts by category and gender.",
+		"sizeCharts.addChart": "Add chart",
+		"sizeCharts.collection": "Category",
+		"sizeCharts.gender": "Gender",
+		"sizeCharts.collectionType": "Collection type",
+		"sizeCharts.elasticity": "Elasticity",
+		"sizeCharts.measurements": "Measurements",
+		"sizeCharts.sizeRows": "Size rows",
+		"sizeCharts.addRow": "Add row",
+		"sizeCharts.saved": "Size charts saved.",
+		"analytics.title": "Omafit analytics",
+		"analytics.subtitle": "Adapted operational indicators from the Shopify app.",
+		"analytics.period": "Period",
+		"analytics.sessions": "Sessions",
+		"analytics.revenue": "Attributed revenue",
+		"analytics.orders": "Orders with Omafit",
+		"analytics.returns": "Returns",
+		"analytics.avgMale": "Average male profile",
+		"analytics.avgFemale": "Average female profile",
+		"analytics.topCollections": "Usage by category",
+		"analytics.topSizes": "Recommended sizes",
+		"analytics.bodyTypes": "Body types",
+		"analytics.recommendations": "Recommendations by category and gender",
+		"analytics.reload": "Reload analytics",
+		"feedback.saved": "Changes saved successfully.",
+		"feedback.error": "Could not complete the operation.",
+	},
+	es: {
+		"nav.dashboard": "Dashboard",
+		"nav.billing": "Planes",
+		"nav.widget": "Widget",
+		"nav.sizeCharts": "Tablas",
+		"nav.analytics": "Analytics",
+		"nav.reconnect": "Reconectar con Nuvemshop",
+		"common.loading": "Cargando...",
+		"common.save": "Guardar",
+		"common.cancel": "Cancelar",
+		"common.refresh": "Sincronizar ahora",
+		"common.connected": "Conectado",
+		"common.disconnected": "Desconectado",
+		"common.active": "Activo",
+		"common.inactive": "Inactivo",
+		"common.openSupport": "Abrir soporte",
+		"common.noData": "Todavia no hay datos.",
+		"dashboard.title": "Centro Omafit",
+		"dashboard.subtitle": "Vista general de la operacion Omafit en Nuvemshop.",
+		"dashboard.syncHint": "Usa la sincronizacion para actualizar tienda, webhooks y datos comerciales.",
+		"dashboard.quickActions": "Acciones rapidas",
+		"dashboard.widgetAction": "Configurar widget",
+		"dashboard.analyticsAction": "Ver analytics",
+		"dashboard.billingAction": "Gestionar plan",
+		"dashboard.sizeChartsAction": "Editar tablas",
+		"dashboard.storeName": "Tienda",
+		"dashboard.storeId": "Store ID",
+		"dashboard.storeUrl": "Dominio",
+		"dashboard.plan": "Plan actual",
+		"dashboard.imagesUsed": "Imagenes generadas",
+		"dashboard.webhooks": "Webhooks",
+		"dashboard.authStatus": "Autenticacion",
+		"dashboard.lastSync": "Ultima sincronizacion",
+		"dashboard.reconnectNeeded": "La tienda todavia debe completar OAuth de Nuvemshop.",
+		"dashboard.connectedDescription":
+			"El backend ya puede acceder a la API de Nuvemshop y registrar webhooks.",
+		"billing.title": "Planes y billing",
+		"billing.subtitle": "Entitlements comerciales adaptados del app Shopify.",
+		"billing.currentPlan": "Plan actual",
+		"billing.status": "Estado",
+		"billing.remaining": "Saldo mensual",
+		"billing.extra": "Imagenes extra",
+		"billing.activate": "Activar este plan",
+		"billing.planIncludes": "Imagenes incluidas",
+		"billing.pricePerExtra": "Precio por imagen extra",
+		"widget.title": "Configuracion del widget",
+		"widget.subtitle": "Controla CTA, identidad visual y categorias excluidas.",
+		"widget.linkText": "Texto del boton",
+		"widget.logoUrl": "URL del logo",
+		"widget.primaryColor": "Color principal",
+		"widget.enable": "Widget activo en la tienda",
+		"widget.categories": "Categorias excluidas",
+		"widget.categoriesHint": "Los productos de estas categorias no muestran el CTA.",
+		"widget.preview": "Preview del CTA",
+		"widget.saved": "Configuracion guardada.",
+		"sizeCharts.title": "Tablas de talles",
+		"sizeCharts.subtitle": "Configura tablas por categoria y genero.",
+		"sizeCharts.addChart": "Agregar tabla",
+		"sizeCharts.collection": "Categoria",
+		"sizeCharts.gender": "Genero",
+		"sizeCharts.collectionType": "Tipo de coleccion",
+		"sizeCharts.elasticity": "Elasticidad",
+		"sizeCharts.measurements": "Medidas",
+		"sizeCharts.sizeRows": "Filas de talles",
+		"sizeCharts.addRow": "Agregar fila",
+		"sizeCharts.saved": "Tablas guardadas.",
+		"analytics.title": "Analytics Omafit",
+		"analytics.subtitle": "Indicadores adaptados del app Shopify.",
+		"analytics.period": "Periodo",
+		"analytics.sessions": "Sesiones",
+		"analytics.revenue": "Ingresos atribuidos",
+		"analytics.orders": "Pedidos con Omafit",
+		"analytics.returns": "Devoluciones",
+		"analytics.avgMale": "Perfil masculino promedio",
+		"analytics.avgFemale": "Perfil femenino promedio",
+		"analytics.topCollections": "Uso por categoria",
+		"analytics.topSizes": "Talles sugeridos",
+		"analytics.bodyTypes": "Biotipos",
+		"analytics.recommendations": "Recomendaciones por categoria y genero",
+		"analytics.reload": "Recargar analytics",
+		"feedback.saved": "Cambios guardados.",
+		"feedback.error": "No se pudo completar la operacion.",
+	},
+};
+
+function normalizeLocale(locale?: string): LocaleKey {
+	const normalized = String(locale || "").toLowerCase();
+	if (normalized.startsWith("es")) return "es";
+	if (normalized.startsWith("pt")) return "pt-BR";
+	return "en";
+}
+
+function interpolate(template: string, vars?: Record<string, string | number | null>) {
+	if (!vars) return template;
+	return template.replace(/\{(\w+)\}/g, (_match, key) =>
+		vars[key] != null ? String(vars[key]) : `{${key}}`,
+	);
+}
+
+type I18nValue = {
+	locale: LocaleKey;
+	t: (key: string, vars?: Record<string, string | number | null>) => string;
+};
+
+const I18nContext = createContext<I18nValue>({
+	locale: "pt-BR",
+	t: (key) => key,
+});
+
+export function I18nProvider({
+	children,
+	locale,
+}: {
+	children: ReactNode;
+	locale?: string;
+}) {
+	const value = useMemo<I18nValue>(() => {
+		const currentLocale = normalizeLocale(locale);
+		const dictionary = translations[currentLocale];
+		return {
+			locale: currentLocale,
+			t: (key, vars) => interpolate(dictionary[key] || translations["pt-BR"][key] || key, vars),
+		};
+	}, [locale]);
+
+	return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
+}
+
+export function useI18n() {
+	return useContext(I18nContext);
+}

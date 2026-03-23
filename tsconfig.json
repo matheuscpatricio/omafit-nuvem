@@ -1,12 +1,17 @@
 {
   "compilerOptions": {
-    "target": "es2016",
+    "target": "ES2022",
+    "lib": ["DOM", "ES2022"],
     "jsx": "react-jsx",
-    "jsxImportSource": "@tiendanube/nube-sdk-jsx/dist",
-    "module": "commonjs",
+    "jsxImportSource": "react",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "allowSyntheticDefaultImports": true,
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
-    "strict": true
+    "resolveJsonModule": true,
+    "strict": true,
+    "skipLibCheck": true
   },
   "include": [
     "./src/**/*"

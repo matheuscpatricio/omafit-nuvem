@@ -1,11 +1,7 @@
-/**
- * Script da home do app (iframe no painel Nuvemshop).
- * O painel só mostra o iframe depois que a app chama iAmReady(nexo).
- * clientId: vem da URL (?client_id=xxx) ou do Portal do Parceiro (App ID).
- */
-import nexo from "@tiendanube/nexo";
-import { connect, iAmReady } from "@tiendanube/nexo/helpers";
-import { ACTION_NAVIGATE_SYNC } from "@tiendanube/nexo/actions";
+import React from "react";
+import { createRoot } from "react-dom/client";
+import nexo, { connect, getStoreInfo, iAmReady } from "@tiendanube/nexo";
+import { OmafitAdminApp } from "./admin-app/App";
 
 function getClientId(): string {
 	if (typeof window === "undefined") return "";
@@ -13,22 +9,83 @@ function getClientId(): string {
 	return params.get("client_id") || params.get("clientId") || "";
 }
 
-const clientId = getClientId();
-if (!clientId) {
-	console.warn("[Omafit] client_id não encontrado na URL. Use ?client_id=SEU_APP_ID (App ID do Portal do Parceiro).");
+function renderFatalError(message: string) {
+	const rootElement = document.getElementById("app");
+	if (!rootElement) return;
+	const root = createRoot(rootElement);
+	root.render(
+		React.createElement(
+			"div",
+			{
+				style: {
+					minHeight: "100vh",
+					padding: "32px",
+					fontFamily: 'Inter, system-ui, sans-serif',
+					background: "#f5f7fb",
+					color: "#111827",
+				},
+			},
+			React.createElement(
+				"div",
+				{
+					style: {
+						maxWidth: "720px",
+						margin: "0 auto",
+						background: "#ffffff",
+						border: "1px solid #e5e7eb",
+						borderRadius: "18px",
+						padding: "24px",
+					},
+				},
+				React.createElement("h1", null, "Omafit"),
+				React.createElement("p", null, message),
+			),
+		),
+	);
 }
 
-const instance = nexo.create({
-	clientId: clientId || "placeholder",
-	log: false,
-});
+async function bootstrap() {
+	const clientId = getClientId();
+	if (!clientId) {
+		renderFatalError(
+			"client_id nao encontrado na URL. Configure o App ID da Nuvemshop no Partner Portal.",
+		);
+		return;
+	}
 
-connect(instance)
-	.then(() => {
-		iAmReady(instance);
-		// Obrigatório após iAmReady: escutar ACTION_NAVIGATE_SYNC
-		instance.subscribe(ACTION_NAVIGATE_SYNC, () => {});
-	})
-	.catch((err) => {
-		console.error("[Omafit] Nexo connect failed:", err);
+	const rootElement = document.getElementById("app");
+	if (!rootElement) {
+		throw new Error("Elemento #app nao encontrado.");
+	}
+
+	const instance = nexo.create({
+		clientId,
+		log: false,
 	});
+
+	await connect(instance);
+	const storeInfo = await getStoreInfo(instance);
+
+	const root = createRoot(rootElement);
+	root.render(
+		React.createElement(OmafitAdminApp, {
+			nexo: instance,
+			store: {
+				id: storeInfo.id,
+				name: storeInfo.name,
+				url: storeInfo.url,
+				language: storeInfo.language || "pt",
+				currency: storeInfo.currency || "BRL",
+				country: storeInfo.country,
+			},
+		}),
+	);
+	iAmReady(instance);
+}
+
+bootstrap().catch((error) => {
+	console.error("[Omafit] Failed to bootstrap admin app:", error);
+	renderFatalError(
+		`Nao foi possivel inicializar o painel integrado. ${error instanceof Error ? error.message : ""}`,
+	);
+});

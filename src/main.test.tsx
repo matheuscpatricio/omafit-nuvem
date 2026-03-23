@@ -2,51 +2,63 @@ import type { NubeSDK, NubeSDKState } from "@tiendanube/nube-sdk-types";
 import { describe, expect, it, vi } from "vitest";
 import { App } from "./main";
 
-// Mock do componente MyCustomField
-vi.mock("./components/MyCustomField", () => ({
-	MyCustomField: vi.fn(() => ({
-		type: "box",
-		width: 100,
-		height: 100,
-	})),
-}));
-
 describe("App", () => {
-	it("should set MyCustomField component in after_line_items slot", () => {
-		// Mock NubeSDK
-		const mockNube: Partial<NubeSDK> = {
-			send: vi.fn(),
-		};
-
-		// Execute App function with mock
-		App(mockNube as NubeSDK);
-
-		// Verify if send was called with correct parameters
-		expect(mockNube.send).toHaveBeenCalledWith(
-			"ui:slot:set",
-			expect.any(Function),
+	it("should register storefront widget on initialization", () => {
+		vi.stubGlobal("self", globalThis);
+		(globalThis as typeof globalThis & {
+			__APP_DATA__?: { id: string; script: string };
+		}).__APP_DATA__ = { id: "test-app", script: "main" };
+		vi.stubGlobal(
+			"fetch",
+			vi.fn().mockResolvedValue({
+				ok: true,
+				json: async () => ({
+					config: {
+						link_text: "Ver meu tamanho ideal",
+						widget_enabled: true,
+						excluded_collections: [],
+						primary_color: "#810707",
+					},
+					widgetUrl: "https://omafit.netlify.app",
+				}),
+			}),
 		);
 
-		// Get the slot setter function
-		const slotSetter = (mockNube.send as ReturnType<typeof vi.fn>).mock
-			.calls[0][1] as (state: NubeSDKState) => {
-			ui: { slots: { after_line_items: unknown } };
+		const mockNube: Partial<NubeSDK> = {
+			on: vi.fn(),
+			render: vi.fn(),
+			clearSlot: vi.fn(),
+			getState: vi.fn(
+				() =>
+					({
+						store: {
+							id: 123,
+							name: "Loja Teste",
+							domain: "lojateste.nuvemshop.com.br",
+							currency: "BRL",
+							language: "pt",
+						},
+						location: {
+							page: {
+								type: "product",
+								data: {
+									product: {
+										id: 99,
+										name: { pt: "Vestido" },
+										handle: { pt: "vestido" },
+										categories: [1],
+										variants: [{ id: 456 }],
+									},
+								},
+							},
+						},
+					}) as NubeSDKState,
+			),
 		};
 
-		// Execute the slot setter function
-		const result = slotSetter({} as NubeSDKState);
+		App(mockNube as NubeSDK);
 
-		// Verify if the slot was set with MyCustomField component
-		expect(result).toEqual({
-			ui: {
-				slots: {
-					after_line_items: expect.objectContaining({
-						type: "box",
-						width: 100,
-						height: 100,
-					}),
-				},
-			},
-		});
+		expect(mockNube.on).toHaveBeenCalledWith("page:loaded", expect.any(Function));
+		expect(mockNube.on).toHaveBeenCalledWith("location:updated", expect.any(Function));
 	});
 });

@@ -4,6 +4,7 @@
 	"type": "module",
 	"scripts": {
 		"dev": "concurrently -k -n BUILD,SERVE -c blue,green \"tsup --sourcemap inline --watch\" \"node server.js\"",
+		"start": "node server.js",
 		"expose": "node expose.js",
 		"expose:direct": "npx -y cloudflared tunnel --url http://localhost:8080",
 		"dev:public": "concurrently -k -n BUILD,SERVE,EXPOSE -c blue,green,yellow \"tsup --sourcemap inline --watch\" \"node server.js\" \"node expose.js\"",
@@ -31,6 +32,10 @@
 	"dependencies": {
 		"@nimbus-ds/components": "^5.48.0",
 		"@nimbus-ds/styles": "^9.53.0",
-		"@tiendanube/nexo": "^1.0.0"
+		"@tiendanube/nexo": "^1.3.1",
+		"@types/react": "^19.2.14",
+		"@types/react-dom": "^19.2.3",
+		"react": "^19.2.4",
+		"react-dom": "^19.2.4"
 	}
 }

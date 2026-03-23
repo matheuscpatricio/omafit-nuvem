@@ -7,6 +7,7 @@ export default defineConfig({
   clean: true,
   minify: true,
   bundle: true,
+  noExternal: ["@tiendanube/nexo"],
   sourcemap: false,
   splitting: false,
   skipNodeModulesBundle: false,

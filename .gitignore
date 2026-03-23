@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.omafit-data/
+.env
+.env.local
+.vite/
+coverage/
