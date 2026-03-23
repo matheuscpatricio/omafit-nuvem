@@ -10,6 +10,28 @@ type StorefrontConfig = {
 	excluded_collections: string[];
 };
 
+function markScriptExecution() {
+	console.info("[Omafit Storefront Debug] script_loaded", {
+		href: typeof window !== "undefined" ? window.location.href : "",
+	});
+	if (typeof document === "undefined") return;
+	if (document.getElementById("omafit-storefront-marker")) return;
+	const marker = document.createElement("div");
+	marker.id = "omafit-storefront-marker";
+	marker.textContent = "Omafit script carregado";
+	marker.style.position = "fixed";
+	marker.style.right = "12px";
+	marker.style.bottom = "12px";
+	marker.style.zIndex = "99999";
+	marker.style.padding = "8px 10px";
+	marker.style.borderRadius = "8px";
+	marker.style.background = "#111827";
+	marker.style.color = "#ffffff";
+	marker.style.fontSize = "12px";
+	marker.style.fontFamily = "Arial, sans-serif";
+	document.body.appendChild(marker);
+}
+
 function debugLog(message: string, data: Record<string, unknown>, hypothesisId: string) {
 	// #region agent log
 	fetch('http://127.0.0.1:7523/ingest/ebd119e5-639e-45b4-9806-782ca57f574c',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b68c2f'},body:JSON.stringify({sessionId:'b68c2f',runId:'storefront-debug',hypothesisId,location:'src/main.tsx',message,data,timestamp:Date.now()})}).catch(()=>{});
@@ -241,4 +263,5 @@ const storefrontGlobal = globalThis as typeof globalThis & {
 	App?: typeof App;
 };
 
+markScriptExecution();
 storefrontGlobal.App = App;
