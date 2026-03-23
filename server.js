@@ -173,12 +173,24 @@ function getNuvemshopAppId() {
 	return process.env.NUVEMSHOP_APP_ID || process.env.NUVEMSHOP_CLIENT_ID || "";
 }
 
+function isValidNuvemshopApiHost(value) {
+	try {
+		const url = new URL(value);
+		return /(^|\.)api\.nuvemshop\.com\.br$|(^|\.)api\.tiendanube\.com$/.test(url.hostname);
+	} catch (_error) {
+		return false;
+	}
+}
+
 function getApiBase() {
-	return (
+	const candidate = (
 		process.env.NUVEMSHOP_API_BASE_URL ||
 		process.env.TIENDANUBE_API_BASE_URL ||
 		"https://api.nuvemshop.com.br/2025-03"
 	).replace(/\/+$/, "");
+	return isValidNuvemshopApiHost(candidate)
+		? candidate
+		: "https://api.nuvemshop.com.br/2025-03";
 }
 
 function isValidNuvemshopHost(value) {
