@@ -12,6 +12,7 @@ const buildId = Date.now().toString(36);
 mkdirSync(assetsDir, { recursive: true });
 copyFileSync(join(distDir, "main.min.js"), join(assetsDir, `main-${buildId}.min.js`));
 copyFileSync(join(distDir, "home.min.js"), join(assetsDir, `home-${buildId}.min.js`));
+copyFileSync(join(distDir, "storefront-legacy.min.js"), join(assetsDir, `storefront-legacy-${buildId}.min.js`));
 
 // Garantir que o diretorio dist existe
 mkdirSync(distDir, { recursive: true });

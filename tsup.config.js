@@ -1,11 +1,8 @@
 import { defineConfig } from "tsup";
 
-export default defineConfig({
-  entry: ["src/main.tsx", "src/admin.tsx", "src/home.ts"],
-  format: ["esm"],
+const shared = {
   platform: "browser",
   target: "esnext",
-  clean: true,
   minify: true,
   bundle: true,
   noExternal: [/.*/],
@@ -20,5 +17,21 @@ export default defineConfig({
   },
   outExtension: ({ options }) => ({
     js: options.minify ? ".min.js" : ".js"
-  })
-});
+  }),
+};
+
+export default defineConfig([
+  {
+    ...shared,
+    entry: ["src/main.tsx", "src/admin.tsx", "src/home.ts"],
+    format: ["esm"],
+    clean: true,
+  },
+  {
+    ...shared,
+    entry: ["src/storefront-legacy.ts"],
+    format: ["iife"],
+    globalName: "OmafitLegacyStorefront",
+    clean: false,
+  },
+]);
