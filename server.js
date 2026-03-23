@@ -177,18 +177,33 @@ function getApiBase() {
 	).replace(/\/+$/, "");
 }
 
+function isValidNuvemshopHost(value) {
+	try {
+		const url = new URL(value);
+		return /(^|\.)nuvemshop\.com\.br$|(^|\.)tiendanube\.com$/.test(url.hostname);
+	} catch (_error) {
+		return false;
+	}
+}
+
 function getAuthorizeBase() {
-	return (
+	const candidate = (
 		process.env.NUVEMSHOP_AUTHORIZE_BASE_URL ||
 		"https://www.nuvemshop.com.br"
 	).replace(/\/+$/, "");
+	return isValidNuvemshopHost(candidate)
+		? candidate
+		: "https://www.nuvemshop.com.br";
 }
 
 function getTokenEndpoint() {
-	return (
+	const candidate = (
 		process.env.NUVEMSHOP_TOKEN_URL ||
 		"https://www.nuvemshop.com.br/apps/authorize/token"
 	).replace(/\/+$/, "");
+	return isValidNuvemshopHost(candidate)
+		? candidate
+		: "https://www.nuvemshop.com.br/apps/authorize/token";
 }
 
 function getWebhookPublicBaseUrl(req) {
