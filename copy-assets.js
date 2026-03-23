@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "fs";
+import { copyFileSync, mkdirSync, writeFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 
@@ -6,6 +6,12 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const distDir = join(__dirname, "dist");
+const assetsDir = join(distDir, "assets");
+const buildId = Date.now().toString(36);
+
+mkdirSync(assetsDir, { recursive: true });
+copyFileSync(join(distDir, "main.min.js"), join(assetsDir, `main-${buildId}.min.js`));
+copyFileSync(join(distDir, "home.min.js"), join(assetsDir, `home-${buildId}.min.js`));
 
 // Garantir que o diretorio dist existe
 mkdirSync(distDir, { recursive: true });
@@ -26,7 +32,7 @@ const indexHtml = `<!DOCTYPE html>
   </style>
 </head>
 <body>
-  <script type="module" src="/main.min.js"></script>
+  <script type="module" src="/assets/main-${buildId}.min.js"></script>
 </body>
 </html>`;
 
@@ -61,7 +67,7 @@ const appHtml = `<!DOCTYPE html>
       // #endregion
     };
 
-    const homeModuleUrl = \`/home.min.js?debug=b68c2f-v1\`;
+    const homeModuleUrl = \`/assets/home-${buildId}.min.js?debug=b68c2f-v2\`;
     omafitDebugLog("app_html_boot", {
       href: window.location.href,
       userAgent: navigator.userAgent,
