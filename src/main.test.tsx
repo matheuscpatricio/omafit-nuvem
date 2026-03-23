@@ -19,7 +19,7 @@ describe("App", () => {
 						excluded_collections: [],
 						primary_color: "#810707",
 					},
-					widgetUrl: "https://omafit.netlify.app",
+					widgetUrl: "https://omafit-nuvem-production.up.railway.app/widget.html",
 				}),
 			}),
 		);

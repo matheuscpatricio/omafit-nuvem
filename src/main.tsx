@@ -57,7 +57,12 @@ function buildWidgetUrl(baseUrl: string, nube: NubeSDK, config: StorefrontConfig
 			return "";
 		})
 		.filter(Boolean);
-	const widgetUrl = new URL(baseUrl);
+	const widgetUrl = new URL(
+		baseUrl,
+		typeof globalThis.location?.href === "string"
+			? globalThis.location.href
+			: "https://omafit-nuvem-production.up.railway.app/widget.html",
+	);
 	widgetUrl.searchParams.set("platform", "nuvemshop");
 	widgetUrl.searchParams.set("store_id", String(state.store.id));
 	widgetUrl.searchParams.set("store_domain", state.store.domain);
@@ -104,7 +109,7 @@ async function loadStorefrontConfig(storeId: number) {
 				excludedCollections: Array.isArray(data?.config?.excluded_collections)
 					? data.config.excluded_collections
 					: [],
-				widgetUrl: String(data?.widgetUrl || "https://omafit.netlify.app"),
+				widgetUrl: String(data?.widgetUrl || "/widget.html"),
 			},
 			"H2",
 		);
@@ -115,7 +120,7 @@ async function loadStorefrontConfig(storeId: number) {
 				excluded_collections: [],
 				primary_color: "#810707",
 			}) as StorefrontConfig,
-			widgetUrl: String(data?.widgetUrl || "https://omafit.netlify.app"),
+			widgetUrl: String(data?.widgetUrl || "/widget.html"),
 		};
 	} catch (error) {
 		debugLog(
@@ -133,7 +138,7 @@ async function loadStorefrontConfig(storeId: number) {
 				excluded_collections: [],
 				primary_color: "#810707",
 			} as StorefrontConfig,
-			widgetUrl: "https://omafit.netlify.app",
+			widgetUrl: "/widget.html",
 		};
 	}
 }

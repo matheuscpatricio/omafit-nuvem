@@ -38,7 +38,6 @@ declare global {
 }
 
 const DEFAULT_APP_BASE = "https://omafit-nuvem-production.up.railway.app";
-const DEFAULT_WIDGET_URL = "https://omafit.netlify.app";
 const CTA_WRAPPER_ID = "omafit-legacy-wrapper";
 const CTA_BUTTON_ID = "omafit-legacy-button";
 const MODAL_ID = "omafit-legacy-modal";
@@ -133,13 +132,13 @@ async function loadConfig(appBaseUrl: string, storeId: string) {
 			{
 				storeId,
 				widgetEnabled: config.widget_enabled,
-				widgetUrl: String(data.widgetUrl || DEFAULT_WIDGET_URL),
+				widgetUrl: String(data.widgetUrl || `${appBaseUrl}/widget.html`),
 			},
 			"L1",
 		);
 		return {
 			config,
-			widgetUrl: String(data.widgetUrl || DEFAULT_WIDGET_URL),
+			widgetUrl: String(data.widgetUrl || `${appBaseUrl}/widget.html`),
 		};
 	} catch (error) {
 		debugLog(
@@ -157,7 +156,7 @@ async function loadConfig(appBaseUrl: string, storeId: string) {
 				excluded_collections: [],
 				primary_color: "#810707",
 			},
-			widgetUrl: DEFAULT_WIDGET_URL,
+			widgetUrl: `${appBaseUrl}/widget.html`,
 		};
 	}
 }

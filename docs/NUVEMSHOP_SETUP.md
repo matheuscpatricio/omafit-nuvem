@@ -17,7 +17,7 @@
 - `SUPABASE_ANON_KEY`
   - Opcional, usada como fallback quando service role nao estiver disponivel.
 - `OMAFIT_WIDGET_URL`
-  - URL do widget externo Omafit. Se nao informado, usa `https://omafit.netlify.app`.
+  - URL publica do widget da Nuvemshop. O formato esperado e `https://seu-dominio.com/widget.html`.
 - `OMAFIT_SUPPORT_URL`
   - Link de suporte mostrado no admin.
 - `OMAFIT_SUPPORT_EMAIL`

@@ -43,8 +43,6 @@ const MIME_TYPES = {
 const CSP_HEADER =
 	"frame-ancestors 'self' *.mitiendanube.com:* *.lojavirtualnuvem.com.br:* cirrus.tiendanube.com:* *.tiendanube.com:* *.nuvemshop.com.br:* tn.panel.vici.la platform.twitter.com:* ct.pinterest.com:* *.pintergration.com:* bat.bing.com:* dev.visualwebsiteoptimizer.com:* *.doubleclick.net:* *.getbeamer.com:* *.myperfit.net:* *.mercadolibre.com:* *.cloudflare.com:*";
 
-const DEFAULT_WIDGET_URL = "https://omafit.netlify.app";
-
 function loadEnvFiles() {
 	const envCandidates = [".env.local", ".env"];
 	for (const fileName of envCandidates) {
@@ -1090,14 +1088,17 @@ async function handleApi(req, res, reqUrl) {
 	const session = getSession(storeContext.storeId);
 
 	if (pathname === "/api/health") {
+		const supabaseConfig = getSupabaseConfig();
 		sendJson(res, 200, {
 			ok: true,
 			app: getAppName(),
-			hasSupabase: Boolean(getSupabaseConfig()),
+			hasSupabase: Boolean(supabaseConfig),
+			supabaseMode: supabaseConfig?.hasServiceRole ? "service_role" : supabaseConfig ? "anon" : "missing",
 			hasOAuthConfig: Boolean(
 				process.env.NUVEMSHOP_APP_ID &&
 					(process.env.NUVEMSHOP_CLIENT_SECRET || process.env.NUVEMSHOP_APP_SECRET),
 			),
+			widgetUrl: getWidgetBaseUrl(req),
 		});
 		return true;
 	}
