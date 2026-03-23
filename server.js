@@ -250,6 +250,25 @@ function sendJson(res, status, payload) {
 	res.end(JSON.stringify(payload));
 }
 
+function sendDebugLog(location, message, data, runId, hypothesisId) {
+	fetch("http://127.0.0.1:7523/ingest/ebd119e5-639e-45b4-9806-782ca57f574c", {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+			"X-Debug-Session-Id": "b68c2f",
+		},
+		body: JSON.stringify({
+			sessionId: "b68c2f",
+			location,
+			message,
+			data,
+			timestamp: Date.now(),
+			runId,
+			hypothesisId,
+		}),
+	}).catch(() => {});
+}
+
 function sendText(res, status, payload) {
 	res.writeHead(status, { "Content-Type": "text/plain; charset=utf-8" });
 	res.end(payload);
@@ -481,6 +500,21 @@ async function ensureShopifyCompatShop(storeId, storeUrl = "", shopRecord = null
 	const sourceRecord = shopRecord || (await loadLegacyShopRecord(storeId, storeUrl));
 	const currentPlan = String(sourceRecord?.plan || "ondemand").toLowerCase();
 	const planDef = getPlanDefinition(currentPlan);
+	// #region agent log
+	sendDebugLog(
+		"server.js:497",
+		"ensureShopifyCompatShop_start",
+		{
+			storeId,
+			normalizedDomain,
+			hasShopRecord: Boolean(sourceRecord),
+			sourcePlan: currentPlan,
+			sourceBillingStatus: String(sourceRecord?.billing_status || "active").toLowerCase(),
+		},
+		"initial",
+		"H1",
+	);
+	// #endregion
 	const payloadVariants = [
 		{
 			shop_domain: normalizedDomain,
@@ -509,13 +543,43 @@ async function ensureShopifyCompatShop(storeId, storeUrl = "", shopRecord = null
 		},
 	];
 
-	for (const payload of payloadVariants) {
+	for (let index = 0; index < payloadVariants.length; index += 1) {
+		const payload = payloadVariants[index];
 		try {
 			const rows = await supabaseUpsert("shopify_shops", [
 				payload,
 			]);
+			// #region agent log
+			sendDebugLog(
+				"server.js:540",
+				"ensureShopifyCompatShop_success",
+				{
+					storeId,
+					normalizedDomain,
+					attemptIndex: index,
+					returnedShopDomain: rows?.[0]?.shop_domain || null,
+					returnedBillingStatus: rows?.[0]?.billing_status || null,
+				},
+				"initial",
+				"H1",
+			);
+			// #endregion
 			return Array.isArray(rows) ? rows[0] || null : null;
-		} catch (_error) {
+		} catch (error) {
+			// #region agent log
+			sendDebugLog(
+				"server.js:555",
+				"ensureShopifyCompatShop_attempt_failed",
+				{
+					storeId,
+					normalizedDomain,
+					attemptIndex: index,
+					error: error?.message || "unknown",
+				},
+				"initial",
+				"H1",
+			);
+			// #endregion
 			// try next compatible payload shape
 		}
 	}
@@ -880,6 +944,22 @@ async function resolveWidgetPublicId(storeId, storeUrl = "") {
 	for (const candidate of directCandidates) {
 		const widgetKey = await findWidgetKeyByShopDomain(candidate);
 		if (widgetKey?.public_id) {
+			// #region agent log
+			sendDebugLog(
+				"server.js:922",
+				"resolveWidgetPublicId_direct_hit",
+				{
+					storeId,
+					normalizedDomain,
+					candidate,
+					publicId: widgetKey.public_id,
+					widgetShopDomain: widgetKey.shop_domain || null,
+					widgetDomain: widgetKey.domain || null,
+				},
+				"initial",
+				"H2",
+			);
+			// #endregion
 			return String(widgetKey.public_id);
 		}
 	}
@@ -899,10 +979,39 @@ async function resolveWidgetPublicId(storeId, storeUrl = "") {
 
 	for (const candidate of recordCandidates) {
 		if (candidate.startsWith("wgt_pub_")) {
+			// #region agent log
+			sendDebugLog(
+				"server.js:948",
+				"resolveWidgetPublicId_record_public_id",
+				{
+					storeId,
+					normalizedDomain,
+					candidate,
+				},
+				"initial",
+				"H2",
+			);
+			// #endregion
 			return candidate;
 		}
 		const widgetKey = await findWidgetKeyByShopDomain(normalizeStoreUrl(candidate) || candidate);
 		if (widgetKey?.public_id) {
+			// #region agent log
+			sendDebugLog(
+				"server.js:963",
+				"resolveWidgetPublicId_record_hit",
+				{
+					storeId,
+					normalizedDomain,
+					candidate,
+					publicId: widgetKey.public_id,
+					widgetShopDomain: widgetKey.shop_domain || null,
+					widgetDomain: widgetKey.domain || null,
+				},
+				"initial",
+				"H2",
+			);
+			// #endregion
 			return String(widgetKey.public_id);
 		}
 	}
@@ -951,6 +1060,20 @@ async function enrichTryonRequestBody(rawBody, contentType) {
 			const storeId = String(formData.get("store_id") || "").trim();
 			const shopDomain = normalizeStoreUrl(String(formData.get("shop_domain") || ""));
 			const resolvedPublicId = await resolveWidgetPublicId(storeId, shopDomain);
+			// #region agent log
+			sendDebugLog(
+				"server.js:1020",
+				"enrichTryonRequestBody_multipart",
+				{
+					storeId,
+					shopDomain,
+					incomingPublicId,
+					resolvedPublicId: resolvedPublicId || "",
+				},
+				"initial",
+				"H3",
+			);
+			// #endregion
 			if (!resolvedPublicId) {
 				return { body: rawBody, contentType };
 			}
@@ -960,7 +1083,19 @@ async function enrichTryonRequestBody(rawBody, contentType) {
 				body: Buffer.from(await response.arrayBuffer()),
 				contentType: response.headers.get("content-type") || contentType,
 			};
-		} catch (_error) {
+		} catch (error) {
+			// #region agent log
+			sendDebugLog(
+				"server.js:1038",
+				"enrichTryonRequestBody_multipart_failed",
+				{
+					contentType: String(contentType || ""),
+					error: error?.message || "unknown",
+				},
+				"initial",
+				"H3",
+			);
+			// #endregion
 			return { body: rawBody, contentType };
 		}
 	}
@@ -1511,11 +1646,35 @@ async function handleApi(req, res, reqUrl) {
 				body,
 			});
 			const payload = await response.text();
+			// #region agent log
+			sendDebugLog(
+				"server.js:1585",
+				"tryon_proxy_response",
+				{
+					status: response.status,
+					contentType,
+					payloadSnippet: String(payload || "").slice(0, 280),
+				},
+				"initial",
+				"H4",
+			);
+			// #endregion
 			res.writeHead(response.status, {
 				"Content-Type": response.headers.get("content-type") || "application/json; charset=utf-8",
 			});
 			res.end(payload);
 		} catch (error) {
+			// #region agent log
+			sendDebugLog(
+				"server.js:1601",
+				"tryon_proxy_exception",
+				{
+					error: error?.message || "unknown",
+				},
+				"initial",
+				"H4",
+			);
+			// #endregion
 			sendJson(res, 500, {
 				error: error.message || "Nao foi possivel processar o try-on.",
 			});
