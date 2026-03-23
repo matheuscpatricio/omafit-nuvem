@@ -9,6 +9,7 @@ type LegacyStorefrontConfig = {
 type LegacyStorefrontResponse = {
 	config?: LegacyStorefrontConfig | null;
 	widgetUrl?: string | null;
+	publicId?: string | null;
 };
 
 type LegacyStoreContext = {
@@ -139,6 +140,7 @@ async function loadConfig(appBaseUrl: string, storeId: string) {
 		return {
 			config,
 			widgetUrl: String(data.widgetUrl || `${appBaseUrl}/widget.html`),
+			publicId: String(data.publicId || ""),
 		};
 	} catch (error) {
 		debugLog(
@@ -157,6 +159,7 @@ async function loadConfig(appBaseUrl: string, storeId: string) {
 				primary_color: "#810707",
 			},
 			widgetUrl: `${appBaseUrl}/widget.html`,
+			publicId: "",
 		};
 	}
 }
@@ -166,6 +169,7 @@ function buildWidgetUrl(
 	store: LegacyStoreContext,
 	product: LegacyProductContext,
 	config: LegacyStorefrontConfig,
+	publicId?: string | null,
 ) {
 	const widgetUrl = new URL(baseUrl);
 	widgetUrl.searchParams.set("platform", "nuvemshop");
@@ -179,6 +183,7 @@ function buildWidgetUrl(
 	if (product.imageUrls.length) {
 		widgetUrl.searchParams.set("product_images", JSON.stringify(product.imageUrls));
 	}
+	if (publicId) widgetUrl.searchParams.set("public_id", publicId);
 	if (config.store_logo) widgetUrl.searchParams.set("store_logo", config.store_logo);
 	if (config.primary_color) widgetUrl.searchParams.set("primary_color", config.primary_color);
 	return widgetUrl.toString();
@@ -410,6 +415,7 @@ function renderButton(
 	product: LegacyProductContext,
 	config: LegacyStorefrontConfig,
 	widgetBaseUrl: string,
+	publicId?: string | null,
 ) {
 	if (config.widget_enabled === false) {
 		debugLog("render_skipped_disabled", { storeId: store.id }, "L2");
@@ -420,7 +426,7 @@ function renderButton(
 		debugLog("render_missing_mount", { selector: ".js-buy-button-container" }, "L2");
 		return;
 	}
-	const widgetUrl = buildWidgetUrl(widgetBaseUrl, store, product, config);
+	const widgetUrl = buildWidgetUrl(widgetBaseUrl, store, product, config, publicId);
 	ensureStyles(config.primary_color || "#810707");
 	let wrapper = document.getElementById(CTA_WRAPPER_ID);
 	if (!wrapper) {
@@ -466,8 +472,8 @@ async function init() {
 	);
 	if (!store || !product) return;
 	const appBaseUrl = getAppBaseUrl();
-	const { config, widgetUrl } = await loadConfig(appBaseUrl, store.id);
-	renderButton(store, product, config, widgetUrl);
+	const { config, widgetUrl, publicId } = await loadConfig(appBaseUrl, store.id);
+	renderButton(store, product, config, widgetUrl, publicId);
 }
 
 if (document.readyState === "loading") {

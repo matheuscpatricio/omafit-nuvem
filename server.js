@@ -379,6 +379,18 @@ async function supabaseSelectAll(path) {
 	return Array.isArray(rows) ? rows : [];
 }
 
+async function supabaseRpc(functionName, payload = {}) {
+	const response = await supabaseRequest(`rpc/${functionName}`, {
+		method: "POST",
+		body: JSON.stringify(payload),
+	});
+	if (!response.ok) {
+		const text = await response.text().catch(() => "");
+		throw new Error(parseSupabaseError(text)?.message || `RPC ${functionName} failed`);
+	}
+	return response.json().catch(() => null);
+}
+
 async function supabaseUpsert(table, payload) {
 	const response = await supabaseRequest(table, {
 		method: "POST",
@@ -726,6 +738,66 @@ async function getWidgetConfig(storeId) {
 	} catch (_error) {
 		return null;
 	}
+}
+
+async function findWidgetKeyByShopDomain(shopDomain) {
+	if (!shopDomain) return null;
+	try {
+		return await supabaseSelectFirst(
+			`widget_keys?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=public_id,shop_domain,is_active,created_at,updated_at&order=updated_at.desc&limit=1`,
+		);
+	} catch (_error) {
+		return null;
+	}
+}
+
+async function resolveWidgetPublicId(storeId, storeUrl = "") {
+	const normalizedDomain = normalizeStoreUrl(storeUrl);
+	const shopKey = getCanonicalShopKey(storeId);
+
+	const directCandidates = [normalizedDomain, shopKey].filter(Boolean);
+	for (const candidate of directCandidates) {
+		const widgetKey = await findWidgetKeyByShopDomain(candidate);
+		if (widgetKey?.public_id) {
+			return String(widgetKey.public_id);
+		}
+	}
+
+	const shopRecord = await loadLegacyShopRecord(storeId, storeUrl);
+	const recordCandidates = [
+		shopRecord?.public_id,
+		shopRecord?.shop_domain,
+		shopRecord?.store_url,
+		shopRecord?.platform_store_url,
+	]
+		.map((value) => String(value || "").trim())
+		.filter(Boolean);
+
+	for (const candidate of recordCandidates) {
+		if (candidate.startsWith("wgt_pub_")) {
+			return candidate;
+		}
+		const widgetKey = await findWidgetKeyByShopDomain(normalizeStoreUrl(candidate) || candidate);
+		if (widgetKey?.public_id) {
+			return String(widgetKey.public_id);
+		}
+	}
+
+	const creationCandidates = [normalizedDomain, shopKey].filter(Boolean);
+	for (const candidate of creationCandidates) {
+		try {
+			const created = await supabaseRpc("create_widget_key_for_shop", {
+				shop_domain_param: candidate,
+			});
+			if (created?.public_id) {
+				return String(created.public_id);
+			}
+		} catch (_error) {
+			// try next candidate
+		}
+	}
+
+	return "";
 }
 
 async function saveWidgetConfig(storeId, payload) {
@@ -1200,13 +1272,16 @@ async function handleApi(req, res, reqUrl) {
 			sendJson(res, 200, {
 				config: null,
 				widgetUrl: getWidgetBaseUrl(req),
+				publicId: "",
 			});
 			return true;
 		}
 		const config = await getWidgetConfig(storeContext.storeId);
+		const publicId = await resolveWidgetPublicId(storeContext.storeId, storeContext.storeUrl);
 		sendJson(res, 200, {
 			config,
 			widgetUrl: getWidgetBaseUrl(req),
+			publicId,
 		});
 		return true;
 	}

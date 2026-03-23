@@ -25,7 +25,7 @@ export default defineConfig([
     ...shared,
     entry: ["src/main.tsx", "src/admin.tsx", "src/home.ts", "src/widget.tsx"],
     format: ["esm"],
-    clean: true,
+    clean: false,
   },
   {
     ...shared,

@@ -110,6 +110,7 @@ async function loadStorefrontConfig(storeId: number) {
 					? data.config.excluded_collections
 					: [],
 				widgetUrl: String(data?.widgetUrl || "/widget.html"),
+				publicId: String(data?.publicId || ""),
 			},
 			"H2",
 		);
@@ -121,6 +122,7 @@ async function loadStorefrontConfig(storeId: number) {
 				primary_color: "#810707",
 			}) as StorefrontConfig,
 			widgetUrl: String(data?.widgetUrl || "/widget.html"),
+			publicId: String(data?.publicId || ""),
 		};
 	} catch (error) {
 		debugLog(
@@ -139,11 +141,17 @@ async function loadStorefrontConfig(storeId: number) {
 				primary_color: "#810707",
 			} as StorefrontConfig,
 			widgetUrl: "/widget.html",
+			publicId: "",
 		};
 	}
 }
 
-function renderWidget(nube: NubeSDK, config: StorefrontConfig, widgetBaseUrl: string) {
+function renderWidget(
+	nube: NubeSDK,
+	config: StorefrontConfig,
+	widgetBaseUrl: string,
+	publicId?: string,
+) {
 	const product = getCurrentProduct(nube);
 	const page = nube.getState().location.page;
 	const categoryIds = (product?.categories || []).map((categoryId) => String(categoryId));
@@ -181,12 +189,15 @@ function renderWidget(nube: NubeSDK, config: StorefrontConfig, widgetBaseUrl: st
 		return;
 	}
 
-	const widgetUrl = buildWidgetUrl(widgetBaseUrl, nube, config);
+	const widgetUrl = new URL(buildWidgetUrl(widgetBaseUrl, nube, config));
+	if (publicId) {
+		widgetUrl.searchParams.set("public_id", publicId);
+	}
 	debugLog(
 		"render_widget_visible",
 		{
 			productId: product?.id || null,
-			widgetUrl,
+			widgetUrl: widgetUrl.toString(),
 		},
 		"H5",
 	);
@@ -208,7 +219,7 @@ function renderWidget(nube: NubeSDK, config: StorefrontConfig, widgetBaseUrl: st
 						<Text>
 							Descubra o tamanho ideal com base no contexto real deste produto.
 						</Text>
-						<Iframe src={widgetUrl as `https://${string}`} height="640px" />
+						<Iframe src={widgetUrl.toString() as `https://${string}`} height="640px" />
 						<Button
 							variant="secondary"
 							onClick={() => {
@@ -254,8 +265,8 @@ export function App(nube: NubeSDK) {
 				</Text>,
 			);
 		}
-		const { config, widgetUrl } = await loadStorefrontConfig(state.store.id);
-		renderWidget(nube, config, widgetUrl);
+		const { config, widgetUrl, publicId } = await loadStorefrontConfig(state.store.id);
+		renderWidget(nube, config, widgetUrl, publicId);
 	};
 
 	void boot();

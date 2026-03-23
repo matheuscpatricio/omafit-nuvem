@@ -54,6 +54,7 @@ type ParsedParams = {
 	productName: string;
 	productHandle: string;
 	variantId: string;
+	publicId: string;
 	productImage: string;
 	productImages: string[];
 	storeLogo: string;
@@ -202,6 +203,8 @@ function getParams(): ParsedParams {
 		productName: decodeValue(search.get("product_name")),
 		productHandle: decodeValue(search.get("product_handle")),
 		variantId: decodeValue(search.get("variant_id")),
+		publicId:
+			decodeValue(search.get("public_id")) || decodeValue(search.get("publicId")),
 		productImage,
 		productImages,
 		storeLogo: decodeValue(search.get("store_logo")),
@@ -306,6 +309,7 @@ export function WidgetPage() {
 	const params = useMemo(() => getParams(), []);
 	const [config, setConfig] = useState<WidgetConfig | null>(null);
 	const [charts, setCharts] = useState<ApiChart[]>([]);
+	const [publicId, setPublicId] = useState(params.publicId);
 	const [step, setStep] = useState<Step>("info");
 	const [language, setLanguage] = useState<WidgetLanguage>(params.language);
 	const [primaryColor, setPrimaryColor] = useState(params.primaryColor);
@@ -361,6 +365,9 @@ export function WidgetPage() {
 					if (configPayload.config.admin_locale) {
 						setLanguage(detectWidgetLanguage(configPayload.config.admin_locale));
 					}
+				}
+				if (configPayload?.publicId) {
+					setPublicId(String(configPayload.publicId));
 				}
 				if (Array.isArray(chartPayload?.charts)) {
 					setCharts(chartPayload.charts);
@@ -522,6 +529,7 @@ export function WidgetPage() {
 		formData.append("garment_image", selectedProductImage || "");
 		formData.append("product_name", params.productName);
 		formData.append("product_id", params.productId);
+		formData.append("public_id", publicId || "");
 		formData.append(
 			"user_measurements",
 			JSON.stringify({
