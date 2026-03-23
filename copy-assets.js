@@ -12,6 +12,7 @@ const buildId = Date.now().toString(36);
 mkdirSync(assetsDir, { recursive: true });
 copyFileSync(join(distDir, "main.min.js"), join(assetsDir, `main-${buildId}.min.js`));
 copyFileSync(join(distDir, "home.min.js"), join(assetsDir, `home-${buildId}.min.js`));
+copyFileSync(join(distDir, "widget.min.js"), join(assetsDir, `widget-${buildId}.min.js`));
 copyFileSync(join(distDir, "storefront-legacy.min.js"), join(assetsDir, `storefront-legacy-${buildId}.min.js`));
 
 // Garantir que o diretorio dist existe
@@ -109,6 +110,32 @@ const appHtml = `<!DOCTYPE html>
 </html>`;
 
 writeFileSync(join(distDir, "app.html"), appHtml);
+
+const widgetHtml = `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Omafit Widget</title>
+  <style>
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      background: #f8fafc;
+    }
+
+    #app {
+      min-height: 100vh;
+    }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <script type="module" src="/assets/widget-${buildId}.min.js"></script>
+</body>
+</html>`;
+
+writeFileSync(join(distDir, "widget.html"), widgetHtml);
 
 // Criar um manifest.json valido e simples para evitar erros.
 const manifest = {

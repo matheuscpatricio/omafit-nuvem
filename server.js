@@ -154,7 +154,7 @@ function getPublicBaseUrl(req) {
 }
 
 function getWidgetBaseUrl(req) {
-	return (process.env.OMAFIT_WIDGET_URL || DEFAULT_WIDGET_URL).replace(/\/+$/, "");
+	return `${getPublicBaseUrl(req).replace(/\/+$/, "")}/widget.html`;
 }
 
 function getSupportUrl() {
@@ -346,6 +346,25 @@ async function supabaseRequest(path, options = {}) {
 		},
 	});
 	return response;
+}
+
+async function supabaseFunctionRequest(path, options = {}) {
+	const config = getSupabaseConfig();
+	if (!config) {
+		throw new Error("Supabase not configured");
+	}
+	const headers = {
+		apikey: config.key,
+		Authorization: `Bearer ${config.key}`,
+		...(options.headers || {}),
+	};
+	if (!headers["Content-Type"] && options.body && !Buffer.isBuffer(options.body)) {
+		headers["Content-Type"] = "application/json";
+	}
+	return fetch(`${config.url}/functions/v1/${path.replace(/^\/+/, "")}`, {
+		...options,
+		headers,
+	});
 }
 
 async function supabaseSelectFirst(path) {
@@ -1211,6 +1230,77 @@ async function handleApi(req, res, reqUrl) {
 			}
 			return true;
 		}
+	}
+
+	if (pathname === "/api/widget/tryon" && method === "POST") {
+		try {
+			const rawBody = await readRequestBody(req);
+			const contentType = req.headers["content-type"] || "application/json";
+			const response = await supabaseFunctionRequest("tryon", {
+				method: "POST",
+				headers: {
+					"Content-Type": contentType,
+				},
+				body: rawBody,
+			});
+			const payload = await response.text();
+			res.writeHead(response.status, {
+				"Content-Type": response.headers.get("content-type") || "application/json; charset=utf-8",
+			});
+			res.end(payload);
+		} catch (error) {
+			sendJson(res, 500, {
+				error: error.message || "Nao foi possivel processar o try-on.",
+			});
+		}
+		return true;
+	}
+
+	if (pathname.startsWith("/api/widget/tryon-status/") && method === "GET") {
+		const predictionId = pathname.split("/").pop();
+		if (!predictionId) {
+			sendJson(res, 400, { error: "prediction_id is required" });
+			return true;
+		}
+		try {
+			const response = await supabaseFunctionRequest(
+				`tryon-status/${encodeURIComponent(predictionId)}`,
+				{ method: "GET" },
+			);
+			const payload = await response.text();
+			res.writeHead(response.status, {
+				"Content-Type": response.headers.get("content-type") || "application/json; charset=utf-8",
+			});
+			res.end(payload);
+		} catch (error) {
+			sendJson(res, 500, {
+				error: error.message || "Nao foi possivel verificar o try-on.",
+			});
+		}
+		return true;
+	}
+
+	if (pathname === "/api/widget/validate-size" && method === "POST") {
+		try {
+			const rawBody = await readRequestBody(req);
+			const response = await supabaseFunctionRequest("validate-size", {
+				method: "POST",
+				headers: {
+					"Content-Type": req.headers["content-type"] || "application/json",
+				},
+				body: rawBody,
+			});
+			const payload = await response.text();
+			res.writeHead(response.status, {
+				"Content-Type": response.headers.get("content-type") || "application/json; charset=utf-8",
+			});
+			res.end(payload);
+		} catch (error) {
+			sendJson(res, 500, {
+				error: error.message || "Nao foi possivel validar o tamanho.",
+			});
+		}
+		return true;
 	}
 
 	if (pathname === "/api/billing") {

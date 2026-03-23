@@ -1,0 +1,389 @@
+export type SizeChartEntry = {
+	size_name: string;
+	bust?: number;
+	waist?: number;
+	hips?: number;
+	measurements?: Record<string, number>;
+	measurement_labels?: string[];
+	order: number;
+};
+
+type RawMeasurements = {
+	shoulderWidth?: number;
+	chestCircumference?: number;
+	waistCircumference?: number;
+	hipCircumference?: number;
+	bodyHeight?: number;
+	armLength?: number;
+	legLength?: number;
+	confidence?: number;
+};
+
+type BodyModel = Record<string, number>;
+
+type SizeScore = {
+	size: string;
+	score: number;
+	details: Record<
+		string,
+		{
+			bodyValue: number;
+			garmentValue: number;
+			difference: number;
+			penalty: number;
+		}
+	>;
+};
+
+type ConfidenceResult = {
+	level: "HIGH" | "MEDIUM" | "LOW";
+	percentage: number;
+	factors: {
+		baseScore: number;
+		dominance: number;
+		elasticity: number;
+	};
+};
+
+export type ElasticityLevel = "structured" | "light" | "flexible" | "high";
+
+const ELASTICITY_TOLERANCES: Record<ElasticityLevel, Record<string, number>> = {
+	structured: { Peito: 4.0, Busto: 4.0, Cintura: 3.5, Quadril: 4.0, Ombro: 2.5, Comprimento: 3.0, Tornozelo: 2.0 },
+	light: { Peito: 5.0, Busto: 5.0, Cintura: 4.5, Quadril: 5.0, Ombro: 3.0, Comprimento: 3.5, Tornozelo: 2.5 },
+	flexible: { Peito: 6.0, Busto: 6.0, Cintura: 5.5, Quadril: 6.0, Ombro: 3.5, Comprimento: 4.0, Tornozelo: 3.0 },
+	high: { Peito: 8.0, Busto: 8.0, Cintura: 7.0, Quadril: 8.0, Ombro: 4.5, Comprimento: 5.0, Tornozelo: 3.5 },
+};
+
+const ASYMMETRY_FACTORS: Record<ElasticityLevel, number> = {
+	structured: 2.5,
+	light: 2.0,
+	flexible: 1.5,
+	high: 1.2,
+};
+
+const DEFAULT_BMI_REFERENCE_TABLE = {
+	Busto: [
+		{ bmi: 18.5, value: 80 },
+		{ bmi: 20, value: 84 },
+		{ bmi: 22, value: 88 },
+		{ bmi: 24, value: 92 },
+		{ bmi: 26, value: 96 },
+		{ bmi: 28, value: 100 },
+		{ bmi: 30, value: 104 },
+		{ bmi: 32, value: 108 },
+	],
+	Peito: [
+		{ bmi: 18.5, value: 85 },
+		{ bmi: 20, value: 89 },
+		{ bmi: 22, value: 93 },
+		{ bmi: 24, value: 97 },
+		{ bmi: 26, value: 101 },
+		{ bmi: 28, value: 105 },
+		{ bmi: 30, value: 109 },
+		{ bmi: 32, value: 113 },
+	],
+	Cintura: [
+		{ bmi: 18.5, value: 62 },
+		{ bmi: 20, value: 66 },
+		{ bmi: 22, value: 70 },
+		{ bmi: 24, value: 74 },
+		{ bmi: 26, value: 78 },
+		{ bmi: 28, value: 82 },
+		{ bmi: 30, value: 86 },
+		{ bmi: 32, value: 90 },
+	],
+	Quadril: [
+		{ bmi: 18.5, value: 86 },
+		{ bmi: 20, value: 90 },
+		{ bmi: 22, value: 94 },
+		{ bmi: 24, value: 98 },
+		{ bmi: 26, value: 102 },
+		{ bmi: 28, value: 106 },
+		{ bmi: 30, value: 110 },
+		{ bmi: 32, value: 114 },
+	],
+	Comprimento: [
+		{ bmi: 18.5, value: 60 },
+		{ bmi: 20, value: 62 },
+		{ bmi: 22, value: 64 },
+		{ bmi: 24, value: 66 },
+		{ bmi: 26, value: 68 },
+		{ bmi: 28, value: 70 },
+		{ bmi: 30, value: 72 },
+		{ bmi: 32, value: 74 },
+	],
+	Tornozelo: [
+		{ bmi: 18.5, value: 19 },
+		{ bmi: 20, value: 20 },
+		{ bmi: 22, value: 21 },
+		{ bmi: 24, value: 22 },
+		{ bmi: 26, value: 23 },
+		{ bmi: 28, value: 24 },
+		{ bmi: 30, value: 25 },
+		{ bmi: 32, value: 26 },
+	],
+	Ombro: [
+		{ bmi: 18.5, value: 36 },
+		{ bmi: 20, value: 38 },
+		{ bmi: 22, value: 40 },
+		{ bmi: 24, value: 42 },
+		{ bmi: 26, value: 44 },
+		{ bmi: 28, value: 46 },
+		{ bmi: 30, value: 48 },
+		{ bmi: 32, value: 50 },
+	],
+};
+
+function interpolateMeasurement(bmi: number, measurementName: string) {
+	const referenceTable =
+		DEFAULT_BMI_REFERENCE_TABLE[measurementName as keyof typeof DEFAULT_BMI_REFERENCE_TABLE];
+	if (!referenceTable) return 0;
+	if (bmi <= referenceTable[0].bmi) return referenceTable[0].value;
+	const lastEntry = referenceTable[referenceTable.length - 1];
+	if (bmi >= lastEntry.bmi) return lastEntry.value;
+
+	for (let index = 0; index < referenceTable.length - 1; index += 1) {
+		const lower = referenceTable[index];
+		const upper = referenceTable[index + 1];
+		if (bmi >= lower.bmi && bmi <= upper.bmi) {
+			const ratio = (bmi - lower.bmi) / (upper.bmi - lower.bmi);
+			return lower.value + (upper.value - lower.value) * ratio;
+		}
+	}
+
+	return referenceTable[0].value;
+}
+
+function buildBodyModel(
+	height: number,
+	weight: number,
+	bodyTypeFactor: number,
+	rawMeasurements: RawMeasurements | null,
+	measurementNames: string[],
+): BodyModel {
+	const heightInMeters = height / 100;
+	const bmi = weight / (heightInMeters * heightInMeters);
+	const bodyModel: BodyModel = {};
+
+	for (const name of measurementNames) {
+		let measurement = 0;
+		if (rawMeasurements && rawMeasurements.confidence && rawMeasurements.confidence > 0.5) {
+			const rawKey =
+				name === "Peito" || name === "Busto"
+					? "chestCircumference"
+					: name === "Cintura"
+						? "waistCircumference"
+						: name === "Quadril"
+							? "hipCircumference"
+							: name === "Ombro"
+								? "shoulderWidth"
+								: null;
+
+			if (rawKey && rawMeasurements[rawKey as keyof RawMeasurements]) {
+				measurement = Number(rawMeasurements[rawKey as keyof RawMeasurements]);
+			} else {
+				measurement = interpolateMeasurement(bmi, name);
+			}
+		} else {
+			measurement = interpolateMeasurement(bmi, name);
+		}
+
+		bodyModel[name] = measurement * bodyTypeFactor;
+	}
+
+	const bmiFactor = Math.max(0.95, Math.min(1.05, 1 + (bmi - 22) * 0.01));
+	for (const key of Object.keys(bodyModel)) {
+		bodyModel[key] *= bmiFactor;
+	}
+
+	return bodyModel;
+}
+
+function normalizeWeights(weights: Record<string, number>) {
+	const total = Object.values(weights).reduce((sum, value) => sum + value, 0);
+	if (total === 0) return weights;
+	const normalized: Record<string, number> = {};
+	for (const [key, value] of Object.entries(weights)) {
+		normalized[key] = value / total;
+	}
+	return normalized;
+}
+
+function getMeasurementValue(entry: SizeChartEntry, key: string, index: number) {
+	if (entry.measurements) {
+		const measurementKey = `medida${index + 1}`;
+		const indexedValue = entry.measurements[measurementKey];
+		if (indexedValue !== undefined && indexedValue !== null) return indexedValue;
+
+		const directKey = key.toLowerCase();
+		const directValue = entry.measurements[directKey];
+		if (directValue !== undefined && directValue !== null) return directValue;
+
+		if (key === "Busto" || key === "Peito") {
+			return (
+				entry.measurements.bust ||
+				entry.measurements.chest ||
+				entry.measurements.busto ||
+				entry.measurements.peito ||
+				0
+			);
+		}
+		if (key === "Cintura" || key === "Waist") {
+			return entry.measurements.waist || entry.measurements.cintura || 0;
+		}
+		if (key === "Quadril" || key === "Hip") {
+			return entry.measurements.hips || entry.measurements.hip || entry.measurements.quadril || 0;
+		}
+		if (key === "Comprimento" || key === "Length") {
+			return entry.measurements.comprimento || entry.measurements.length || 0;
+		}
+	}
+
+	if ((key === "Busto" || key === "Peito") && entry.bust !== undefined) return entry.bust;
+	if (key === "Cintura" && entry.waist !== undefined) return entry.waist;
+	if (key === "Quadril" && entry.hips !== undefined) return entry.hips;
+	return 0;
+}
+
+function calculateSizeScores(
+	bodyModel: BodyModel,
+	fitMultiplier: number,
+	sizeChart: SizeChartEntry[],
+	measurementNames: string[],
+	normalizedWeights: Record<string, number>,
+	elasticityLevel: ElasticityLevel,
+) {
+	const scores: SizeScore[] = [];
+	const tolerances = ELASTICITY_TOLERANCES[elasticityLevel];
+	const asymmetryFactor = ASYMMETRY_FACTORS[elasticityLevel];
+
+	for (const entry of sizeChart) {
+		let totalScore = 0;
+		const details: SizeScore["details"] = {};
+
+		measurementNames.forEach((name, index) => {
+			const garmentValue = getMeasurementValue(entry, name, index);
+			const bodyValue = bodyModel[name] * fitMultiplier;
+			if (garmentValue === 0) return;
+
+			let difference = garmentValue - bodyValue;
+			if (difference < 0) difference *= asymmetryFactor;
+			const tolerance = tolerances[name] || 5.0;
+			const normalizedError = Math.abs(difference) / tolerance;
+			const weight = normalizedWeights[name] || 0;
+			const penalty = Math.pow(normalizedError, 2) * weight;
+			totalScore += penalty;
+
+			details[name] = {
+				bodyValue,
+				garmentValue,
+				difference: garmentValue - bodyValue,
+				penalty,
+			};
+		});
+
+		scores.push({
+			size: entry.size_name,
+			score: totalScore,
+			details,
+		});
+	}
+
+	return scores.sort((a, b) => a.score - b.score);
+}
+
+function calculateConfidence(
+	bestScore: number,
+	secondScore: number,
+	elasticityLevel: ElasticityLevel,
+): ConfidenceResult {
+	let baseConfidence = 100;
+	if (bestScore < 1.0) baseConfidence = 100;
+	else if (bestScore < 2.0) baseConfidence = 70;
+	else baseConfidence = 40;
+
+	const gap = secondScore - bestScore;
+	const relativeGap = gap / Math.max(bestScore, 0.5);
+	let dominanceBonus = 0;
+	if (relativeGap > 0.5) dominanceBonus = 20;
+	else if (relativeGap > 0.25) dominanceBonus = 10;
+
+	const elasticityBonus: Record<ElasticityLevel, number> = {
+		structured: -10,
+		light: 0,
+		flexible: 5,
+		high: 10,
+	};
+
+	const finalConfidence = Math.min(
+		100,
+		Math.max(0, baseConfidence + dominanceBonus + elasticityBonus[elasticityLevel]),
+	);
+
+	const level = finalConfidence >= 80 ? "HIGH" : finalConfidence >= 60 ? "MEDIUM" : "LOW";
+	return {
+		level,
+		percentage: finalConfidence,
+		factors: {
+			baseScore: baseConfidence,
+			dominance: dominanceBonus,
+			elasticity: elasticityBonus[elasticityLevel],
+		},
+	};
+}
+
+export function calculateIdealSize(
+	height: number,
+	weight: number,
+	bodyTypeFactor: number,
+	fitFactor: number,
+	sizeChart: SizeChartEntry[],
+	measurementNames?: string[],
+	measurementWeights?: Record<string, number>,
+	rawMeasurements?: RawMeasurements | null,
+	elasticityLevel: ElasticityLevel = "light",
+) {
+	if (!sizeChart?.length) return null;
+
+	let measurements: string[];
+	if (measurementNames && measurementNames.length >= 3) measurements = measurementNames;
+	else if (sizeChart[0]?.measurement_labels && sizeChart[0].measurement_labels.length >= 3)
+		measurements = sizeChart[0].measurement_labels;
+	else measurements = ["Busto", "Cintura", "Quadril"];
+
+	const weights = { ...(measurementWeights || {}) };
+	for (const name of measurements) {
+		if (weights[name] === undefined) weights[name] = 1;
+	}
+
+	const normalizedWeights = normalizeWeights(weights);
+	const bodyModel = buildBodyModel(height, weight, bodyTypeFactor, rawMeasurements || null, measurements);
+	const scores = calculateSizeScores(
+		bodyModel,
+		fitFactor,
+		sizeChart,
+		measurements,
+		normalizedWeights,
+		elasticityLevel,
+	);
+	if (!scores.length) return null;
+
+	const confidence =
+		scores.length >= 2
+			? calculateConfidence(scores[0].score, scores[1].score, elasticityLevel)
+			: {
+					level: "HIGH" as const,
+					percentage: 100,
+					factors: { baseScore: 100, dominance: 0, elasticity: 0 },
+				};
+
+	return {
+		size: scores[0].size,
+		measurements: bodyModel,
+		confidence,
+		debug: {
+			scores,
+			bodyModel,
+		},
+	};
+}

@@ -38,6 +38,25 @@ function buildWidgetUrl(baseUrl: string, nube: NubeSDK, config: StorefrontConfig
 	if (!product) return baseUrl;
 
 	const selectedVariant = product.variants?.[0] || null;
+	const rawImages = Array.isArray((product as ProductDetails & { images?: Array<{ src?: unknown }> }).images)
+		? (product as ProductDetails & { images?: Array<{ src?: unknown }> }).images
+		: [];
+	const imageUrls = rawImages
+		.map((image) => {
+			const source = image?.src;
+			if (typeof source === "string") return source;
+			if (source && typeof source === "object") {
+				return (
+					(source as Record<string, string | undefined>)[state.store.language] ||
+					(source as Record<string, string | undefined>).pt ||
+					(source as Record<string, string | undefined>).es ||
+					(source as Record<string, string | undefined>).en ||
+					""
+				);
+			}
+			return "";
+		})
+		.filter(Boolean);
 	const widgetUrl = new URL(baseUrl);
 	widgetUrl.searchParams.set("platform", "nuvemshop");
 	widgetUrl.searchParams.set("store_id", String(state.store.id));
@@ -48,6 +67,12 @@ function buildWidgetUrl(baseUrl: string, nube: NubeSDK, config: StorefrontConfig
 	widgetUrl.searchParams.set("currency", state.store.currency);
 	if (selectedVariant?.id) {
 		widgetUrl.searchParams.set("variant_id", String(selectedVariant.id));
+	}
+	if (imageUrls[0]) {
+		widgetUrl.searchParams.set("product_image", imageUrls[0]);
+	}
+	if (imageUrls.length) {
+		widgetUrl.searchParams.set("product_images", JSON.stringify(imageUrls));
 	}
 	if (config.store_logo) {
 		widgetUrl.searchParams.set("store_logo", config.store_logo);

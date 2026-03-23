@@ -21,6 +21,8 @@ type LegacyProductContext = {
 	handle: string;
 	productId: string;
 	variantId: string;
+	imageUrl: string;
+	imageUrls: string[];
 };
 
 declare global {
@@ -85,12 +87,31 @@ function getProductContext(): LegacyProductContext | null {
 			?.getAttribute("data-store")
 			?.replace("product-form-", "")
 			?.trim() || variantId;
+	const imageCandidates = Array.from(
+		new Set(
+			[
+				document.querySelector<HTMLMetaElement>('meta[property="og:image"]')?.content || "",
+				...Array.from(document.querySelectorAll<HTMLImageElement>("img")).map(
+					(image) =>
+						image.currentSrc ||
+						image.src ||
+						image.getAttribute("data-src") ||
+						image.getAttribute("data-zoom") ||
+						"",
+				),
+			]
+				.map((value) => String(value || "").trim())
+				.filter((value) => /^https?:\/\//.test(value)),
+		),
+	).slice(0, 8);
 	if (!handle || !name) return null;
 	return {
 		name,
 		handle,
 		productId,
 		variantId,
+		imageUrl: imageCandidates[0] || "",
+		imageUrls: imageCandidates,
 	};
 }
 
@@ -155,9 +176,128 @@ function buildWidgetUrl(
 	widgetUrl.searchParams.set("variant_id", product.variantId || "");
 	widgetUrl.searchParams.set("product_name", product.name);
 	widgetUrl.searchParams.set("product_handle", product.handle);
+	if (product.imageUrl) widgetUrl.searchParams.set("product_image", product.imageUrl);
+	if (product.imageUrls.length) {
+		widgetUrl.searchParams.set("product_images", JSON.stringify(product.imageUrls));
+	}
 	if (config.store_logo) widgetUrl.searchParams.set("store_logo", config.store_logo);
 	if (config.primary_color) widgetUrl.searchParams.set("primary_color", config.primary_color);
 	return widgetUrl.toString();
+}
+
+function getCurrentVariantId() {
+	return document.querySelector<HTMLInputElement>('input[name="add_to_cart"]')?.value?.trim() || "";
+}
+
+function normalizeText(value: string) {
+	return value
+		.toLowerCase()
+		.normalize("NFD")
+		.replace(/[\u0300-\u036f]/g, "")
+		.trim();
+}
+
+function findProductForm() {
+	return (
+		document.querySelector<HTMLFormElement>(".js-product-form") ||
+		document.querySelector<HTMLFormElement>('[data-store^="product-form-"]')
+	);
+}
+
+function trySelectSizeOption(desiredSize: string) {
+	const normalizedDesiredSize = normalizeText(desiredSize);
+	if (!normalizedDesiredSize) return false;
+	const form = findProductForm();
+	if (!form) return false;
+
+	const selects = Array.from(form.querySelectorAll<HTMLSelectElement>("select"));
+	for (const select of selects) {
+		const option = Array.from(select.options).find((item) => {
+			const haystack = normalizeText(`${item.label} ${item.text} ${item.value}`);
+			return haystack === normalizedDesiredSize;
+		});
+		if (option) {
+			select.value = option.value;
+			select.dispatchEvent(new Event("change", { bubbles: true }));
+			return true;
+		}
+	}
+
+	const clickables = Array.from(
+		form.querySelectorAll<HTMLElement>(
+			'input[type="radio"], button, a, label, [data-value], [data-option-value]',
+		),
+	);
+	for (const element of clickables) {
+		const haystack = normalizeText(
+			[
+				element.getAttribute("value"),
+				element.getAttribute("data-value"),
+				element.getAttribute("data-option-value"),
+				element.getAttribute("aria-label"),
+				element.textContent,
+			]
+				.filter(Boolean)
+				.join(" "),
+		);
+		if (haystack === normalizedDesiredSize) {
+			element.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+			return true;
+		}
+	}
+
+	return false;
+}
+
+function postCartResult(ok: boolean, message: string) {
+	const iframe = document.querySelector<HTMLIFrameElement>(`#${MODAL_ID} iframe`);
+	if (!iframe?.contentWindow) return;
+	iframe.contentWindow.postMessage(
+		{
+			type: "omafit-add-to-cart-result",
+			ok,
+			message,
+		},
+		"*",
+	);
+}
+
+function attachMessageBridge() {
+	if ((window as Window & { __omafitBridgeAttached?: boolean }).__omafitBridgeAttached) return;
+	(window as Window & { __omafitBridgeAttached?: boolean }).__omafitBridgeAttached = true;
+
+	window.addEventListener("message", (event) => {
+		if (event.data?.type !== "omafit-add-to-cart-request") return;
+		const desiredSize = String(event.data?.selection?.recommended_size || "").trim();
+		const sizeMatched = desiredSize ? trySelectSizeOption(desiredSize) : false;
+		const form = findProductForm();
+		const submitButton =
+			form?.querySelector<HTMLElement>(".js-prod-submit-form") ||
+			form?.querySelector<HTMLElement>('button[type="submit"]') ||
+			form?.querySelector<HTMLElement>('input[type="submit"]');
+		const beforeVariantId = getCurrentVariantId();
+
+		window.setTimeout(() => {
+			if (submitButton) {
+				submitButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+				postCartResult(
+					true,
+					sizeMatched
+						? "Produto adicionado ao carrinho com o tamanho recomendado."
+						: beforeVariantId
+							? "Produto adicionado ao carrinho com a seleção atual da página."
+							: "Omafit enviou a solicitação para o carrinho.",
+				);
+				return;
+			}
+			if (form) {
+				form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+				postCartResult(true, "Omafit enviou a solicitação para o carrinho.");
+				return;
+			}
+			postCartResult(false, "Nao foi possivel localizar o formulario de compra.");
+		}, sizeMatched ? 500 : 120);
+	});
 }
 
 function ensureStyles(primaryColor: string) {
@@ -312,6 +452,7 @@ function renderButton(
 async function init() {
 	const store = getStoreContext();
 	const product = getProductContext();
+	attachMessageBridge();
 	debugLog(
 		"legacy_init",
 		{
