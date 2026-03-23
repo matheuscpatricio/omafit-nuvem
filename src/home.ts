@@ -79,10 +79,28 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: str
 	});
 }
 
-function getClientId(): string {
-	if (typeof window === "undefined") return "";
+function getClientIdDetails() {
+	if (typeof window === "undefined") {
+		return {
+			clientId: "",
+			queryClientId: "",
+			queryClientIdAlt: "",
+			referrer: "",
+			referrerClientId: "",
+		};
+	}
 	const params = new URLSearchParams(window.location.search);
-	return params.get("client_id") || params.get("clientId") || "";
+	const queryClientId = params.get("client_id") || "";
+	const queryClientIdAlt = params.get("clientId") || "";
+	const referrer = document.referrer || "";
+	const referrerClientId = referrer.match(/\/admin\/apps\/(\d+)/)?.[1] || "";
+	return {
+		clientId: queryClientId || queryClientIdAlt,
+		queryClientId,
+		queryClientIdAlt,
+		referrer,
+		referrerClientId,
+	};
 }
 
 function renderFatalError(message: string) {
@@ -121,20 +139,32 @@ function renderFatalError(message: string) {
 }
 
 async function bootstrap() {
-	const clientId = getClientId();
+	const clientIdDetails = getClientIdDetails();
+	const clientId = clientIdDetails.clientId;
 	renderBootState("bootstrap:start", "Carregando configuracao inicial...");
 	debugLog(
 		"bootstrap_start",
 		{
 			href: typeof window !== "undefined" ? window.location.href : "",
 			clientIdPresent: Boolean(clientId),
+			queryClientId: clientIdDetails.queryClientId || null,
+			queryClientIdAlt: clientIdDetails.queryClientIdAlt || null,
+			referrer: clientIdDetails.referrer || null,
+			referrerClientId: clientIdDetails.referrerClientId || null,
 		},
 		"H3",
 	);
 	if (!clientId) {
-		debugLog("bootstrap_missing_client_id", {}, "H4");
+		debugLog(
+			"bootstrap_missing_client_id",
+			{
+				referrer: clientIdDetails.referrer || null,
+				referrerClientId: clientIdDetails.referrerClientId || null,
+			},
+			"H4",
+		);
 		renderFatalError(
-			"client_id nao encontrado na URL. Configure o App ID da Nuvemshop no Partner Portal.",
+			`client_id nao encontrado na URL. Referrer detectado: ${clientIdDetails.referrer || "nenhum"}.`,
 		);
 		return;
 	}
