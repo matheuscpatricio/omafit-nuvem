@@ -1045,8 +1045,62 @@ async function getShopifyCompatByDomain(shopDomain) {
 	}
 }
 
+async function inspectWidgetPublicIdResolution(storeId, storeUrl = "") {
+	const normalizedDomain = normalizeStoreUrl(storeUrl);
+	const shopKey = getCanonicalShopKey(storeId);
+	const directCandidates = [normalizedDomain, shopKey].filter(Boolean);
+	for (const candidate of directCandidates) {
+		const widgetKey = await findWidgetKeyByShopDomain(candidate);
+		if (widgetKey?.public_id) {
+			return {
+				path: "direct",
+				candidate,
+				publicId: String(widgetKey.public_id),
+				wouldSkipCompatSync: true,
+			};
+		}
+	}
+
+	const shopRecord = await loadLegacyShopRecord(storeId, storeUrl);
+	const recordCandidates = [
+		shopRecord?.public_id,
+		shopRecord?.shop_domain,
+		shopRecord?.store_url,
+		shopRecord?.platform_store_url,
+	]
+		.map((value) => String(value || "").trim())
+		.filter(Boolean);
+	for (const candidate of recordCandidates) {
+		if (candidate.startsWith("wgt_pub_")) {
+			return {
+				path: "record-public-id",
+				candidate,
+				publicId: candidate,
+				wouldSkipCompatSync: false,
+			};
+		}
+		const widgetKey = await findWidgetKeyByShopDomain(normalizeStoreUrl(candidate) || candidate);
+		if (widgetKey?.public_id) {
+			return {
+				path: "record-domain",
+				candidate,
+				publicId: String(widgetKey.public_id),
+				wouldSkipCompatSync: false,
+			};
+		}
+	}
+
+	return {
+		path: "creation-needed",
+		candidate: normalizedDomain || shopKey || "",
+		publicId: "",
+		wouldSkipCompatSync: false,
+	};
+}
+
 async function buildTryonDebugSnapshot(rawBody, contentType) {
 	const incoming = await parseTryonDebugInput(rawBody, contentType);
+	const resolution = await inspectWidgetPublicIdResolution(incoming.storeId, incoming.shopDomain);
 	const resolvedPublicId =
 		incoming.publicId ||
 		(await resolveWidgetPublicId(incoming.storeId, incoming.shopDomain));
@@ -1057,6 +1111,7 @@ async function buildTryonDebugSnapshot(rawBody, contentType) {
 	const widgetShop = await getShopifyCompatByDomain(widgetShopDomain);
 	return {
 		incoming,
+		resolution,
 		resolvedPublicId: resolvedPublicId || "",
 		widgetKey: widgetKey
 			? {
