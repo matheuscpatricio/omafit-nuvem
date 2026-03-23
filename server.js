@@ -588,7 +588,14 @@ async function fetchStoreInfo(session) {
 	const response = await nuvemshopApi(session, "/store", { method: "GET" });
 	const text = await response.text();
 	if (!response.ok) {
-		throw new Error(parseSupabaseError(text)?.message || "Could not fetch store info");
+		const details = parseSupabaseError(text);
+		const error = new Error(details?.message || "Could not fetch store info");
+		Object.assign(error, {
+			status: response.status,
+			url: response.url,
+			body: text,
+		});
+		throw error;
 	}
 	return JSON.parse(text);
 }
@@ -1371,7 +1378,13 @@ async function handleAuth(req, res, reqUrl) {
 		} catch (error) {
 			sendJson(res, 500, {
 				error: error.message || "Nao foi possivel concluir a autenticacao.",
-				debug: authDebug,
+				debug: {
+					...authDebug,
+					failedStep: authDebug.step,
+					fetchStatus: error?.status || null,
+					fetchUrl: error?.url || null,
+					fetchBody: error?.body || null,
+				},
 			});
 		}
 		return true;
