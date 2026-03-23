@@ -250,25 +250,6 @@ function sendJson(res, status, payload) {
 	res.end(JSON.stringify(payload));
 }
 
-function sendDebugLog(location, message, data, runId, hypothesisId) {
-	fetch("http://127.0.0.1:7523/ingest/ebd119e5-639e-45b4-9806-782ca57f574c", {
-		method: "POST",
-		headers: {
-			"Content-Type": "application/json",
-			"X-Debug-Session-Id": "b68c2f",
-		},
-		body: JSON.stringify({
-			sessionId: "b68c2f",
-			location,
-			message,
-			data,
-			timestamp: Date.now(),
-			runId,
-			hypothesisId,
-		}),
-	}).catch(() => {});
-}
-
 function sendText(res, status, payload) {
 	res.writeHead(status, { "Content-Type": "text/plain; charset=utf-8" });
 	res.end(payload);
@@ -500,21 +481,6 @@ async function ensureShopifyCompatShop(storeId, storeUrl = "", shopRecord = null
 	const sourceRecord = shopRecord || (await loadLegacyShopRecord(storeId, storeUrl));
 	const currentPlan = String(sourceRecord?.plan || "ondemand").toLowerCase();
 	const planDef = getPlanDefinition(currentPlan);
-	// #region agent log
-	sendDebugLog(
-		"server.js:497",
-		"ensureShopifyCompatShop_start",
-		{
-			storeId,
-			normalizedDomain,
-			hasShopRecord: Boolean(sourceRecord),
-			sourcePlan: currentPlan,
-			sourceBillingStatus: String(sourceRecord?.billing_status || "active").toLowerCase(),
-		},
-		"initial",
-		"H1",
-	);
-	// #endregion
 	const payloadVariants = [
 		{
 			shop_domain: normalizedDomain,
@@ -549,37 +515,8 @@ async function ensureShopifyCompatShop(storeId, storeUrl = "", shopRecord = null
 			const rows = await supabaseUpsert("shopify_shops", [
 				payload,
 			]);
-			// #region agent log
-			sendDebugLog(
-				"server.js:540",
-				"ensureShopifyCompatShop_success",
-				{
-					storeId,
-					normalizedDomain,
-					attemptIndex: index,
-					returnedShopDomain: rows?.[0]?.shop_domain || null,
-					returnedBillingStatus: rows?.[0]?.billing_status || null,
-				},
-				"initial",
-				"H1",
-			);
-			// #endregion
 			return Array.isArray(rows) ? rows[0] || null : null;
-		} catch (error) {
-			// #region agent log
-			sendDebugLog(
-				"server.js:555",
-				"ensureShopifyCompatShop_attempt_failed",
-				{
-					storeId,
-					normalizedDomain,
-					attemptIndex: index,
-					error: error?.message || "unknown",
-				},
-				"initial",
-				"H1",
-			);
-			// #endregion
+		} catch (_error) {
 			// try next compatible payload shape
 		}
 	}
@@ -944,22 +881,6 @@ async function resolveWidgetPublicId(storeId, storeUrl = "") {
 	for (const candidate of directCandidates) {
 		const widgetKey = await findWidgetKeyByShopDomain(candidate);
 		if (widgetKey?.public_id) {
-			// #region agent log
-			sendDebugLog(
-				"server.js:922",
-				"resolveWidgetPublicId_direct_hit",
-				{
-					storeId,
-					normalizedDomain,
-					candidate,
-					publicId: widgetKey.public_id,
-					widgetShopDomain: widgetKey.shop_domain || null,
-					widgetDomain: widgetKey.domain || null,
-				},
-				"initial",
-				"H2",
-			);
-			// #endregion
 			return String(widgetKey.public_id);
 		}
 	}
@@ -979,39 +900,10 @@ async function resolveWidgetPublicId(storeId, storeUrl = "") {
 
 	for (const candidate of recordCandidates) {
 		if (candidate.startsWith("wgt_pub_")) {
-			// #region agent log
-			sendDebugLog(
-				"server.js:948",
-				"resolveWidgetPublicId_record_public_id",
-				{
-					storeId,
-					normalizedDomain,
-					candidate,
-				},
-				"initial",
-				"H2",
-			);
-			// #endregion
 			return candidate;
 		}
 		const widgetKey = await findWidgetKeyByShopDomain(normalizeStoreUrl(candidate) || candidate);
 		if (widgetKey?.public_id) {
-			// #region agent log
-			sendDebugLog(
-				"server.js:963",
-				"resolveWidgetPublicId_record_hit",
-				{
-					storeId,
-					normalizedDomain,
-					candidate,
-					publicId: widgetKey.public_id,
-					widgetShopDomain: widgetKey.shop_domain || null,
-					widgetDomain: widgetKey.domain || null,
-				},
-				"initial",
-				"H2",
-			);
-			// #endregion
 			return String(widgetKey.public_id);
 		}
 	}
@@ -1060,20 +952,6 @@ async function enrichTryonRequestBody(rawBody, contentType) {
 			const storeId = String(formData.get("store_id") || "").trim();
 			const shopDomain = normalizeStoreUrl(String(formData.get("shop_domain") || ""));
 			const resolvedPublicId = await resolveWidgetPublicId(storeId, shopDomain);
-			// #region agent log
-			sendDebugLog(
-				"server.js:1020",
-				"enrichTryonRequestBody_multipart",
-				{
-					storeId,
-					shopDomain,
-					incomingPublicId,
-					resolvedPublicId: resolvedPublicId || "",
-				},
-				"initial",
-				"H3",
-			);
-			// #endregion
 			if (!resolvedPublicId) {
 				return { body: rawBody, contentType };
 			}
@@ -1083,19 +961,7 @@ async function enrichTryonRequestBody(rawBody, contentType) {
 				body: Buffer.from(await response.arrayBuffer()),
 				contentType: response.headers.get("content-type") || contentType,
 			};
-		} catch (error) {
-			// #region agent log
-			sendDebugLog(
-				"server.js:1038",
-				"enrichTryonRequestBody_multipart_failed",
-				{
-					contentType: String(contentType || ""),
-					error: error?.message || "unknown",
-				},
-				"initial",
-				"H3",
-			);
-			// #endregion
+		} catch (_error) {
 			return { body: rawBody, contentType };
 		}
 	}
@@ -1120,6 +986,110 @@ async function enrichTryonRequestBody(rawBody, contentType) {
 	}
 
 	return { body: rawBody, contentType };
+}
+
+async function parseTryonDebugInput(rawBody, contentType) {
+	const input = {
+		contentType: String(contentType || ""),
+		storeId: "",
+		shopDomain: "",
+		publicId: "",
+		parseError: "",
+	};
+	if (!rawBody?.length) return input;
+	try {
+		if (String(contentType).includes("multipart/form-data")) {
+			const request = new Request("http://localhost/api/widget/tryon", {
+				method: "POST",
+				headers: { "Content-Type": contentType },
+				body: rawBody,
+			});
+			const formData = await request.formData();
+			return {
+				...input,
+				storeId: String(formData.get("store_id") || "").trim(),
+				shopDomain: normalizeStoreUrl(String(formData.get("shop_domain") || "")),
+				publicId: String(formData.get("public_id") || "").trim(),
+			};
+		}
+		if (String(contentType).includes("application/json")) {
+			const payload = JSON.parse(rawBody.toString("utf8") || "{}");
+			return {
+				...input,
+				storeId: String(payload.store_id || "").trim(),
+				shopDomain: normalizeStoreUrl(payload.shop_domain || payload.store_domain || ""),
+				publicId: String(payload.public_id || "").trim(),
+			};
+		}
+		return input;
+	} catch (error) {
+		return {
+			...input,
+			parseError: error?.message || "unknown",
+		};
+	}
+}
+
+async function getWidgetKeyByPublicId(publicId) {
+	if (!publicId) return null;
+	try {
+		return await supabaseSelectFirst(
+			`widget_keys?public_id=eq.${encodeURIComponent(publicId)}&select=public_id,shop_domain,domain,user_id,status,is_active&limit=1`,
+		);
+	} catch (_error) {
+		return null;
+	}
+}
+
+async function getShopifyCompatByDomain(shopDomain) {
+	if (!shopDomain) return null;
+	try {
+		return await supabaseSelectFirst(
+			`shopify_shops?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=shop_domain,billing_status,plan,billing_cycle_end&limit=1`,
+		);
+	} catch (_error) {
+		return null;
+	}
+}
+
+async function buildTryonDebugSnapshot(rawBody, contentType) {
+	const incoming = await parseTryonDebugInput(rawBody, contentType);
+	const resolvedPublicId =
+		incoming.publicId ||
+		(await resolveWidgetPublicId(incoming.storeId, incoming.shopDomain));
+	const widgetKey = await getWidgetKeyByPublicId(resolvedPublicId);
+	const widgetShopDomain =
+		normalizeStoreUrl(widgetKey?.shop_domain) || normalizeStoreUrl(widgetKey?.domain);
+	const requestShop = await getShopifyCompatByDomain(incoming.shopDomain);
+	const widgetShop = await getShopifyCompatByDomain(widgetShopDomain);
+	return {
+		incoming,
+		resolvedPublicId: resolvedPublicId || "",
+		widgetKey: widgetKey
+			? {
+					publicId: widgetKey.public_id || "",
+					shopDomain: widgetKey.shop_domain || "",
+					domain: widgetKey.domain || "",
+					hasUserId: Boolean(widgetKey.user_id),
+					status: widgetKey.status || "",
+					isActive: widgetKey.is_active ?? null,
+			  }
+			: null,
+		requestShop: requestShop
+			? {
+					shopDomain: requestShop.shop_domain || "",
+					billingStatus: requestShop.billing_status || "",
+					plan: requestShop.plan || "",
+			  }
+			: null,
+		widgetShop: widgetShop
+			? {
+					shopDomain: widgetShop.shop_domain || "",
+					billingStatus: widgetShop.billing_status || "",
+					plan: widgetShop.plan || "",
+			  }
+			: null,
+	};
 }
 
 async function saveWidgetConfig(storeId, payload) {
@@ -1634,10 +1604,16 @@ async function handleApi(req, res, reqUrl) {
 	}
 
 	if (pathname === "/api/widget/tryon" && method === "POST") {
+		let tryonDebug = null;
 		try {
 			const rawBody = await readRequestBody(req);
 			const originalContentType = req.headers["content-type"] || "application/json";
+			tryonDebug = await buildTryonDebugSnapshot(rawBody, originalContentType);
 			const { body, contentType } = await enrichTryonRequestBody(rawBody, originalContentType);
+			const forwarded = await parseTryonDebugInput(body, contentType);
+			if (tryonDebug) {
+				tryonDebug.forwarded = forwarded;
+			}
 			const response = await supabaseFunctionRequest("tryon", {
 				method: "POST",
 				headers: {
@@ -1646,37 +1622,30 @@ async function handleApi(req, res, reqUrl) {
 				body,
 			});
 			const payload = await response.text();
-			// #region agent log
-			sendDebugLog(
-				"server.js:1585",
-				"tryon_proxy_response",
-				{
-					status: response.status,
-					contentType,
-					payloadSnippet: String(payload || "").slice(0, 280),
-				},
-				"initial",
-				"H4",
-			);
-			// #endregion
+			if (!response.ok) {
+				const parsedPayload = parseSupabaseError(payload) || {};
+				sendJson(res, response.status, {
+					...((parsedPayload && typeof parsedPayload === "object") ? parsedPayload : {}),
+					error:
+						parsedPayload?.error ||
+						parsedPayload?.message ||
+						String(payload || "Nao foi possivel processar o try-on."),
+					debug: {
+						...(tryonDebug || {}),
+						responseStatus: response.status,
+						responseBody: String(payload || "").slice(0, 500),
+					},
+				});
+				return true;
+			}
 			res.writeHead(response.status, {
 				"Content-Type": response.headers.get("content-type") || "application/json; charset=utf-8",
 			});
 			res.end(payload);
 		} catch (error) {
-			// #region agent log
-			sendDebugLog(
-				"server.js:1601",
-				"tryon_proxy_exception",
-				{
-					error: error?.message || "unknown",
-				},
-				"initial",
-				"H4",
-			);
-			// #endregion
 			sendJson(res, 500, {
 				error: error.message || "Nao foi possivel processar o try-on.",
+				debug: tryonDebug,
 			});
 		}
 		return true;

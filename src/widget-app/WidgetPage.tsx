@@ -66,26 +66,8 @@ type TryOnStartResponse = {
 	success?: boolean;
 	fal_request_id?: string;
 	error?: string;
+	debug?: Record<string, unknown>;
 };
-
-function sendDebugLog(location: string, message: string, data: Record<string, unknown>, hypothesisId: string) {
-	fetch("http://127.0.0.1:7523/ingest/ebd119e5-639e-45b4-9806-782ca57f574c", {
-		method: "POST",
-		headers: {
-			"Content-Type": "application/json",
-			"X-Debug-Session-Id": "b68c2f",
-		},
-		body: JSON.stringify({
-			sessionId: "b68c2f",
-			location,
-			message,
-			data,
-			timestamp: Date.now(),
-			runId: "initial",
-			hypothesisId,
-		}),
-	}).catch(() => {});
-}
 
 type TryOnStatusResponse = {
 	status?: string;
@@ -197,6 +179,24 @@ function decodeValue(value: string | null) {
 	} catch {
 		return value;
 	}
+}
+
+function formatTryonDebug(debug?: Record<string, unknown>) {
+	if (!debug) return "";
+	const incoming = (debug.incoming as Record<string, unknown> | undefined) || {};
+	const widgetKey = (debug.widgetKey as Record<string, unknown> | undefined) || {};
+	const requestShop = (debug.requestShop as Record<string, unknown> | undefined) || {};
+	const widgetShop = (debug.widgetShop as Record<string, unknown> | undefined) || {};
+	const forwarded = (debug.forwarded as Record<string, unknown> | undefined) || {};
+	const parts = [
+		`reqDomain=${String(incoming.shopDomain || "")}`,
+		`resolvedPublicId=${String(debug.resolvedPublicId || "")}`,
+		`widgetDomain=${String(widgetKey.shopDomain || widgetKey.domain || "")}`,
+		`requestShop=${requestShop.shopDomain ? "ok" : "missing"}`,
+		`widgetShop=${widgetShop.shopDomain ? "ok" : "missing"}`,
+		`forwardedPublicId=${String(forwarded.publicId || "")}`,
+	];
+	return ` [debug: ${parts.join(" | ")}]`;
 }
 
 function parseListParam(value: string | null) {
@@ -565,54 +565,17 @@ export function WidgetPage() {
 		);
 
 		try {
-			// #region agent log
-			sendDebugLog(
-				"WidgetPage.tsx:566",
-				"widget_tryon_submit",
-				{
-					storeId: params.storeId,
-					storeDomain: params.storeDomain,
-					productId: params.productId,
-					publicId: publicId || "",
-					hasPhotoFile: Boolean(photoFile),
-				},
-				"H3",
-			);
-			// #endregion
 			const response = await fetch("/api/widget/tryon", {
 				method: "POST",
 				body: formData,
 			});
 			const result = (await response.json().catch(() => ({}))) as TryOnStartResponse;
-			// #region agent log
-			sendDebugLog(
-				"WidgetPage.tsx:581",
-				"widget_tryon_response",
-				{
-					status: response.status,
-					success: Boolean(result?.success),
-					hasRequestId: Boolean(result?.fal_request_id),
-					error: result?.error || "",
-				},
-				"H4",
-			);
-			// #endregion
 			if (!response.ok || !result.success || !result.fal_request_id) {
-				throw new Error(result.error || t("processingError"));
+				throw new Error((result.error || t("processingError")) + formatTryonDebug(result.debug));
 			}
 			setProcessingMessageKey("generating");
 			void startPolling(result.fal_request_id);
 		} catch (caughtError) {
-			// #region agent log
-			sendDebugLog(
-				"WidgetPage.tsx:597",
-				"widget_tryon_exception",
-				{
-					error: caughtError instanceof Error ? caughtError.message : "unknown",
-				},
-				"H4",
-			);
-			// #endregion
 			setStep("confirm");
 			setError(caughtError instanceof Error ? caughtError.message : t("processingError"));
 		}
