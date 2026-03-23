@@ -479,49 +479,42 @@ async function ensureShopifyCompatShop(storeId, storeUrl = "", shopRecord = null
 	const normalizedDomain = normalizeStoreUrl(storeUrl);
 	if (!storeId || !normalizedDomain) return null;
 	const sourceRecord = shopRecord || (await loadLegacyShopRecord(storeId, storeUrl));
-	const currentPlan = String(sourceRecord?.plan || "ondemand").toLowerCase();
+	const currentPlan = String(sourceRecord?.plan || "free").toLowerCase();
 	const planDef = getPlanDefinition(currentPlan);
-	const payloadVariants = [
+	const now = new Date();
+	const cycleEnd = new Date(now);
+	cycleEnd.setDate(cycleEnd.getDate() + 30);
+	const payload = {
+		shop_domain: normalizedDomain,
+		plan: currentPlan,
+		images_included: Number(sourceRecord?.images_included ?? planDef.imagesIncluded ?? 50),
+		price_per_extra_image: Number(
+			sourceRecord?.price_per_extra_image ?? planDef.pricePerExtraImage ?? 0.18,
+		),
+		currency: String(sourceRecord?.currency || planDef.currency || "BRL"),
+		billing_status: String(sourceRecord?.billing_status || "active").toLowerCase(),
+		billing_cycle_start: sourceRecord?.billing_cycle_start || now.toISOString(),
+		billing_cycle_end: sourceRecord?.billing_cycle_end || cycleEnd.toISOString(),
+		images_used_month: Number(sourceRecord?.images_used_month ?? 0),
+		last_billed_images: Number(sourceRecord?.last_billed_images ?? 0),
+		updated_at: now.toISOString(),
+	};
+	const response = await supabaseRequest(
+		"shopify_shops?on_conflict=shop_domain&select=shop_domain,billing_status,plan,billing_cycle_end",
 		{
-			shop_domain: normalizedDomain,
-			plan: currentPlan,
-			billing_status: String(sourceRecord?.billing_status || "active").toLowerCase(),
-			images_included: Number(sourceRecord?.images_included ?? planDef.imagesIncluded),
-			images_used_month: Number(sourceRecord?.images_used_month ?? 0),
-			price_per_extra_image: Number(
-				sourceRecord?.price_per_extra_image ?? planDef.pricePerExtraImage,
-			),
-			currency: String(sourceRecord?.currency || planDef.currency || "BRL"),
-			billing_cycle_end: sourceRecord?.billing_cycle_end || "2099-12-31T23:59:59.000Z",
-			updated_at: new Date().toISOString(),
+			method: "POST",
+			headers: {
+				Prefer: "resolution=merge-duplicates,return=representation",
+			},
+			body: JSON.stringify([payload]),
 		},
-		{
-			shop_domain: normalizedDomain,
-			plan: currentPlan,
-			billing_status: String(sourceRecord?.billing_status || "active").toLowerCase(),
-			images_included: Number(sourceRecord?.images_included ?? planDef.imagesIncluded),
-			images_used_month: Number(sourceRecord?.images_used_month ?? 0),
-			price_per_extra_image: Number(
-				sourceRecord?.price_per_extra_image ?? planDef.pricePerExtraImage,
-			),
-			currency: String(sourceRecord?.currency || planDef.currency || "BRL"),
-			updated_at: new Date().toISOString(),
-		},
-	];
-
-	for (let index = 0; index < payloadVariants.length; index += 1) {
-		const payload = payloadVariants[index];
-		try {
-			const rows = await supabaseUpsert("shopify_shops", [
-				payload,
-			]);
-			return Array.isArray(rows) ? rows[0] || null : null;
-		} catch (_error) {
-			// try next compatible payload shape
-		}
+	);
+	if (!response.ok) {
+		const text = await response.text().catch(() => "");
+		throw new Error(parseSupabaseError(text)?.message || "Nao foi possivel sincronizar billing compatível.");
 	}
-
-	return null;
+	const rows = await response.json().catch(() => []);
+	return Array.isArray(rows) ? rows[0] || null : null;
 }
 
 async function upsertStoreRecord(session, storeData = {}) {
