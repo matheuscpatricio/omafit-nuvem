@@ -7,7 +7,7 @@ import {
 	statSync,
 	writeFileSync,
 } from "fs";
-import { createHmac, randomUUID } from "crypto";
+import { createHash, createHmac, randomUUID } from "crypto";
 import { extname, join } from "path";
 import { dirname } from "path";
 import { fileURLToPath } from "url";
@@ -743,12 +743,85 @@ async function getWidgetConfig(storeId) {
 async function findWidgetKeyByShopDomain(shopDomain) {
 	if (!shopDomain) return null;
 	try {
-		return await supabaseSelectFirst(
+		const byShopDomain = await supabaseSelectFirst(
 			`widget_keys?shop_domain=eq.${encodeURIComponent(shopDomain)}&select=public_id,shop_domain,is_active,created_at,updated_at&order=updated_at.desc&limit=1`,
+		);
+		if (byShopDomain) return byShopDomain;
+		return await supabaseSelectFirst(
+			`widget_keys?domain=eq.${encodeURIComponent(shopDomain)}&select=public_id,shop_domain,domain,is_active,created_at,updated_at&order=updated_at.desc&limit=1`,
 		);
 	} catch (_error) {
 		return null;
 	}
+}
+
+function generateWidgetPublicId(shopDomain = "") {
+	return `wgt_pub_${createHash("sha256")
+		.update(`${shopDomain}:${Date.now()}:${randomUUID()}`)
+		.digest("hex")
+		.slice(0, 24)}`;
+}
+
+function generateWidgetSecretKey(shopDomain = "") {
+	return `wgt_${createHash("sha256")
+		.update(`secret:${shopDomain}:${Date.now()}:${randomUUID()}`)
+		.digest("hex")
+		.slice(0, 16)}`;
+}
+
+async function createWidgetKeyFallback(shopDomain) {
+	if (!shopDomain) return null;
+	const publicId = generateWidgetPublicId(shopDomain);
+	const timestamp = new Date().toISOString();
+	const payloadVariants = [
+		{
+			public_id: publicId,
+			shop_domain: shopDomain,
+			domain: shopDomain,
+			status: "active",
+			is_active: true,
+			name: "Default Widget Key",
+			key: generateWidgetSecretKey(shopDomain),
+			created_at: timestamp,
+			updated_at: timestamp,
+		},
+		{
+			public_id: publicId,
+			shop_domain: shopDomain,
+			status: "active",
+			name: "Default Widget Key",
+			key: generateWidgetSecretKey(shopDomain),
+			created_at: timestamp,
+			updated_at: timestamp,
+		},
+		{
+			public_id: publicId,
+			shop_domain: shopDomain,
+			is_active: true,
+			created_at: timestamp,
+			updated_at: timestamp,
+		},
+	];
+
+	for (const payload of payloadVariants) {
+		try {
+			const response = await supabaseRequest("widget_keys?on_conflict=shop_domain&select=public_id,shop_domain", {
+				method: "POST",
+				headers: {
+					Prefer: "resolution=merge-duplicates,return=representation",
+				},
+				body: JSON.stringify([payload]),
+			});
+			if (!response.ok) continue;
+			const rows = await response.json().catch(() => []);
+			const row = Array.isArray(rows) ? rows[0] : null;
+			if (row?.public_id) return row;
+		} catch (_error) {
+			// try next payload shape
+		}
+	}
+
+	return null;
 }
 
 async function resolveWidgetPublicId(storeId, storeUrl = "") {
@@ -797,7 +870,66 @@ async function resolveWidgetPublicId(storeId, storeUrl = "") {
 		}
 	}
 
+	for (const candidate of creationCandidates) {
+		const created = await createWidgetKeyFallback(candidate);
+		if (created?.public_id) {
+			return String(created.public_id);
+		}
+	}
+
 	return "";
+}
+
+async function enrichTryonRequestBody(rawBody, contentType) {
+	if (!rawBody?.length) {
+		return { body: rawBody, contentType };
+	}
+
+	if (String(contentType).includes("multipart/form-data")) {
+		const request = new Request("http://localhost/api/widget/tryon", {
+			method: "POST",
+			headers: { "Content-Type": contentType },
+			body: rawBody,
+		});
+		const formData = await request.formData();
+		const incomingPublicId = String(formData.get("public_id") || "").trim();
+		if (incomingPublicId) {
+			return { body: rawBody, contentType };
+		}
+		const storeId = String(formData.get("store_id") || "").trim();
+		const shopDomain = normalizeStoreUrl(String(formData.get("shop_domain") || ""));
+		const resolvedPublicId = await resolveWidgetPublicId(storeId, shopDomain);
+		if (!resolvedPublicId) {
+			return { body: rawBody, contentType };
+		}
+		formData.set("public_id", resolvedPublicId);
+		const response = new Response(formData);
+		return {
+			body: Buffer.from(await response.arrayBuffer()),
+			contentType: response.headers.get("content-type") || contentType,
+		};
+	}
+
+	if (String(contentType).includes("application/json")) {
+		const payload = JSON.parse(rawBody.toString("utf8") || "{}");
+		if (String(payload.public_id || "").trim()) {
+			return { body: rawBody, contentType };
+		}
+		const resolvedPublicId = await resolveWidgetPublicId(
+			String(payload.store_id || "").trim(),
+			normalizeStoreUrl(payload.shop_domain || payload.store_domain || ""),
+		);
+		if (!resolvedPublicId) {
+			return { body: rawBody, contentType };
+		}
+		payload.public_id = resolvedPublicId;
+		return {
+			body: Buffer.from(JSON.stringify(payload)),
+			contentType: "application/json",
+		};
+	}
+
+	return { body: rawBody, contentType };
 }
 
 async function saveWidgetConfig(storeId, payload) {
@@ -1314,13 +1446,14 @@ async function handleApi(req, res, reqUrl) {
 	if (pathname === "/api/widget/tryon" && method === "POST") {
 		try {
 			const rawBody = await readRequestBody(req);
-			const contentType = req.headers["content-type"] || "application/json";
+			const originalContentType = req.headers["content-type"] || "application/json";
+			const { body, contentType } = await enrichTryonRequestBody(rawBody, originalContentType);
 			const response = await supabaseFunctionRequest("tryon", {
 				method: "POST",
 				headers: {
 					"Content-Type": contentType,
 				},
-				body: rawBody,
+				body,
 			});
 			const payload = await response.text();
 			res.writeHead(response.status, {

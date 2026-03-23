@@ -527,6 +527,7 @@ export function WidgetPage() {
 
 		const formData = new FormData();
 		formData.append("model_image_file", photoFile, photoFile.name || "tryon-model.jpg");
+		formData.append("store_id", params.storeId);
 		formData.append("shop_domain", params.storeDomain);
 		formData.append("garment_image", selectedProductImage || "");
 		formData.append("product_name", params.productName);
