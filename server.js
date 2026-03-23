@@ -169,6 +169,10 @@ function getAppName() {
 	return process.env.OMAFIT_APP_NAME || "Omafit";
 }
 
+function getNuvemshopAppId() {
+	return process.env.NUVEMSHOP_APP_ID || process.env.NUVEMSHOP_CLIENT_ID || "";
+}
+
 function getApiBase() {
 	return (
 		process.env.NUVEMSHOP_API_BASE_URL ||
@@ -515,7 +519,7 @@ async function upsertStoreRecord(session, storeData = {}) {
 }
 
 function buildAuthUrl(state) {
-	const appId = process.env.NUVEMSHOP_APP_ID || process.env.NUVEMSHOP_CLIENT_ID || "";
+	const appId = getNuvemshopAppId();
 	if (!appId) return "";
 	const url = new URL(`${getAuthorizeBase()}/apps/${appId}/authorize`);
 	if (state) url.searchParams.set("state", state);
@@ -1050,6 +1054,7 @@ async function handleApi(req, res, reqUrl) {
 	if (pathname === "/api/config") {
 		sendJson(res, 200, {
 			appName: getAppName(),
+			appId: getNuvemshopAppId(),
 			widgetUrl: getWidgetBaseUrl(req),
 			supportUrl: getSupportUrl(),
 			supportEmail: getSupportEmail(),

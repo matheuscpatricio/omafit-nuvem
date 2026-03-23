@@ -95,12 +95,51 @@ function getClientIdDetails() {
 	const referrer = document.referrer || "";
 	const referrerClientId = referrer.match(/\/admin\/apps\/(\d+)/)?.[1] || "";
 	return {
-		clientId: queryClientId || queryClientIdAlt,
+		clientId: queryClientId || queryClientIdAlt || referrerClientId,
 		queryClientId,
 		queryClientIdAlt,
 		referrer,
 		referrerClientId,
 	};
+}
+
+async function resolveClientId() {
+	const details = getClientIdDetails();
+	if (details.clientId) {
+		return {
+			clientId: details.clientId,
+			source: details.referrerClientId && !details.queryClientId && !details.queryClientIdAlt
+				? "referrer"
+				: "query",
+			details,
+		};
+	}
+	try {
+		const response = await fetch("/api/config");
+		const payload = (await response.json().catch(() => ({}))) as {
+			appId?: string;
+			authUrl?: string;
+		};
+		const authUrlClientId =
+			typeof payload.authUrl === "string"
+				? payload.authUrl.match(/\/apps\/(\d+)\/authorize/)?.[1] || ""
+				: "";
+		const configClientId = String(payload.appId || authUrlClientId || "").trim();
+		return {
+			clientId: configClientId,
+			source: configClientId ? "api_config" : "missing",
+			details: {
+				...details,
+				configClientId,
+			},
+		};
+	} catch (_error) {
+		return {
+			clientId: "",
+			source: "missing",
+			details,
+		};
+	}
 }
 
 function renderFatalError(message: string) {
@@ -139,18 +178,24 @@ function renderFatalError(message: string) {
 }
 
 async function bootstrap() {
-	const clientIdDetails = getClientIdDetails();
-	const clientId = clientIdDetails.clientId;
+	const resolvedClientId = await resolveClientId();
+	const clientIdDetails = resolvedClientId.details;
+	const clientId = resolvedClientId.clientId;
 	renderBootState("bootstrap:start", "Carregando configuracao inicial...");
 	debugLog(
 		"bootstrap_start",
 		{
 			href: typeof window !== "undefined" ? window.location.href : "",
 			clientIdPresent: Boolean(clientId),
+			clientIdSource: resolvedClientId.source,
 			queryClientId: clientIdDetails.queryClientId || null,
 			queryClientIdAlt: clientIdDetails.queryClientIdAlt || null,
 			referrer: clientIdDetails.referrer || null,
 			referrerClientId: clientIdDetails.referrerClientId || null,
+			configClientId:
+				"configClientId" in clientIdDetails
+					? (clientIdDetails as typeof clientIdDetails & { configClientId?: string }).configClientId || null
+					: null,
 		},
 		"H3",
 	);
@@ -158,13 +203,14 @@ async function bootstrap() {
 		debugLog(
 			"bootstrap_missing_client_id",
 			{
+				clientIdSource: resolvedClientId.source,
 				referrer: clientIdDetails.referrer || null,
 				referrerClientId: clientIdDetails.referrerClientId || null,
 			},
 			"H4",
 		);
 		renderFatalError(
-			`client_id nao encontrado na URL. Referrer detectado: ${clientIdDetails.referrer || "nenhum"}.`,
+			`client_id nao encontrado. Fonte tentada: ${resolvedClientId.source}. Referrer detectado: ${clientIdDetails.referrer || "nenhum"}.`,
 		);
 		return;
 	}
