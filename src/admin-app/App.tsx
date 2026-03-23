@@ -637,7 +637,7 @@ function DashboardSection({
 					{t("dashboard.lastSync")}: {formatDate(context.auth.lastSyncAt)}
 				</span>
 				<span style={subtleTextStyle}>
-					Webhooks: {formatDate(context.auth.webhooksSyncedAt)}
+						{t("dashboard.autoUpdates")}: {formatDate(context.auth.webhooksSyncedAt)}
 				</span>
 			</div>
 		</div>
