@@ -10,6 +10,22 @@ type StorefrontConfig = {
 	excluded_collections: string[];
 };
 
+function debugLog(message: string, data: Record<string, unknown>, hypothesisId: string) {
+	// #region agent log
+	fetch('http://127.0.0.1:7523/ingest/ebd119e5-639e-45b4-9806-782ca57f574c',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b68c2f'},body:JSON.stringify({sessionId:'b68c2f',runId:'storefront-debug',hypothesisId,location:'src/main.tsx',message,data,timestamp:Date.now()})}).catch(()=>{});
+	// #endregion
+	console.info("[Omafit Storefront Debug]", hypothesisId, message, data);
+}
+
+function renderDebugMessage(nube: NubeSDK, message: string) {
+	nube.render(
+		"after_product_detail_name",
+		<Text>
+			{message}
+		</Text>,
+	);
+}
+
 function getCurrentProduct(nube: NubeSDK): ProductDetails | null {
 	const page = nube.getState().location.page;
 	if (page.type !== "product") return null;
@@ -50,9 +66,23 @@ function shouldHideForProduct(product: ProductDetails | null, config: Storefront
 
 async function loadStorefrontConfig(storeId: number) {
 	try {
+		debugLog("load_config_start", { storeId }, "H2");
 		const response = await fetch(`/api/storefront/widget-config?store_id=${encodeURIComponent(String(storeId))}`);
 		if (!response.ok) throw new Error("request failed");
 		const data = await response.json();
+		debugLog(
+			"load_config_success",
+			{
+				storeId,
+				hasConfig: Boolean(data?.config),
+				widgetEnabled: data?.config?.widget_enabled ?? true,
+				excludedCollections: Array.isArray(data?.config?.excluded_collections)
+					? data.config.excluded_collections
+					: [],
+				widgetUrl: String(data?.widgetUrl || "https://omafit.netlify.app"),
+			},
+			"H2",
+		);
 		return {
 			config: (data?.config || {
 				link_text: "Ver meu tamanho ideal",
@@ -62,7 +92,15 @@ async function loadStorefrontConfig(storeId: number) {
 			}) as StorefrontConfig,
 			widgetUrl: String(data?.widgetUrl || "https://omafit.netlify.app"),
 		};
-	} catch (_error) {
+	} catch (error) {
+		debugLog(
+			"load_config_error",
+			{
+				storeId,
+				error: error instanceof Error ? error.message : String(error),
+			},
+			"H2",
+		);
 		return {
 			config: {
 				link_text: "Ver meu tamanho ideal",
@@ -77,13 +115,51 @@ async function loadStorefrontConfig(storeId: number) {
 
 function renderWidget(nube: NubeSDK, config: StorefrontConfig, widgetBaseUrl: string) {
 	const product = getCurrentProduct(nube);
+	const page = nube.getState().location.page;
+	const categoryIds = (product?.categories || []).map((categoryId) => String(categoryId));
+	debugLog(
+		"render_widget_start",
+		{
+			pageType: page.type,
+			hasProduct: Boolean(product),
+			productId: product?.id || null,
+			categoryIds,
+			widgetEnabled: config.widget_enabled,
+			excludedCollections: config.excluded_collections,
+			widgetBaseUrl,
+		},
+		"H3",
+	);
 	if (shouldHideForProduct(product, config)) {
+		const reason = !product
+			? "Sem contexto de produto nesta página."
+			: config.widget_enabled === false
+				? "Widget desativado na configuração."
+				: "Produto pertence a uma categoria excluída.";
+		debugLog(
+			"render_widget_hidden",
+			{
+				productId: product?.id || null,
+				reason,
+				categoryIds,
+				excludedCollections: config.excluded_collections,
+			},
+			"H4",
+		);
+		renderDebugMessage(nube, `Diagnóstico Omafit: ${reason}`);
 		nube.clearSlot("after_product_detail_add_to_cart");
-		nube.clearSlot("after_product_detail_name");
 		return;
 	}
 
 	const widgetUrl = buildWidgetUrl(widgetBaseUrl, nube, config);
+	debugLog(
+		"render_widget_visible",
+		{
+			productId: product?.id || null,
+			widgetUrl,
+		},
+		"H5",
+	);
 	nube.render(
 		"after_product_detail_name",
 		<Text>
@@ -118,11 +194,29 @@ function renderWidget(nube: NubeSDK, config: StorefrontConfig, widgetBaseUrl: st
 			{config.link_text || "Ver meu tamanho ideal"}
 		</Button>,
 	);
+	debugLog(
+		"render_widget_complete",
+		{
+			productId: product?.id || null,
+			slot: "after_product_detail_add_to_cart",
+		},
+		"H5",
+	);
 }
 
 export function App(nube: NubeSDK) {
 	const boot = async () => {
-		const { config, widgetUrl } = await loadStorefrontConfig(nube.getState().store.id);
+		const state = nube.getState();
+		debugLog(
+			"app_boot",
+			{
+				storeId: state.store.id,
+				storeDomain: state.store.domain,
+				pageType: state.location.page.type,
+			},
+			"H1",
+		);
+		const { config, widgetUrl } = await loadStorefrontConfig(state.store.id);
 		renderWidget(nube, config, widgetUrl);
 	};
 
