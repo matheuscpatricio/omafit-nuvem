@@ -1,6 +1,6 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
-import nexo, { connect, getStoreInfo, iAmReady } from "@tiendanube/nexo";
+import nexo, { connect, getStoreInfo, iAmReady } from "./lib/nexo";
 import { OmafitAdminApp } from "./admin-app/App";
 
 function getClientId(): string {

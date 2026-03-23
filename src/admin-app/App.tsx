@@ -3,7 +3,7 @@ import {
 	navigateHeader,
 	syncPathname,
 	type NexoClient,
-} from "@tiendanube/nexo";
+} from "../lib/nexo";
 import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { I18nProvider, useI18n } from "./i18n";
 import type {
