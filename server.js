@@ -475,6 +475,54 @@ async function loadLegacyShopRecord(storeId, storeUrl = "") {
 	return null;
 }
 
+async function ensureShopifyCompatShop(storeId, storeUrl = "", shopRecord = null) {
+	const normalizedDomain = normalizeStoreUrl(storeUrl);
+	if (!storeId || !normalizedDomain) return null;
+	const sourceRecord = shopRecord || (await loadLegacyShopRecord(storeId, storeUrl));
+	const currentPlan = String(sourceRecord?.plan || "ondemand").toLowerCase();
+	const planDef = getPlanDefinition(currentPlan);
+	const payloadVariants = [
+		{
+			shop_domain: normalizedDomain,
+			plan: currentPlan,
+			billing_status: String(sourceRecord?.billing_status || "active").toLowerCase(),
+			images_included: Number(sourceRecord?.images_included ?? planDef.imagesIncluded),
+			images_used_month: Number(sourceRecord?.images_used_month ?? 0),
+			price_per_extra_image: Number(
+				sourceRecord?.price_per_extra_image ?? planDef.pricePerExtraImage,
+			),
+			currency: String(sourceRecord?.currency || planDef.currency || "BRL"),
+			billing_cycle_end: sourceRecord?.billing_cycle_end || "2099-12-31T23:59:59.000Z",
+			updated_at: new Date().toISOString(),
+		},
+		{
+			shop_domain: normalizedDomain,
+			plan: currentPlan,
+			billing_status: String(sourceRecord?.billing_status || "active").toLowerCase(),
+			images_included: Number(sourceRecord?.images_included ?? planDef.imagesIncluded),
+			images_used_month: Number(sourceRecord?.images_used_month ?? 0),
+			price_per_extra_image: Number(
+				sourceRecord?.price_per_extra_image ?? planDef.pricePerExtraImage,
+			),
+			currency: String(sourceRecord?.currency || planDef.currency || "BRL"),
+			updated_at: new Date().toISOString(),
+		},
+	];
+
+	for (const payload of payloadVariants) {
+		try {
+			const rows = await supabaseUpsert("shopify_shops", [
+				payload,
+			]);
+			return Array.isArray(rows) ? rows[0] || null : null;
+		} catch (_error) {
+			// try next compatible payload shape
+		}
+	}
+
+	return null;
+}
+
 async function upsertStoreRecord(session, storeData = {}) {
 	const storeId = String(session?.storeId || storeData?.id || "").trim();
 	if (!storeId) return null;
@@ -837,6 +885,9 @@ async function resolveWidgetPublicId(storeId, storeUrl = "") {
 	}
 
 	const shopRecord = await loadLegacyShopRecord(storeId, storeUrl);
+	if (normalizedDomain) {
+		await ensureShopifyCompatShop(storeId, normalizedDomain, shopRecord);
+	}
 	const recordCandidates = [
 		shopRecord?.public_id,
 		shopRecord?.shop_domain,
@@ -886,28 +937,32 @@ async function enrichTryonRequestBody(rawBody, contentType) {
 	}
 
 	if (String(contentType).includes("multipart/form-data")) {
-		const request = new Request("http://localhost/api/widget/tryon", {
-			method: "POST",
-			headers: { "Content-Type": contentType },
-			body: rawBody,
-		});
-		const formData = await request.formData();
-		const incomingPublicId = String(formData.get("public_id") || "").trim();
-		if (incomingPublicId) {
+		try {
+			const request = new Request("http://localhost/api/widget/tryon", {
+				method: "POST",
+				headers: { "Content-Type": contentType },
+				body: rawBody,
+			});
+			const formData = await request.formData();
+			const incomingPublicId = String(formData.get("public_id") || "").trim();
+			if (incomingPublicId) {
+				return { body: rawBody, contentType };
+			}
+			const storeId = String(formData.get("store_id") || "").trim();
+			const shopDomain = normalizeStoreUrl(String(formData.get("shop_domain") || ""));
+			const resolvedPublicId = await resolveWidgetPublicId(storeId, shopDomain);
+			if (!resolvedPublicId) {
+				return { body: rawBody, contentType };
+			}
+			formData.set("public_id", resolvedPublicId);
+			const response = new Response(formData);
+			return {
+				body: Buffer.from(await response.arrayBuffer()),
+				contentType: response.headers.get("content-type") || contentType,
+			};
+		} catch (_error) {
 			return { body: rawBody, contentType };
 		}
-		const storeId = String(formData.get("store_id") || "").trim();
-		const shopDomain = normalizeStoreUrl(String(formData.get("shop_domain") || ""));
-		const resolvedPublicId = await resolveWidgetPublicId(storeId, shopDomain);
-		if (!resolvedPublicId) {
-			return { body: rawBody, contentType };
-		}
-		formData.set("public_id", resolvedPublicId);
-		const response = new Response(formData);
-		return {
-			body: Buffer.from(await response.arrayBuffer()),
-			contentType: response.headers.get("content-type") || contentType,
-		};
 	}
 
 	if (String(contentType).includes("application/json")) {
