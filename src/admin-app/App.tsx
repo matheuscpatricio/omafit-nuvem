@@ -516,7 +516,12 @@ function AppContent({ nexo, store }: AdminAppProps) {
 						context={context}
 						onSelectSection={setSection}
 						onReconnect={() => {
-							if (context.auth.authUrl) window.location.href = context.auth.authUrl;
+							if (!context.auth.authUrl) return;
+							if (window.top && window.top !== window) {
+								window.top.location.href = context.auth.authUrl;
+								return;
+							}
+							window.location.href = context.auth.authUrl;
 						}}
 					/>
 				) : null}
