@@ -526,6 +526,19 @@ function buildAuthUrl(state) {
 	return url.toString();
 }
 
+function summarizeOAuthTokenData(tokenData) {
+	const payload = tokenData && typeof tokenData === "object" ? tokenData : {};
+	return {
+		tokenKeys: Object.keys(payload),
+		hasAccessToken: Boolean(payload.access_token),
+		storeIdCandidate: payload.store_id || payload.user_id || null,
+		tokenType: payload.token_type || null,
+		hasScope: Boolean(payload.scope),
+		error: payload.error || null,
+		errorDescription: payload.error_description || payload.message || null,
+	};
+}
+
 async function exchangeCodeForToken(code) {
 	const clientId = process.env.NUVEMSHOP_APP_ID || process.env.NUVEMSHOP_CLIENT_ID || "";
 	const clientSecret =
@@ -1308,15 +1321,36 @@ async function handleAuth(req, res, reqUrl) {
 			sendJson(res, 400, { error: "Missing authorization code" });
 			return true;
 		}
+		const authDebug = {
+			step: "callback_start",
+			tokenEndpoint: getTokenEndpoint(),
+			hasCode: Boolean(code),
+		};
 		try {
 			const tokenData = await exchangeCodeForToken(code);
+			Object.assign(authDebug, {
+				step: "token_exchanged",
+				tokenSummary: summarizeOAuthTokenData(tokenData),
+			});
+			const storeId = String(tokenData.user_id || tokenData.store_id || "").trim();
+			if (!tokenData?.access_token || !storeId) {
+				throw new Error("OAuth token response missing access token or store id");
+			}
 			const baseSession = persistSession({
-				storeId: String(tokenData.user_id || tokenData.store_id || ""),
+				storeId,
 				accessToken: tokenData.access_token,
 				scope: tokenData.scope || "",
 				tokenType: tokenData.token_type || "bearer",
 			});
+			Object.assign(authDebug, {
+				step: "session_persisted",
+				persistedStoreId: baseSession?.storeId || null,
+			});
 			const storeData = await fetchStoreInfo(baseSession);
+			Object.assign(authDebug, {
+				step: "store_loaded",
+				storeDataId: storeData?.id || null,
+			});
 			const session = persistSession({
 				...baseSession,
 				store: {
@@ -1337,6 +1371,7 @@ async function handleAuth(req, res, reqUrl) {
 		} catch (error) {
 			sendJson(res, 500, {
 				error: error.message || "Nao foi possivel concluir a autenticacao.",
+				debug: authDebug,
 			});
 		}
 		return true;
