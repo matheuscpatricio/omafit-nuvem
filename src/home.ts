@@ -3,6 +3,8 @@ import { createRoot } from "react-dom/client";
 import nexo, { connect, getStoreInfo, iAmReady } from "./lib/nexo";
 import { OmafitAdminApp } from "./admin-app/App";
 
+let bootRoot: ReturnType<typeof createRoot> | null = null;
+
 function debugLog(
 	message: string,
 	data: Record<string, unknown>,
@@ -11,6 +13,70 @@ function debugLog(
 	// #region agent log
 	fetch('http://127.0.0.1:7523/ingest/ebd119e5-639e-45b4-9806-782ca57f574c',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b68c2f'},body:JSON.stringify({sessionId:'b68c2f',runId:'pre-fix',hypothesisId,location:'src/home.ts',message,data,timestamp:Date.now()})}).catch(()=>{});
 	// #endregion
+	console.info("[Omafit Debug]", hypothesisId, message, data);
+}
+
+function getOrCreateRoot(element: HTMLElement) {
+	if (!bootRoot) {
+		bootRoot = createRoot(element);
+	}
+	return bootRoot;
+}
+
+function renderBootState(stage: string, detail?: string) {
+	const rootElement = document.getElementById("app");
+	if (!rootElement) return;
+	const root = getOrCreateRoot(rootElement);
+	root.render(
+		React.createElement(
+			"div",
+			{
+				style: {
+					minHeight: "100vh",
+					padding: "32px",
+					fontFamily: 'Inter, system-ui, sans-serif',
+					background: "#f5f7fb",
+					color: "#111827",
+				},
+			},
+			React.createElement(
+				"div",
+				{
+					style: {
+						maxWidth: "720px",
+						margin: "0 auto",
+						background: "#ffffff",
+						border: "1px solid #e5e7eb",
+						borderRadius: "18px",
+						padding: "24px",
+						display: "grid",
+						gap: "12px",
+					},
+				},
+				React.createElement("h1", null, "Omafit"),
+				React.createElement("strong", null, `Etapa: ${stage}`),
+				React.createElement("p", { style: { margin: 0 } }, detail || "Inicializando painel..."),
+			),
+		),
+	);
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+	return new Promise<T>((resolve, reject) => {
+		const timeout = window.setTimeout(() => {
+			reject(new Error(`${label} timeout after ${timeoutMs}ms`));
+		}, timeoutMs);
+		promise.then(
+			(value) => {
+				window.clearTimeout(timeout);
+				resolve(value);
+			},
+			(error) => {
+				window.clearTimeout(timeout);
+				reject(error);
+			},
+		);
+	});
 }
 
 function getClientId(): string {
@@ -22,7 +88,7 @@ function getClientId(): string {
 function renderFatalError(message: string) {
 	const rootElement = document.getElementById("app");
 	if (!rootElement) return;
-	const root = createRoot(rootElement);
+	const root = getOrCreateRoot(rootElement);
 	root.render(
 		React.createElement(
 			"div",
@@ -56,6 +122,7 @@ function renderFatalError(message: string) {
 
 async function bootstrap() {
 	const clientId = getClientId();
+	renderBootState("bootstrap:start", "Carregando configuracao inicial...");
 	debugLog(
 		"bootstrap_start",
 		{
@@ -79,13 +146,15 @@ async function bootstrap() {
 
 	const instance = nexo.create({
 		clientId,
-		log: false,
+		log: true,
 	});
 
+	renderBootState("nexo:connect", "Aguardando handshake com o admin da Nuvemshop...");
 	debugLog("before_connect", { clientIdLength: clientId.length }, "H4");
-	await connect(instance);
+	await withTimeout(connect(instance), 4000, "connect");
 	debugLog("after_connect", { clientIdLength: clientId.length }, "H4");
-	const storeInfo = await getStoreInfo(instance);
+	renderBootState("store:info", "Conexao estabelecida. Buscando dados da loja...");
+	const storeInfo = await withTimeout(getStoreInfo(instance), 4000, "getStoreInfo");
 	debugLog(
 		"store_info_loaded",
 		{
@@ -97,7 +166,8 @@ async function bootstrap() {
 		"H4",
 	);
 
-	const root = createRoot(rootElement);
+	renderBootState("react:render", "Renderizando interface do painel...");
+	const root = getOrCreateRoot(rootElement);
 	root.render(
 		React.createElement(OmafitAdminApp, {
 			nexo: instance,
