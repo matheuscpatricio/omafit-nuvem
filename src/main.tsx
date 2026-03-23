@@ -228,3 +228,9 @@ export function App(nube: NubeSDK) {
 		void boot();
 	});
 }
+
+const storefrontGlobal = globalThis as typeof globalThis & {
+	App?: typeof App;
+};
+
+storefrontGlobal.App = App;
