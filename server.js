@@ -1361,8 +1361,11 @@ function serveStaticFile(reqUrl, res) {
 		}
 		const ext = extname(filePath);
 		res.setHeader("Content-Type", MIME_TYPES[ext] || "application/octet-stream");
+		if (ext === ".html") {
+			res.setHeader("Cache-Control", "no-store");
+		}
 		if (ext === ".js" || ext === ".css") {
-			res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+			res.setHeader("Cache-Control", "no-cache, must-revalidate");
 		}
 		res.writeHead(200);
 		createReadStream(filePath).pipe(res);
