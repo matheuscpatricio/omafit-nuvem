@@ -216,6 +216,14 @@ export function App(nube: NubeSDK) {
 			},
 			"H1",
 		);
+		if (state.location.page.type === "product") {
+			nube.render(
+				"after_product_detail_name",
+				<Text>
+					Omafit carregado na página do produto.
+				</Text>,
+			);
+		}
 		const { config, widgetUrl } = await loadStorefrontConfig(state.store.id);
 		renderWidget(nube, config, widgetUrl);
 	};
