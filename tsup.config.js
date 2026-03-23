@@ -1,8 +1,11 @@
 import { defineConfig } from "tsup";
 
-const shared = {
+export default defineConfig({
+  entry: ["src/main.tsx", "src/admin.tsx", "src/home.ts"],
+  format: ["esm"],
   platform: "browser",
   target: "esnext",
+  clean: true,
   minify: true,
   bundle: true,
   noExternal: [/.*/],
@@ -17,21 +20,5 @@ const shared = {
   },
   outExtension: ({ options }) => ({
     js: options.minify ? ".min.js" : ".js"
-  }),
-};
-
-export default defineConfig([
-  {
-    ...shared,
-    entry: ["src/main.tsx"],
-    format: ["iife"],
-    globalName: "OmafitStorefront",
-    clean: true,
-  },
-  {
-    ...shared,
-    entry: ["src/admin.tsx", "src/home.ts"],
-    format: ["esm"],
-    clean: false,
-  },
-]);
+  })
+});

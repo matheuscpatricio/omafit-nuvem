@@ -1384,7 +1384,14 @@ async function handleAuth(req, res, reqUrl) {
 			});
 			await upsertStoreRecord(session, storeData);
 			await ensureWebhooks(session, req);
-			const appUrl = `${getPublicBaseUrl(req)}/app.html?store_id=${encodeURIComponent(session.storeId)}&connected=1`;
+			const storeDomain = normalizeStoreUrl(
+				storeData.original_domain || storeData.domains?.[0] || session.store?.url || "",
+			);
+			const appId = getNuvemshopAppId();
+			const appUrl =
+				storeDomain && appId
+					? `https://${storeDomain}/admin/apps/${encodeURIComponent(appId)}`
+					: `${getPublicBaseUrl(req)}/app.html?store_id=${encodeURIComponent(session.storeId)}&connected=1`;
 			res.writeHead(302, { Location: appUrl });
 			res.end();
 		} catch (error) {
