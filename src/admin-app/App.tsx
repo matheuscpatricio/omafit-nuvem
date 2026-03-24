@@ -140,7 +140,16 @@ async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
 	const text = await response.text();
 	const payload = text ? JSON.parse(text) : {};
 	if (!response.ok) {
-		throw new Error(payload.error || payload.message || "Request failed");
+		if (String(url).includes("/api/billing/plan")) {
+			// #region agent log
+			console.error("[Omafit Debug] H9 billing_plan_response_error", payload);
+			// #endregion
+		}
+		const error = new Error(payload.error || payload.message || "Request failed") as Error & {
+			payload?: unknown;
+		};
+		error.payload = payload;
+		throw error;
 	}
 	return payload as T;
 }
