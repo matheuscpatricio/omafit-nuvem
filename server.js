@@ -132,6 +132,87 @@ function getSession(storeId) {
 	return normalizeSession(sessions[String(storeId || "").trim()]);
 }
 
+async function loadNuvemshopCredential(storeId) {
+	if (!storeId) return null;
+	try {
+		return await supabaseSelectFirst(
+			`nuvemshop_credentials?store_id=eq.${encodeURIComponent(storeId)}&select=*`,
+		);
+	} catch (_error) {
+		return null;
+	}
+}
+
+async function saveNuvemshopCredential(sessionLike, storeData = {}) {
+	const storeId = String(sessionLike?.storeId || storeData?.id || "").trim();
+	const accessToken = String(sessionLike?.accessToken || sessionLike?.access_token || "").trim();
+	if (!storeId || !accessToken) return null;
+	const payload = {
+		store_id: storeId,
+		access_token: accessToken,
+		api_url: getApiBase(),
+		user_agent: `${getAppName()} (${getSupportEmail()})`,
+		updated_at: new Date().toISOString(),
+	};
+	const existing = await loadNuvemshopCredential(storeId);
+	if (existing?.id) {
+		const response = await supabaseRequest(
+			`nuvemshop_credentials?id=eq.${encodeURIComponent(existing.id)}&select=*`,
+			{
+				method: "PATCH",
+				headers: {
+					Prefer: "return=representation",
+				},
+				body: JSON.stringify(payload),
+			},
+		);
+		if (!response.ok) {
+			const text = await response.text().catch(() => "");
+			throw new Error(
+				parseSupabaseError(text)?.message ||
+					"Nao foi possivel atualizar as credenciais da Nuvemshop.",
+			);
+		}
+		const rows = await response.json().catch(() => []);
+		return Array.isArray(rows) ? rows[0] || null : null;
+	}
+	const rows = await supabaseUpsert("nuvemshop_credentials", [payload]);
+	return Array.isArray(rows) ? rows[0] || null : null;
+}
+
+async function deleteNuvemshopCredential(storeId) {
+	if (!storeId) return;
+	try {
+		await supabaseDelete(`nuvemshop_credentials?store_id=eq.${encodeURIComponent(storeId)}`);
+	} catch (_error) {
+		// ignore missing/unsupported delete failures
+	}
+}
+
+function buildSessionFromNuvemshopCredential(storeId, credential, storeUrl = "", storeRecord = null) {
+	if (!storeId || !credential?.access_token) return null;
+	const resolvedStoreUrl = normalizeStoreUrl(
+		storeUrl ||
+			storeRecord?.store_url ||
+			storeRecord?.platform_store_url ||
+			(storeRecord?.shop_domain?.includes(".") ? storeRecord.shop_domain : ""),
+	);
+	return normalizeSession({
+		storeId,
+		accessToken: credential.access_token,
+		tokenType: "bearer",
+		lastSyncAt: credential.updated_at || null,
+		store: {
+			id: String(storeId),
+			name: storeRecord?.name || "Loja Nuvemshop",
+			url: resolvedStoreUrl,
+			language: storeRecord?.language || "pt",
+			currency: storeRecord?.currency || "BRL",
+			country: storeRecord?.country || "",
+		},
+	});
+}
+
 function buildSessionFromStoreRecord(storeId, storeRecord) {
 	if (!storeId || !storeRecord?.access_token) return null;
 	return normalizeSession({
@@ -1680,6 +1761,7 @@ async function getBillingSummary(storeId, storeUrl = "") {
 
 async function buildBillingDebugSnapshot(storeId, storeUrl = "") {
 	const storeRecord = await loadLegacyShopRecord(storeId, storeUrl).catch(() => null);
+	const credentialRecord = await loadNuvemshopCredential(storeId).catch(() => null);
 	const session = await resolveSession(storeId, storeUrl).catch(() => null);
 	let webhookState = {
 		registered: false,
@@ -1717,6 +1799,7 @@ async function buildBillingDebugSnapshot(storeId, storeUrl = "") {
 		storeUrl,
 		hasSession: Boolean(session),
 		hasStoreRecord: Boolean(storeRecord),
+		hasCredentialRecord: Boolean(credentialRecord),
 		hasAccessToken: Boolean(session?.accessToken),
 		sessionStoreId: String(session?.storeId || ""),
 		sessionStoreUrl: String(session?.store?.url || ""),
@@ -1727,6 +1810,7 @@ async function buildBillingDebugSnapshot(storeId, storeUrl = "") {
 		recordPlan: String(storeRecord?.plan || ""),
 		recordBillingStatus: String(storeRecord?.billing_status || ""),
 		recordStoreUrl: String(storeRecord?.store_url || storeRecord?.platform_store_url || ""),
+		credentialUpdatedAt: credentialRecord?.updated_at || null,
 		webhookState,
 	};
 }
@@ -2113,7 +2197,13 @@ async function resolveSession(storeId, storeUrl = "") {
 	if (!storeId) return localSession;
 
 	const storeRecord = await loadLegacyShopRecord(storeId, storeUrl);
-	const recoveredSession = buildSessionFromStoreRecord(storeId, storeRecord);
+	const recoveredFromStoreRecord = buildSessionFromStoreRecord(storeId, storeRecord);
+	const credentialRecord = recoveredFromStoreRecord?.accessToken
+		? null
+		: await loadNuvemshopCredential(storeId);
+	const recoveredSession =
+		recoveredFromStoreRecord ||
+		buildSessionFromNuvemshopCredential(storeId, credentialRecord, storeUrl, storeRecord);
 	if (!recoveredSession?.accessToken) {
 		// #region agent log
 		fetch("http://127.0.0.1:7523/ingest/ebd119e5-639e-45b4-9806-782ca57f574c", {
@@ -2129,6 +2219,7 @@ async function resolveSession(storeId, storeUrl = "") {
 					storeId,
 					storeUrl,
 					hasStoreRecord: Boolean(storeRecord),
+					hasCredentialRecord: Boolean(credentialRecord),
 					hasRecoveredSession: Boolean(recoveredSession),
 				},
 				timestamp: Date.now(),
@@ -2152,6 +2243,11 @@ async function resolveSession(storeId, storeUrl = "") {
 				storeId,
 				storeUrl,
 				hasStoreRecord: Boolean(storeRecord),
+				recoveredFrom: recoveredFromStoreRecord?.accessToken
+					? "store_record"
+					: credentialRecord?.access_token
+						? "nuvemshop_credentials"
+						: "unknown",
 				hasRecoveredAccessToken: Boolean(recoveredSession.accessToken),
 				hasRecoveredBillingConceptCode: Boolean(recoveredSession.billingConceptCode),
 				hasRecoveredBillingServiceId: Boolean(recoveredSession.billingServiceId),
@@ -2225,6 +2321,7 @@ async function handleApi(req, res, reqUrl) {
 			},
 			lastSyncAt: new Date().toISOString(),
 		});
+		await saveNuvemshopCredential(normalizedSession, storeData);
 		const row = await upsertStoreRecord(normalizedSession, storeData);
 		sendJson(res, 200, {
 			ok: true,
@@ -2570,6 +2667,7 @@ async function handleApi(req, res, reqUrl) {
 		// #endregion
 		if (payload.event === "app/uninstalled" && storeId) {
 			deleteSession(storeId);
+			await deleteNuvemshopCredential(storeId);
 		}
 		if (payload.event === "subscription/updated" && storeId) {
 			const currentSession = getSession(storeId);
@@ -2710,6 +2808,7 @@ async function handleAuth(req, res, reqUrl) {
 				scope: tokenData.scope || "",
 				tokenType: tokenData.token_type || "bearer",
 			});
+			await saveNuvemshopCredential(baseSession, { id: storeId });
 			Object.assign(authDebug, {
 				step: "session_persisted",
 				persistedStoreId: baseSession?.storeId || null,
@@ -2731,6 +2830,7 @@ async function handleAuth(req, res, reqUrl) {
 				},
 				lastSyncAt: new Date().toISOString(),
 			});
+			await saveNuvemshopCredential(session, storeData);
 			await upsertStoreRecord(session, storeData);
 			await ensureWebhooks(session, req);
 			const storeDomain = normalizeStoreUrl(
