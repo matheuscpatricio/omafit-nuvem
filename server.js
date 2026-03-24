@@ -832,6 +832,7 @@ async function discoverBillingIdentifiers(storeId, storeUrl = "", storeRecord = 
 		return {
 			conceptCode: "",
 			serviceId,
+			candidateCount: candidates.length,
 			attempts,
 		};
 	}
@@ -846,17 +847,24 @@ async function discoverBillingIdentifiers(storeId, storeUrl = "", storeRecord = 
 					billingNextExecution: subscription?.next_execution || null,
 				});
 				await saveNuvemshopCredential(persisted || { storeId }).catch(() => null);
-				attempts.push({ candidate, ok: true });
+				attempts.push({ candidate, serviceId, ok: true });
 				return {
 					conceptCode: String(subscription.concept_code || candidate),
 					serviceId,
+					candidateCount: candidates.length,
 					attempts,
 				};
 			}
-			attempts.push({ candidate, ok: false, reason: "subscription_missing_concept" });
+			attempts.push({
+				candidate,
+				serviceId,
+				ok: false,
+				reason: "subscription_missing_concept",
+			});
 		} catch (error) {
 			attempts.push({
 				candidate,
+				serviceId,
 				ok: false,
 				reason: String(error?.message || "subscription_lookup_failed"),
 			});
@@ -865,6 +873,7 @@ async function discoverBillingIdentifiers(storeId, storeUrl = "", storeRecord = 
 	return {
 		conceptCode: "",
 		serviceId,
+		candidateCount: candidates.length,
 		attempts,
 	};
 }
@@ -1899,6 +1908,7 @@ async function buildBillingDebugSnapshot(storeId, storeUrl = "") {
 	return {
 		storeId,
 		storeUrl,
+		configuredAppId: String(getNuvemshopAppId() || ""),
 		hasSession: Boolean(session),
 		hasStoreRecord: Boolean(storeRecord),
 		hasCredentialRecord: Boolean(credentialRecord),
@@ -1907,6 +1917,7 @@ async function buildBillingDebugSnapshot(storeId, storeUrl = "") {
 		sessionStoreUrl: String(session?.store?.url || ""),
 		sessionBillingConceptCode: String(session?.billingConceptCode || ""),
 		sessionBillingServiceId: String(session?.billingServiceId || ""),
+		effectiveServiceId: String(session?.billingServiceId || getNuvemshopAppId() || ""),
 		sessionWebhooksSyncedAt: session?.webhooksSyncedAt || null,
 		fallbackConceptCode: String(getBillingConceptCodeFallback() || ""),
 		recordPlan: String(storeRecord?.plan || ""),
