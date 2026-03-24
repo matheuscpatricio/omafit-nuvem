@@ -147,9 +147,29 @@ async function saveNuvemshopCredential(sessionLike, storeData = {}) {
 	const storeId = String(sessionLike?.storeId || storeData?.id || "").trim();
 	const accessToken = String(sessionLike?.accessToken || sessionLike?.access_token || "").trim();
 	if (!storeId || !accessToken) return null;
+	const resolvedStoreUrl = normalizeStoreUrl(
+		storeData?.original_domain ||
+			storeData?.url ||
+			storeData?.domain ||
+			sessionLike?.store?.url ||
+			"",
+	);
 	const payload = {
 		store_id: storeId,
 		access_token: accessToken,
+		store_url: resolvedStoreUrl || null,
+		scope: String(sessionLike?.scope || storeData?.scope || "").trim() || null,
+		token_type: String(sessionLike?.tokenType || sessionLike?.token_type || "bearer").trim(),
+		billing_concept_code:
+			String(
+				sessionLike?.billingConceptCode || sessionLike?.billing_concept_code || "",
+			).trim() || null,
+		billing_service_id:
+			String(
+				sessionLike?.billingServiceId || sessionLike?.billing_service_id || "",
+			).trim() || null,
+		billing_next_execution:
+			sessionLike?.billingNextExecution || sessionLike?.billing_next_execution || null,
 		api_url: getApiBase(),
 		user_agent: `${getAppName()} (${getSupportEmail()})`,
 		updated_at: new Date().toISOString(),
@@ -193,6 +213,7 @@ function buildSessionFromNuvemshopCredential(storeId, credential, storeUrl = "",
 	if (!storeId || !credential?.access_token) return null;
 	const resolvedStoreUrl = normalizeStoreUrl(
 		storeUrl ||
+			credential?.store_url ||
 			storeRecord?.store_url ||
 			storeRecord?.platform_store_url ||
 			(storeRecord?.shop_domain?.includes(".") ? storeRecord.shop_domain : ""),
@@ -200,7 +221,11 @@ function buildSessionFromNuvemshopCredential(storeId, credential, storeUrl = "",
 	return normalizeSession({
 		storeId,
 		accessToken: credential.access_token,
-		tokenType: "bearer",
+		scope: credential.scope || "",
+		tokenType: credential.token_type || "bearer",
+		billingConceptCode: credential.billing_concept_code || "",
+		billingServiceId: credential.billing_service_id || "",
+		billingNextExecution: credential.billing_next_execution || null,
 		lastSyncAt: credential.updated_at || null,
 		store: {
 			id: String(storeId),
@@ -2671,22 +2696,26 @@ async function handleApi(req, res, reqUrl) {
 		}
 		if (payload.event === "subscription/updated" && storeId) {
 			const currentSession = getSession(storeId);
-			persistSession({
+			const persistedSession = persistSession({
 				...(currentSession || { storeId }),
 				billingConceptCode: String(payload.concept_code || "").trim(),
 				billingServiceId: String(payload.service_id || getNuvemshopAppId() || "").trim(),
 			});
+			await saveNuvemshopCredential(persistedSession || currentSession || { storeId }).catch(
+				() => null,
+			);
 			try {
 				const conceptCode = String(payload.concept_code || "").trim();
 				const serviceId = String(payload.service_id || getNuvemshopAppId() || "").trim();
 				if (conceptCode && serviceId) {
 					const subscription = await getNuvemshopSubscription(conceptCode, serviceId);
-					persistSession({
+					const syncedSession = persistSession({
 						...(getSession(storeId) || { storeId }),
 						billingConceptCode: conceptCode,
 						billingServiceId: serviceId,
 						billingNextExecution: subscription?.next_execution || null,
 					});
+					await saveNuvemshopCredential(syncedSession || { storeId }).catch(() => null);
 					await syncBillingStateFromSubscription(
 						storeId,
 						currentSession?.store?.url || "",
