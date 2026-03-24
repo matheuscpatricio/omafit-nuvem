@@ -388,6 +388,12 @@ function getBillingConceptCodeFallback() {
 	return String(process.env.NUVEMSHOP_BILLING_CONCEPT_CODE || "").trim();
 }
 
+function getBillingMode() {
+	const mode = String(process.env.OMAFIT_BILLING_MODE || "auto").trim().toLowerCase();
+	if (["nuvemshop", "self", "auto"].includes(mode)) return mode;
+	return "auto";
+}
+
 function isValidNuvemshopApiHost(value) {
 	try {
 		const url = new URL(value);
@@ -1986,6 +1992,26 @@ async function saveBillingPlan(storeId, planId, storeUrl = "") {
 		}
 		const discoveryAttempts = discovered?.attempts || [];
 		if (!billingIdentifiers.conceptCode || !billingIdentifiers.serviceId) {
+		const billingMode = getBillingMode();
+		const shouldUseSelfBilling = billingMode === "self" || billingMode === "auto";
+		if (shouldUseSelfBilling) {
+			const rate = await resolveUsdToBrlRate();
+			usdBrlRateCache = {
+				value: rate,
+				expiresAt: Date.now() + 1000 * 60 * 60 * 12,
+			};
+			const pricePerExtraImageBrl = convertUsdToBrl(planDef.usdPricePerExtraImage || 0, rate);
+			return upsertStoreRecord(session || { storeId }, {
+				...storeInfo,
+				plan: planDef.id,
+				billing_status: "active",
+				images_included: planDef.imagesIncluded,
+				price_per_extra_image: pricePerExtraImageBrl,
+				currency: "BRL",
+				billing_mode: "self",
+				billing_cycle_start: new Date().toISOString(),
+			});
+		}
 		const error = new Error(
 			"A assinatura da loja ainda nao informou o identificador de billing da Nuvemshop. Aguarde o webhook subscription/updated ou configure NUVEMSHOP_BILLING_CONCEPT_CODE.",
 		);
