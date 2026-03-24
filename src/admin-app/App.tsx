@@ -143,6 +143,10 @@ async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
 		if (String(url).includes("/api/billing/plan")) {
 			// #region agent log
 			console.error("[Omafit Debug] H9 billing_plan_response_error", payload);
+			console.error(
+				"[Omafit Debug] H9 billing_plan_response_error_json",
+				JSON.stringify(payload),
+			);
 			// #endregion
 		}
 		const error = new Error(payload.error || payload.message || "Request failed") as Error & {
