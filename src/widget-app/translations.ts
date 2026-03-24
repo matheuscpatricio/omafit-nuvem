@@ -96,10 +96,15 @@ export const widgetTranslations = {
 		addToCartSuccess: "Produto adicionado ao carrinho!",
 		addToCartError: "Não foi possível adicionar o produto ao carrinho.",
 		addToCart: "Adicionar ao carrinho",
+		addingToCart: "Adicionando ao carrinho...",
 		close: "Fechar",
 		tryAgain: "Tentar novamente",
 		noPreviewYet:
 			"Se a prévia ainda não estiver pronta, você pode seguir com o tamanho recomendado.",
+		askAboutGarment: "Restou alguma dúvida sobre esta roupa? Pergunte abaixo",
+		typeYourMessage: "Digite sua mensagem...",
+		assistantThanks:
+			"Obrigado por usar o assistente da {storeName}! Feche o widget e siga para o carrinho quando quiser.",
 	},
 	es: {
 		loadingProduct: "Cargando producto...",
@@ -198,10 +203,15 @@ export const widgetTranslations = {
 		addToCartSuccess: "¡Producto agregado al carrito!",
 		addToCartError: "No se pudo agregar el producto al carrito.",
 		addToCart: "Agregar al carrito",
+		addingToCart: "Agregando al carrito...",
 		close: "Cerrar",
 		tryAgain: "Intentar de nuevo",
 		noPreviewYet:
 			"Si la vista previa todavía no está lista, puedes seguir con la talla recomendada.",
+		askAboutGarment: "¿Quedó alguna duda sobre esta prenda? Pregunta abajo",
+		typeYourMessage: "Escribe tu mensaje...",
+		assistantThanks:
+			"¡Gracias por usar el asistente de {storeName}! Cierra el widget y sigue al carrito cuando quieras.",
 	},
 	en: {
 		loadingProduct: "Loading product...",
@@ -298,9 +308,14 @@ export const widgetTranslations = {
 		addToCartSuccess: "Product added to cart!",
 		addToCartError: "Could not add the product to cart.",
 		addToCart: "Add to cart",
+		addingToCart: "Adding to cart...",
 		close: "Close",
 		tryAgain: "Try again",
 		noPreviewYet: "If the preview is not ready yet, you can still continue with the recommended size.",
+		askAboutGarment: "Any questions about this garment? Ask below",
+		typeYourMessage: "Type your message...",
+		assistantThanks:
+			"Thanks for using {storeName}'s assistant! Close the widget and continue to cart whenever you want.",
 	},
 } as const;
 

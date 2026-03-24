@@ -6,11 +6,19 @@ import {
 	type SizeChartEntry,
 } from "./sizeCalculation";
 import {
+	getDefaultMeasurementWeights,
+	getOptimizedRemoteTryOnImageUrl,
+	loadImageElement,
+	optimizeTryOnImage,
+	validatePhotoForCollection,
+} from "./tryonParity";
+import {
 	detectWidgetLanguage,
 	type WidgetLanguage,
 	type WidgetTranslationKey,
 	widgetTranslations,
 } from "./translations";
+import { useMediaPipePose } from "./useMediaPipePose";
 
 type Step = "info" | "calculator" | "photo" | "confirm" | "processing" | "result";
 
@@ -67,12 +75,42 @@ type TryOnStartResponse = {
 	fal_request_id?: string;
 	error?: string;
 	debug?: Record<string, unknown>;
+	body_measurements?: SizeCalculatorMeasurements;
 };
 
 type TryOnStatusResponse = {
 	status?: string;
 	output?: string | string[];
 	error?: string;
+};
+
+type ChatMessage = {
+	role: "assistant" | "user";
+	content: string;
+	timestamp: number;
+};
+
+type ValidateSizeResponse = {
+	success?: boolean;
+	data?: {
+		tamanho_final?: string;
+		explicacao?: string;
+		should_end_conversation?: boolean;
+	};
+	interaction_count?: number;
+	message?: string;
+};
+
+type SizeCalculatorMeasurements = {
+	shoulderWidth?: number;
+	chestCircumference?: number;
+	waistCircumference?: number;
+	hipCircumference?: number;
+	bodyHeight?: number;
+	armLength?: number;
+	legLength?: number;
+	confidence?: number;
+	source?: string;
 };
 
 const BODY_TYPES = {
@@ -166,6 +204,8 @@ const PROCESSING_MESSAGES: WidgetTranslationKey[] = [
 	"refiningDetails",
 	"finalizingResult",
 ];
+
+const GPT_INTERACTION_LIMIT = 5;
 
 function deriveStoreName(domain: string) {
 	const normalized = String(domain || "").replace(/^https?:\/\//, "").split(".")[0] || "Omafit";
@@ -309,6 +349,53 @@ function darkenColor(hex: string, amount = 20) {
 		.join("")}`;
 }
 
+function estimateBodyMeasurements(sizeData: SizeData | null) {
+	if (!sizeData) {
+		return { chest: 90, waist: 75, hip: 95 };
+	}
+
+	if (sizeData.gender === "female") {
+		return {
+			chest: Math.round(80 + (sizeData.weight - 50) * 0.5 + (sizeData.bodyTypeIndex || 0) * 5),
+			waist: Math.round(60 + (sizeData.weight - 50) * 0.6 + (sizeData.bodyTypeIndex || 0) * 4),
+			hip: Math.round(85 + (sizeData.weight - 50) * 0.6 + (sizeData.bodyTypeIndex || 0) * 5),
+		};
+	}
+
+	return {
+		chest: Math.round(90 + (sizeData.weight - 60) * 0.6 + (sizeData.bodyTypeIndex || 0) * 6),
+		waist: Math.round(75 + (sizeData.weight - 60) * 0.7 + (sizeData.bodyTypeIndex || 0) * 5),
+		hip: Math.round(90 + (sizeData.weight - 60) * 0.6 + (sizeData.bodyTypeIndex || 0) * 5),
+	};
+}
+
+function mapFrontendMeasurements(
+	measurements?: {
+		shoulder_width: number;
+		chest: number;
+		waist: number;
+		hip: number;
+		height: number;
+		armLength: number;
+		legLength: number;
+		confidence: number;
+		source: string;
+	} | null,
+): SizeCalculatorMeasurements | null {
+	if (!measurements) return null;
+	return {
+		shoulderWidth: measurements.shoulder_width,
+		chestCircumference: measurements.chest,
+		waistCircumference: measurements.waist,
+		hipCircumference: measurements.hip,
+		bodyHeight: measurements.height,
+		armLength: measurements.armLength,
+		legLength: measurements.legLength,
+		confidence: measurements.confidence,
+		source: measurements.source,
+	};
+}
+
 function getT(language: WidgetLanguage) {
 	return (key: WidgetTranslationKey, replacements?: Record<string, string>) => {
 		let value = widgetTranslations[language][key] || widgetTranslations.en[key] || key;
@@ -347,14 +434,25 @@ export function WidgetPage() {
 	const [photoPreview, setPhotoPreview] = useState("");
 	const [recommendedSize, setRecommendedSize] = useState("");
 	const [resultImage, setResultImage] = useState("");
+	const [finalBodyMeasurements, setFinalBodyMeasurements] =
+		useState<SizeCalculatorMeasurements | null>(null);
 	const [processingMessageKey, setProcessingMessageKey] =
 		useState<WidgetTranslationKey>("creatingTryOn");
 	const [isAddingToCart, setIsAddingToCart] = useState(false);
 	const [addToCartFeedback, setAddToCartFeedback] = useState("");
 	const [currentImageIndex, setCurrentImageIndex] = useState(0);
+	const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+	const [interactionCount, setInteractionCount] = useState(0);
+	const [gptLoading, setGptLoading] = useState(false);
+	const [chatInput, setChatInput] = useState("");
 	const fileInputRef = useRef<HTMLInputElement | null>(null);
 	const pollingTimerRef = useRef<number | null>(null);
 	const sessionIdRef = useRef(`widget_${Date.now().toString(36)}`);
+	const chatEndRef = useRef<HTMLDivElement | null>(null);
+	const { detectPose, calculateBodyMeasurements, error: mediapipeError } = useMediaPipePose({
+		enabled: step === "photo" || step === "confirm" || step === "processing",
+		silentNoPose: true,
+	});
 
 	const productImages = params.productImages.length
 		? params.productImages
@@ -368,6 +466,10 @@ export function WidgetPage() {
 	const selectedChart = useMemo(
 		() => chooseChart(charts, sizeData?.gender || gender, params.productHandle),
 		[charts, sizeData?.gender, gender, params.productHandle],
+	);
+	const availableSizes = useMemo(
+		() => (selectedChart?.sizes || []).map((row) => String(row.size || "")).filter(Boolean),
+		[selectedChart],
 	);
 
 	useEffect(() => {
@@ -422,6 +524,18 @@ export function WidgetPage() {
 			if (photoPreview) URL.revokeObjectURL(photoPreview);
 		};
 	}, [photoPreview]);
+
+	useEffect(() => {
+		if (chatEndRef.current) {
+			chatEndRef.current.scrollIntoView({ behavior: "smooth" });
+		}
+	}, [chatMessages, gptLoading]);
+
+	useEffect(() => {
+		if (step === "result" && sizeData && chatMessages.length === 0 && !gptLoading) {
+			void callGPTAssistant("add_to_cart");
+		}
+	}, [step, sizeData, chatMessages.length, gptLoading]);
 
 	function goBack() {
 		if (step === "calculator") setStep("info");
@@ -478,6 +592,7 @@ export function WidgetPage() {
 		if (photoPreview) URL.revokeObjectURL(photoPreview);
 		setPhotoFile(file);
 		setPhotoPreview(URL.createObjectURL(file));
+		setFinalBodyMeasurements(null);
 		setError("");
 	}
 
@@ -488,6 +603,22 @@ export function WidgetPage() {
 		}
 		setError("");
 		setStep("confirm");
+	}
+
+	function getRecommendation(rawMeasurements?: SizeCalculatorMeasurements | null) {
+		if (!sizeData || !selectedChart) return null;
+
+		return calculateIdealSize(
+			sizeData.height,
+			sizeData.weight,
+			sizeData.bodyType,
+			sizeData.fit,
+			mapChart(selectedChart),
+			selectedChart.measurement_refs.map(normalizeMeasurementLabel),
+			getDefaultMeasurementWeights(selectedChart.collection_type),
+			rawMeasurements || null,
+			normalizeElasticity(selectedChart.collection_elasticity),
+		);
 	}
 
 	async function startPolling(predictionId: string, attempt = 0) {
@@ -524,50 +655,101 @@ export function WidgetPage() {
 		}
 
 		setError("");
+		setChatMessages([]);
+		setChatInput("");
+		setInteractionCount(0);
 		setProcessingMessageKey("creatingTryOn");
 		setStep("processing");
 
-		let provisionalSize = recommendedSize;
-		if (selectedChart) {
-			const mappedChart = mapChart(selectedChart);
-			const recommendation = calculateIdealSize(
-				sizeData.height,
-				sizeData.weight,
-				sizeData.bodyType,
-				sizeData.fit,
-				mappedChart,
-				selectedChart.measurement_refs.map(normalizeMeasurementLabel),
-				undefined,
-				null,
-				normalizeElasticity(selectedChart.collection_elasticity),
-			);
+		try {
+			const optimizedImage = await optimizeTryOnImage(photoFile);
+			let detectedLandmarks: Array<{ x: number; y: number; z: number; visibility?: number }> | null =
+				null;
+			let detectedMeasurements: SizeCalculatorMeasurements | null = null;
+
+			try {
+				const analysisImage = await loadImageElement(optimizedImage.previewUrl);
+				const poseResult = await detectPose(analysisImage);
+				const landmarks = poseResult?.landmarks?.[0];
+
+				if (landmarks?.length) {
+					const photoValidation = validatePhotoForCollection(
+						landmarks as Array<{ x: number; y: number; z: number; visibility: number }>,
+						selectedChart?.collection_type || "upper",
+						language,
+					);
+
+					if (!photoValidation.valid) {
+						URL.revokeObjectURL(optimizedImage.previewUrl);
+						setStep("confirm");
+						setError(photoValidation.message || t("processingError"));
+						return;
+					}
+
+					detectedLandmarks = landmarks.map((landmark) => ({
+						x: landmark.x,
+						y: landmark.y,
+						z: landmark.z,
+						visibility: landmark.visibility,
+					}));
+
+					detectedMeasurements = mapFrontendMeasurements(
+						calculateBodyMeasurements(
+							landmarks as Array<{ x: number; y: number; z: number; visibility: number }>,
+							analysisImage.naturalWidth,
+							analysisImage.naturalHeight,
+							sizeData.height,
+							sizeData.weight,
+							sizeData.gender,
+						),
+					);
+				} else if (mediapipeError) {
+					console.warn("MediaPipe indisponível no frontend; mantendo fallback do servidor.");
+				}
+			} finally {
+				URL.revokeObjectURL(optimizedImage.previewUrl);
+			}
+
+			let provisionalSize = recommendedSize;
+			const recommendation = getRecommendation(detectedMeasurements);
 			if (recommendation?.size) {
 				provisionalSize = recommendation.size;
 				setRecommendedSize(recommendation.size);
 			}
-		}
 
-		const formData = new FormData();
-		formData.append("model_image_file", photoFile, photoFile.name || "tryon-model.jpg");
-		formData.append("store_id", params.storeId);
-		formData.append("shop_domain", params.storeDomain);
-		formData.append("garment_image", selectedProductImage || "");
-		formData.append("product_name", params.productName);
-		formData.append("product_id", params.productId);
-		formData.append("public_id", publicId || "");
-		formData.append(
-			"user_measurements",
-			JSON.stringify({
-				gender: sizeData.gender,
-				height: sizeData.height,
-				weight: sizeData.weight,
-				body_type_index: sizeData.bodyTypeIndex,
-				fit_preference_index: sizeData.fitIndex,
-				recommended_size: provisionalSize || "",
-			}),
-		);
+			if (detectedMeasurements) {
+				setFinalBodyMeasurements(detectedMeasurements);
+			}
 
-		try {
+			const formData = new FormData();
+			formData.append(
+				"model_image_file",
+				optimizedImage.blob,
+				photoFile.name?.replace(/\.[^.]+$/, "") + ".jpg" || "tryon-model.jpg",
+			);
+			formData.append("store_id", params.storeId);
+			formData.append("shop_domain", params.storeDomain);
+			formData.append(
+				"garment_image",
+				getOptimizedRemoteTryOnImageUrl(selectedProductImage || ""),
+			);
+			formData.append("product_name", params.productName);
+			formData.append("product_id", params.productId);
+			formData.append("public_id", publicId || "");
+			formData.append(
+				"user_measurements",
+				JSON.stringify({
+					gender: sizeData.gender,
+					height: sizeData.height,
+					weight: sizeData.weight,
+					body_type_index: sizeData.bodyTypeIndex,
+					fit_preference_index: sizeData.fitIndex,
+					recommended_size: provisionalSize || "",
+				}),
+			);
+			formData.append("pose_landmarks", JSON.stringify(detectedLandmarks));
+			formData.append("detected_measurements", JSON.stringify(detectedMeasurements));
+
 			const response = await fetch("/api/widget/tryon", {
 				method: "POST",
 				body: formData,
@@ -576,12 +758,130 @@ export function WidgetPage() {
 			if (!response.ok || !result.success || !result.fal_request_id) {
 				throw new Error((result.error || t("processingError")) + formatTryonDebug(result.debug));
 			}
+
+			if (result.body_measurements) {
+				setFinalBodyMeasurements(result.body_measurements);
+				const responseRecommendation = getRecommendation(result.body_measurements);
+				if (responseRecommendation?.size) {
+					setRecommendedSize(responseRecommendation.size);
+				}
+			}
+
 			setProcessingMessageKey("generating");
 			void startPolling(result.fal_request_id);
 		} catch (caughtError) {
 			setStep("confirm");
 			setError(caughtError instanceof Error ? caughtError.message : t("processingError"));
 		}
+	}
+
+	async function callGPTAssistant(intention: "add_to_cart" | "custom_message", customMessage?: string) {
+		if (!sizeData) return;
+
+		if (interactionCount >= GPT_INTERACTION_LIMIT) {
+			return;
+		}
+
+		setGptLoading(true);
+		try {
+			const mediaPipeEstimate =
+				finalBodyMeasurements &&
+				finalBodyMeasurements.chestCircumference &&
+				finalBodyMeasurements.waistCircumference &&
+				finalBodyMeasurements.hipCircumference
+					? {
+							chest: Math.round(finalBodyMeasurements.chestCircumference),
+							waist: Math.round(finalBodyMeasurements.waistCircumference),
+							hip: Math.round(finalBodyMeasurements.hipCircumference),
+						}
+					: null;
+			const estimated = mediaPipeEstimate || estimateBodyMeasurements(sizeData);
+			const response = await fetch("/api/widget/validate-size", {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify({
+					altura_cm: sizeData.height,
+					peso_kg: sizeData.weight,
+					peito_cm: estimated.chest,
+					cintura_cm: estimated.waist,
+					quadril_cm: estimated.hip,
+					tipo_corpo: String(sizeData.bodyType || "regular"),
+					ajuste_preferido: String(sizeData.fit || "regular"),
+					genero: sizeData.gender || "unisex",
+					elasticidade: selectedChart?.collection_elasticity || "light_flex",
+					categoria: selectedChart?.collection_type || "upper",
+					tamanho_calculado_algoritmo: recommendedSize || "M",
+					intencao_usuario:
+						intention === "custom_message" ? "custom_message" : "induzir_adicionar_carrinho",
+					custom_message: customMessage,
+					session_id: sessionIdRef.current,
+					interaction_count: interactionCount,
+					shop_name: params.storeName,
+					shop_domain: params.storeDomain,
+					language,
+					product_name: params.productName,
+					available_sizes: availableSizes,
+					available_colors: [],
+					selected_image: selectedProductImage,
+					selected_color: "",
+					variant_catalog: [],
+				}),
+			});
+
+			const result = (await response.json().catch(() => ({}))) as ValidateSizeResponse;
+			if (!response.ok || !result.success || !result.data?.explicacao) {
+				throw new Error(result.message || t("processingError"));
+			}
+
+			if (result.data.tamanho_final) {
+				setRecommendedSize(String(result.data.tamanho_final));
+			}
+
+			setChatMessages((current) => [
+				...current,
+				{
+					role: "assistant",
+					content: String(result.data?.explicacao || ""),
+					timestamp: Date.now(),
+				},
+			]);
+
+			setInteractionCount(
+				result.data?.should_end_conversation
+					? GPT_INTERACTION_LIMIT
+					: Number(result.interaction_count || interactionCount + 1),
+			);
+		} catch (_error) {
+			setChatMessages((current) => [
+				...current,
+				{
+					role: "assistant",
+					content: `${params.productName || t("product")} combina muito com o seu perfil. ${t("addToCart")}.`,
+					timestamp: Date.now(),
+				},
+			]);
+			setInteractionCount((current) => current + 1);
+		} finally {
+			setGptLoading(false);
+		}
+	}
+
+	function handleChatSubmit() {
+		const message = chatInput.trim();
+		if (!message || gptLoading) return;
+
+		setChatMessages((current) => [
+			...current,
+			{
+				role: "user",
+				content: message,
+				timestamp: Date.now(),
+			},
+		]);
+		setChatInput("");
+		void callGPTAssistant("custom_message", message);
 	}
 
 	function handleAddToCart() {
@@ -632,9 +932,14 @@ export function WidgetPage() {
 		setPhotoPreview("");
 		setSizeData(null);
 		setRecommendedSize("");
+		setFinalBodyMeasurements(null);
 		setResultImage("");
 		setAddToCartFeedback("");
 		setIsAddingToCart(false);
+		setChatMessages([]);
+		setInteractionCount(0);
+		setGptLoading(false);
+		setChatInput("");
 		setHeight("");
 		setWeight("");
 		setBodyTypeIndex(null);
@@ -703,40 +1008,104 @@ export function WidgetPage() {
 							</div>
 						</div>
 
-						<div className="flex gap-2 justify-start">
-							{storeLogo ? (
-								<div className="flex-shrink-0 w-8 h-8 rounded-full overflow-hidden bg-white shadow-sm flex items-center justify-center p-1">
-									<img src={storeLogo} alt={params.storeName} className="w-full h-full object-contain" />
+						{chatMessages.map((message, index) => (
+							<div
+								key={`${message.timestamp}-${index}`}
+								className={`flex gap-2 ${message.role === "assistant" ? "justify-start" : "justify-end"}`}
+							>
+								{message.role === "assistant" && storeLogo ? (
+									<div className="flex-shrink-0 w-8 h-8 rounded-full overflow-hidden bg-white shadow-sm flex items-center justify-center p-1">
+										<img src={storeLogo} alt={params.storeName} className="w-full h-full object-contain" />
+									</div>
+								) : null}
+								<div
+									className={`max-w-[80%] rounded-2xl p-4 ${
+										message.role === "assistant" ? "bg-gray-100 text-gray-900" : "text-white"
+									}`}
+									style={message.role === "user" ? { backgroundColor: primaryColor } : {}}
+								>
+									<p className="text-sm md:text-base whitespace-pre-line">{message.content}</p>
 								</div>
-							) : null}
-							<div className="max-w-[80%] rounded-2xl p-4 bg-gray-100 text-gray-900">
-								<p className="text-sm md:text-base whitespace-pre-line">
-									{`${t("recommendedSize")} ${recommendedSize || "-"}. ${t("congratsMessage")}`}
-								</p>
 							</div>
-						</div>
+						))}
+
+						{gptLoading ? (
+							<div className="flex gap-2 justify-start">
+								{storeLogo ? (
+									<div className="flex-shrink-0 w-8 h-8 rounded-full overflow-hidden bg-white shadow-sm flex items-center justify-center p-1">
+										<img src={storeLogo} alt={params.storeName} className="w-full h-full object-contain" />
+									</div>
+								) : null}
+								<div className="max-w-[80%] rounded-2xl p-4 bg-gray-100">
+									<div className="flex items-center gap-1">
+										<span className="inline-block w-2 h-2 rounded-full animate-bounce bg-primary" style={{ animationDelay: "0ms", animationDuration: "1.4s" }} />
+										<span className="inline-block w-2 h-2 rounded-full animate-bounce bg-primary" style={{ animationDelay: "200ms", animationDuration: "1.4s" }} />
+										<span className="inline-block w-2 h-2 rounded-full animate-bounce bg-primary" style={{ animationDelay: "400ms", animationDuration: "1.4s" }} />
+									</div>
+								</div>
+							</div>
+						) : null}
+
+						<div ref={chatEndRef} />
 					</div>
 
-					<div className="p-4 border-t bg-gray-50">
-						<button
-							type="button"
-							onClick={handleAddToCart}
-							disabled={isAddingToCart}
-							className="w-full mb-3 px-4 py-3 rounded-xl font-semibold transition-all disabled:opacity-60 disabled:cursor-not-allowed bg-primary hover:bg-primary-dark text-white"
-						>
-							{isAddingToCart ? `${t("addToCart")}...` : t("addToCart")}
-						</button>
-						{addToCartFeedback ? (
-							<p className="text-xs text-center text-gray-600 mb-3">{addToCartFeedback}</p>
-						) : null}
-						<button
-							type="button"
-							onClick={resetWidget}
-							className="w-full px-4 py-3 rounded-xl font-semibold border border-primary text-primary bg-white hover:border-primary"
-						>
-							{t("newTryOn")}
-						</button>
-					</div>
+					{interactionCount < GPT_INTERACTION_LIMIT && chatMessages.length > 0 && !gptLoading ? (
+						<div className="p-4 border-t bg-gray-50">
+							<button
+								type="button"
+								onClick={handleAddToCart}
+								disabled={isAddingToCart}
+								className="w-full mb-3 px-4 py-3 rounded-xl font-semibold transition-all disabled:opacity-60 disabled:cursor-not-allowed bg-primary hover:bg-primary-dark text-white"
+							>
+								{isAddingToCart ? t("addingToCart") : t("addToCart")}
+							</button>
+							{addToCartFeedback ? (
+								<p className="text-xs text-center text-gray-600 mb-3">{addToCartFeedback}</p>
+							) : null}
+							{chatMessages.length === 1 && chatMessages[0]?.role === "assistant" ? (
+								<p className="text-sm text-gray-600 text-center mb-3">{t("askAboutGarment")}</p>
+							) : null}
+							<div className="flex gap-2">
+								<input
+									type="text"
+									value={chatInput}
+									onChange={(event) => setChatInput(event.target.value)}
+									placeholder={t("typeYourMessage")}
+									className="flex-1 px-4 py-3 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 transition-all"
+									onKeyDown={(event) => {
+										if (event.key === "Enter") {
+											event.preventDefault();
+											handleChatSubmit();
+										}
+									}}
+								/>
+								<button
+									type="button"
+									onClick={handleChatSubmit}
+									className="px-5 py-3 rounded-xl text-white font-medium transition-all hover:shadow-md bg-primary"
+								>
+									<ArrowRight className="w-5 h-5" />
+								</button>
+							</div>
+						</div>
+					) : (
+						<div className="p-4 border-t bg-gray-50 space-y-3">
+							{interactionCount >= GPT_INTERACTION_LIMIT && chatMessages.length > 0 && !gptLoading ? (
+								<p className="text-sm text-gray-600 text-center">
+									{t("assistantThanks", { storeName: params.storeName })}
+								</p>
+							) : null}
+							<button
+								type="button"
+								onClick={handleAddToCart}
+								disabled={isAddingToCart}
+								className="w-full px-4 py-3 rounded-xl font-semibold transition-all disabled:opacity-60 disabled:cursor-not-allowed bg-primary hover:bg-primary-dark text-white"
+							>
+								{isAddingToCart ? t("addingToCart") : t("addToCart")}
+							</button>
+							{addToCartFeedback ? <p className="text-xs text-center text-gray-600">{addToCartFeedback}</p> : null}
+						</div>
+					)}
 				</div>
 			) : (
 				<div className="fixed inset-0 z-50 bg-white flex flex-col animate-fade-in">
@@ -837,20 +1206,26 @@ export function WidgetPage() {
 												</div>
 
 												<div className="grid grid-cols-2 gap-3">
-													<input
-														type="number"
-														value={height}
-														onChange={(event) => setHeight(event.target.value)}
-														placeholder={t("heightPlaceholder")}
-														className="w-full px-3 py-2 border border-gray-300 rounded-lg transition-all"
-													/>
-													<input
-														type="number"
-														value={weight}
-														onChange={(event) => setWeight(event.target.value)}
-														placeholder={t("weightPlaceholder")}
-														className="w-full px-3 py-2 border border-gray-300 rounded-lg transition-all"
-													/>
+													<div>
+														<label className="block text-sm font-medium text-gray-700 mb-2">{t("heightLabel")}</label>
+														<input
+															type="number"
+															value={height}
+															onChange={(event) => setHeight(event.target.value)}
+															placeholder={t("heightPlaceholder")}
+															className="w-full px-3 py-2 border border-gray-300 rounded-lg transition-all"
+														/>
+													</div>
+													<div>
+														<label className="block text-sm font-medium text-gray-700 mb-2">{t("weightLabel")}</label>
+														<input
+															type="number"
+															value={weight}
+															onChange={(event) => setWeight(event.target.value)}
+															placeholder={t("weightPlaceholder")}
+															className="w-full px-3 py-2 border border-gray-300 rounded-lg transition-all"
+														/>
+													</div>
 												</div>
 
 												<div>
