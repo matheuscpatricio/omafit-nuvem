@@ -414,18 +414,33 @@ function AppContent({ nexo, store }: AdminAppProps) {
 				if (!response.ok || !payload?.url) {
 					throw new Error(payload?.error || "Nao foi possivel enviar o logo.");
 				}
+				const nextConfig = {
+					...widgetConfig,
+					store_logo: String(payload.url),
+				};
 				setWidgetConfig((current) => ({
 					...current,
 					store_logo: String(payload.url),
 				}));
-				setNotice("Logo enviado com sucesso.");
+				const saved = await fetchJson<{ config?: OmafitWidgetConfig }>(
+					withStoreQuery("/api/widget-config"),
+					{
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify(nextConfig),
+					},
+				);
+				if (saved?.config) {
+					setWidgetConfig(saved.config);
+				}
+				setNotice("Logo enviado e salvo com sucesso.");
 			} catch (requestError) {
 				setError(requestError instanceof Error ? requestError.message : t("feedback.error"));
 			} finally {
 				setBusyAction(null);
 			}
 		},
-		[t, withStoreQuery],
+		[t, widgetConfig, withStoreQuery],
 	);
 
 	const saveCharts = useCallback(async () => {
