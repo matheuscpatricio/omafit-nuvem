@@ -2412,8 +2412,9 @@ function getMeasurements(session) {
 
 async function getAnalyticsSummary(storeId, storeUrl = "", days = 30) {
 	const shopKey = getCanonicalShopKey(storeId);
+	const periodDays = Math.max(1, Math.min(365, Number(days || 30) || 30));
 	const since = new Date();
-	since.setDate(since.getDate() - Number(days || 30));
+	since.setDate(since.getDate() - periodDays);
 
 	let shopRecord = null;
 	try {
@@ -2437,10 +2438,16 @@ async function getAnalyticsSummary(storeId, storeUrl = "", days = 30) {
 	const sizeCount = {};
 	const bodyTypeCount = {};
 	const fitByCollectionGender = {};
+	const fitPreferenceCount = {};
+	const heatmapCount = {};
+	let sessionsWithProfile = 0;
+	let sessionsWithRecommendation = 0;
+	const sessionDurations = [];
 
 	for (const session of sessions) {
 		const measurements = getMeasurements(session);
 		if (!measurements.gender) continue;
+		sessionsWithProfile += 1;
 		if (Number.isFinite(measurements.height)) {
 			genderStats[measurements.gender].heights.push(measurements.height);
 		}
@@ -2450,15 +2457,47 @@ async function getAnalyticsSummary(storeId, storeUrl = "", days = 30) {
 		const collection = String(measurements.collectionHandle || "geral");
 		const size = measurements.recommendedSize ? String(measurements.recommendedSize) : null;
 		const bodyType = measurements.bodyType != null ? String(measurements.bodyType) : null;
+		const fitPreference =
+			session?.fit_preference_index ??
+			session?.fitPreference ??
+			null;
 		const mapKey = `${collection}|${measurements.gender}`;
 		collectionCount[collection] = (collectionCount[collection] || 0) + 1;
-		if (size) sizeCount[size] = (sizeCount[size] || 0) + 1;
+		if (size) {
+			sessionsWithRecommendation += 1;
+			sizeCount[size] = (sizeCount[size] || 0) + 1;
+			const heatKey = `${collection}__${size}`;
+			heatmapCount[heatKey] = (heatmapCount[heatKey] || 0) + 1;
+		}
 		if (bodyType) bodyTypeCount[bodyType] = (bodyTypeCount[bodyType] || 0) + 1;
+		if (fitPreference != null) {
+			const fitKey = String(Number(fitPreference));
+			fitPreferenceCount[fitKey] = (fitPreferenceCount[fitKey] || 0) + 1;
+		}
+
+		const startRaw = session?.session_start_time || session?.created_at;
+		const endRaw = session?.session_end_time || session?.updated_at;
+		if (startRaw && endRaw) {
+			const startTime = new Date(startRaw).getTime();
+			const endTime = new Date(endRaw).getTime();
+			if (
+				Number.isFinite(startTime) &&
+				Number.isFinite(endTime) &&
+				endTime > startTime
+			) {
+				const durationSeconds = (endTime - startTime) / 1000;
+				if (durationSeconds > 0 && durationSeconds <= 7200) {
+					sessionDurations.push(durationSeconds);
+				}
+			}
+		}
+
 		if (!fitByCollectionGender[mapKey]) {
 			fitByCollectionGender[mapKey] = {
 				collection,
 				gender: measurements.gender,
 				sizes: {},
+				fits: {},
 				bodyTypes: {},
 			};
 		}
@@ -2469,6 +2508,11 @@ async function getAnalyticsSummary(storeId, storeUrl = "", days = 30) {
 		if (bodyType) {
 			fitByCollectionGender[mapKey].bodyTypes[bodyType] =
 				(fitByCollectionGender[mapKey].bodyTypes[bodyType] || 0) + 1;
+		}
+		if (fitPreference != null) {
+			const fitKey = String(Number(fitPreference));
+			fitByCollectionGender[mapKey].fits[fitKey] =
+				(fitByCollectionGender[mapKey].fits[fitKey] || 0) + 1;
 		}
 	}
 
@@ -2510,36 +2554,126 @@ async function getAnalyticsSummary(storeId, storeUrl = "", days = 30) {
 		};
 	});
 
+	const byCollectionGender = Object.values(fitByCollectionGender)
+		.map((row) => {
+			const mostSize = Object.entries(row.sizes).sort((left, right) => right[1] - left[1])[0];
+			const mostFit = Object.entries(row.fits).sort((left, right) => right[1] - left[1])[0];
+			const mostBodyType = Object.entries(row.bodyTypes).sort((left, right) => right[1] - left[1])[0];
+			return {
+				collection: row.collection === "geral" ? "Geral" : row.collection,
+				gender: row.gender,
+				mostSize: mostSize ? { value: mostSize[0], count: mostSize[1] } : null,
+				mostFit: mostFit ? { value: mostFit[0], count: mostFit[1] } : null,
+				mostBodyType: mostBodyType ? { value: mostBodyType[0], count: mostBodyType[1] } : null,
+			};
+		})
+		.filter((row) => row.mostSize || row.mostFit || row.mostBodyType);
+
+	const heatmapRows = Object.entries(heatmapCount)
+		.map(([key, count]) => {
+			const [collection, size] = key.split("__");
+			return {
+				collection: collection === "geral" ? "Geral" : collection,
+				size,
+				count,
+			};
+		})
+		.sort((left, right) => right.count - left.count)
+		.slice(0, 10);
+
 	let orderMetrics = {
+		ordersBefore: null,
 		ordersAfter: 0,
 		omafitOrdersAfter: 0,
 		omafitRevenueAfter: 0,
+		returnsBefore: null,
 		returnsAfter: 0,
+		conversionBefore: null,
+		conversionAfter: null,
+		installDate: shopRecord?.created_at || null,
+		periodDays,
 	};
 	try {
-		const rows = await supabaseSelectAll(
-			`order_analytics_omafit?shop_domain=eq.${encodeURIComponent(shopKey)}&select=*`,
+		const orderDomainCandidates = Array.from(
+			new Set(
+				[
+					shopKey,
+					normalizeStoreUrl(storeUrl),
+					normalizeStoreUrl(shopRecord?.store_url || ""),
+					normalizeStoreUrl(shopRecord?.platform_store_url || ""),
+					normalizeStoreUrl(shopRecord?.shop_domain || ""),
+				]
+					.map((value) => String(value || "").trim())
+					.filter(Boolean),
+			),
 		);
+		let rows = [];
+		for (const candidate of orderDomainCandidates) {
+			rows = await supabaseSelectAll(
+				`order_analytics_omafit?shop_domain=eq.${encodeURIComponent(candidate)}&select=*`,
+			);
+			if (rows.length > 0) break;
+		}
 		if (rows.length > 0) {
+			const sinceMs = since.getTime();
+			const afterRows = rows.filter((row) => {
+				const dateRaw = row?.order_created_at || row?.created_at;
+				const time = new Date(dateRaw || "").getTime();
+				return Number.isFinite(time) && time >= sinceMs;
+			});
 			orderMetrics = rows.reduce(
 				(accumulator, row) => ({
-					ordersAfter: accumulator.ordersAfter + 1,
-					omafitOrdersAfter: accumulator.omafitOrdersAfter + 1,
+					...accumulator,
+					ordersAfter:
+						accumulator.ordersAfter +
+						(afterRows.includes(row) ? 1 : 0),
+					omafitOrdersAfter:
+						accumulator.omafitOrdersAfter +
+						(afterRows.includes(row) ? 1 : 0),
 					omafitRevenueAfter:
-						accumulator.omafitRevenueAfter + Number(row.total ?? row.order_total ?? 0),
+						accumulator.omafitRevenueAfter +
+						(afterRows.includes(row) ? Number(row.total ?? row.order_total ?? row.total_price ?? 0) : 0),
 					returnsAfter:
-						accumulator.returnsAfter + (row.is_returned || row.returned ? 1 : 0),
+						accumulator.returnsAfter +
+						(afterRows.includes(row) && (row.is_returned || row.returned) ? 1 : 0),
 				}),
 				orderMetrics,
 			);
+			orderMetrics.conversionAfter =
+				orderMetrics.ordersAfter > 0
+					? ((orderMetrics.ordersAfter - orderMetrics.returnsAfter) / orderMetrics.ordersAfter) * 100
+					: null;
 		}
 	} catch (_error) {
 		// keep default values
 	}
 
+	const avgSessionSeconds = average(sessionDurations);
+	const recommendationCoveragePercent =
+		totalSessions > 0 ? (sessionsWithRecommendation / totalSessions) * 100 : null;
+	const usage = shopRecord ? toUsageSummary(shopRecord) : toUsageSummary({ plan: "ondemand" });
+	const planCostMap = { ondemand: 0, starter: 0, basic: 0, growth: 300, pro: 300 };
+	const planCost = planCostMap[String(usage?.plan || "").toLowerCase()] || 0;
+	const extraCost = Number(usage?.extraCost || 0) || 0;
+	const estimatedCost = planCost + extraCost;
+	const estimatedRoiPercent =
+		estimatedCost > 0
+			? ((Number(orderMetrics.omafitRevenueAfter || 0) - estimatedCost) / estimatedCost) * 100
+			: null;
+	const avgTicket =
+		orderMetrics.omafitOrdersAfter > 0
+			? Number(orderMetrics.omafitRevenueAfter || 0) / Number(orderMetrics.omafitOrdersAfter || 1)
+			: null;
+	const avoidedReturns =
+		orderMetrics.returnsBefore != null
+			? Math.max(0, Number(orderMetrics.returnsBefore) - Number(orderMetrics.returnsAfter || 0))
+			: 0;
+	const estimatedCostAvoided =
+		avgTicket != null ? avoidedReturns * avgTicket : null;
+
 	return {
 		totalSessions,
-		usage: shopRecord ? toUsageSummary(shopRecord) : toUsageSummary({ plan: "ondemand" }),
+		usage,
 		avgByGender: {
 			male: {
 				height: average(genderStats.male.heights),
@@ -2555,6 +2689,32 @@ async function getAnalyticsSummary(storeId, storeUrl = "", days = 30) {
 		bodyTypeDistribution,
 		topRecommendations,
 		orderMetrics,
+		byCollectionGender,
+		performance: {
+			sessionsTotal: totalSessions,
+			sessionsWithProfile,
+			sessionsWithRecommendation,
+			avgSessionSeconds,
+			usageByCollection,
+		},
+		quality: {
+			recommendationCoveragePercent,
+			tableDivergenceAlert:
+				recommendationCoveragePercent != null && recommendationCoveragePercent < 70
+					? `Cobertura baixa de recomendacao (${recommendationCoveragePercent.toFixed(1)}%).`
+					: "Cobertura saudavel de recomendacoes.",
+		},
+		intelligence: {
+			bodyTypeDistribution,
+			sizeDistribution,
+			heatmapRows,
+		},
+		finance: {
+			estimatedRoiPercent,
+			attributedRevenue: Number(orderMetrics.omafitRevenueAfter || 0),
+			estimatedCostAvoided,
+		},
+		currency: usage?.currency || "BRL",
 	};
 }
 

@@ -1265,6 +1265,11 @@ function AnalyticsSection({
 	busy: boolean;
 }) {
 	const { t } = useI18n();
+	const fitNameMap: Record<string, string> = {
+		"0": "Ajustado",
+		"1": "Regular",
+		"2": "Solto",
+	};
 	return (
 		<div style={{ display: "grid", gap: 16 }}>
 			<div style={{ ...cardStyle, display: "grid", gap: 10 }}>
@@ -1336,6 +1341,71 @@ function AnalyticsSection({
 						rightItems={data.topRecommendations.map(
 							(item) =>
 								`${item.collection} · ${item.gender} · ${item.recommendedSize || "—"} · corpo ${item.bodyType || "—"}`,
+						)}
+					/>
+
+					<div style={{ ...cardStyle, display: "grid", gap: 10 }}>
+						<strong style={{ fontSize: 18 }}>Impacto financeiro</strong>
+						<div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16 }}>
+							<StatCard
+								label="ROI estimado"
+								value={
+									data.finance?.estimatedRoiPercent != null
+										? `${data.finance.estimatedRoiPercent.toFixed(1)}%`
+										: "—"
+								}
+							/>
+							<StatCard
+								label="Receita atribuída ao Omafit"
+								value={formatMoney(data.finance?.attributedRevenue ?? null, data.currency || data.usage.currency)}
+							/>
+							<StatCard
+								label="Custo evitado estimado"
+								value={formatMoney(data.finance?.estimatedCostAvoided ?? null, data.currency || data.usage.currency)}
+							/>
+						</div>
+					</div>
+
+					<div style={{ ...cardStyle, display: "grid", gap: 10 }}>
+						<strong style={{ fontSize: 18 }}>Performance</strong>
+						<div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16 }}>
+							<StatCard label="Sessões totais" value={String(data.performance?.sessionsTotal ?? data.totalSessions)} />
+							<StatCard label="Sessões com perfil" value={String(data.performance?.sessionsWithProfile ?? 0)} />
+							<StatCard
+								label="Sessões com recomendação"
+								value={String(data.performance?.sessionsWithRecommendation ?? 0)}
+							/>
+							<StatCard
+								label="Duração média da sessão"
+								value={
+									data.performance?.avgSessionSeconds != null
+										? `${Math.round(data.performance.avgSessionSeconds)}s`
+										: "—"
+								}
+							/>
+						</div>
+					</div>
+
+					<div style={{ ...cardStyle, display: "grid", gap: 10 }}>
+						<strong style={{ fontSize: 18 }}>Qualidade</strong>
+						<span style={subtleTextStyle}>
+							Cobertura de recomendação:{" "}
+							{data.quality?.recommendationCoveragePercent != null
+								? `${data.quality.recommendationCoveragePercent.toFixed(1)}%`
+								: "—"}
+						</span>
+						<span style={subtleTextStyle}>{data.quality?.tableDivergenceAlert || "Sem alertas no período."}</span>
+					</div>
+
+					<TwoColumnList
+						leftTitle="Coleção + gênero (mais frequentes)"
+						leftItems={(data.byCollectionGender || []).map(
+							(item) =>
+								`${item.collection} · ${item.gender} · tam ${item.mostSize?.value || "—"} · ajuste ${fitNameMap[item.mostFit?.value || ""] || "—"} · corpo ${item.mostBodyType?.value || "—"}`,
+						)}
+						rightTitle="Heatmap coleção x tamanho"
+						rightItems={(data.intelligence?.heatmapRows || []).map(
+							(item) => `${item.collection} · ${item.size}: ${item.count}`,
 						)}
 					/>
 				</>

@@ -105,9 +105,60 @@ export type OmafitAnalyticsSummary = {
 		bodyType: string | null;
 	}>;
 	orderMetrics: {
+		ordersBefore?: number | null;
 		ordersAfter: number;
 		omafitOrdersAfter: number;
 		omafitRevenueAfter: number;
+		returnsBefore?: number | null;
 		returnsAfter: number;
+		conversionBefore?: number | null;
+		conversionAfter?: number | null;
+		installDate?: string | null;
+		periodDays?: number;
 	};
+	byCollectionGender?: Array<{
+		collection: string;
+		gender: string;
+		mostSize: { value: string; count: number } | null;
+		mostFit: { value: string; count: number } | null;
+		mostBodyType: { value: string; count: number } | null;
+	}>;
+	performance?: {
+		sessionsTotal: number;
+		sessionsWithProfile: number;
+		sessionsWithRecommendation: number;
+		avgSessionSeconds: number | null;
+		usageByCollection: Array<{
+			collection: string;
+			count: number;
+			percent: number;
+		}>;
+	};
+	quality?: {
+		recommendationCoveragePercent: number | null;
+		tableDivergenceAlert: string;
+	};
+	intelligence?: {
+		bodyTypeDistribution: Array<{
+			bodyType: string;
+			count: number;
+			percent: number;
+		}>;
+		sizeDistribution: Array<{
+			size: string;
+			count: number;
+			percent: number;
+		}>;
+		heatmapRows: Array<{
+			collection: string;
+			size: string;
+			count: number;
+		}>;
+	};
+	finance?: {
+		estimatedRoiPercent: number | null;
+		attributedRevenue: number | null;
+		estimatedCostAvoided: number | null;
+	};
+	currency?: string;
 };
