@@ -47,9 +47,6 @@ const MODAL_ID = "omafit-legacy-modal";
 const STYLE_ID = "omafit-legacy-style";
 
 function debugLog(message: string, data: Record<string, unknown>, hypothesisId: string) {
-	// #region agent log
-	fetch('http://127.0.0.1:7523/ingest/ebd119e5-639e-45b4-9806-782ca57f574c',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b68c2f'},body:JSON.stringify({sessionId:'b68c2f',runId:'legacy-storefront-debug',hypothesisId,location:'src/storefront-legacy.ts',message,data,timestamp:Date.now()})}).catch(()=>{});
-	// #endregion
 	console.info("[Omafit Legacy Debug]", hypothesisId, message, data);
 }
 
@@ -167,6 +164,16 @@ async function loadConfig(appBaseUrl: string, storeId: string) {
 	}
 }
 
+function collectionHandleFromPathname(): string {
+	try {
+		const m = window.location.pathname.match(/\/collections\/([^/]+)/i);
+		if (!m?.[1]) return "";
+		return decodeURIComponent(m[1]).trim().toLowerCase();
+	} catch {
+		return "";
+	}
+}
+
 function buildWidgetUrl(
 	baseUrl: string,
 	store: LegacyStoreContext,
@@ -182,6 +189,10 @@ function buildWidgetUrl(
 	widgetUrl.searchParams.set("variant_id", product.variantId || "");
 	widgetUrl.searchParams.set("product_name", product.name);
 	widgetUrl.searchParams.set("product_handle", product.handle);
+	const collectionHandle = collectionHandleFromPathname();
+	if (collectionHandle) {
+		widgetUrl.searchParams.set("collection_handle", collectionHandle);
+	}
 	if (product.imageUrl) widgetUrl.searchParams.set("product_image", product.imageUrl);
 	if (product.imageUrls.length) {
 		widgetUrl.searchParams.set("product_images", JSON.stringify(product.imageUrls));

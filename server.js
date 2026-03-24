@@ -2012,35 +2012,6 @@ async function saveBillingPlan(storeId, planId, storeUrl = "") {
 	const storeInfo = session?.store || storeRecord || { id: storeId };
 	let billingIdentifiers = resolveBillingIdentifiers(storeId);
 
-	// #region agent log
-	fetch("http://127.0.0.1:7523/ingest/ebd119e5-639e-45b4-9806-782ca57f574c", {
-		method: "POST",
-		headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "b68c2f" },
-		body: JSON.stringify({
-			sessionId: "b68c2f",
-			runId: "billing-identifiers-debug",
-			hypothesisId: "H1,H4,H5",
-			location: "server.js:1687",
-			message: "saveBillingPlan resolved billing identifiers",
-			data: {
-				storeId,
-				planId: normalizedPlanId,
-				requestedStoreUrl,
-				hasStoreRecord: Boolean(storeRecord),
-				hasSession: Boolean(session),
-				sessionStoreId: String(session?.store?.id || ""),
-				sessionStoreUrl: String(session?.store?.url || ""),
-				recordStoreUrl: String(storeRecord?.store_url || storeRecord?.platform_store_url || ""),
-				hasBillingConceptCode: Boolean(billingIdentifiers.conceptCode),
-				hasBillingServiceId: Boolean(billingIdentifiers.serviceId),
-				hasFallbackConceptCode: Boolean(getBillingConceptCodeFallback()),
-				hasWebhooksSyncedAt: Boolean(session?.webhooksSyncedAt),
-			},
-			timestamp: Date.now(),
-		}),
-	}).catch(() => {});
-	// #endregion
-
 	if (!billingIdentifiers.conceptCode || !billingIdentifiers.serviceId) {
 		const discovered = await discoverBillingIdentifiers(
 			storeId,
@@ -2134,28 +2105,6 @@ async function saveBillingPlan(storeId, planId, storeUrl = "") {
 		if (error.debug && typeof error.debug === "object") {
 			error.debug.discoveryAttempts = discoveryAttempts;
 		}
-		// #region agent log
-		fetch("http://127.0.0.1:7523/ingest/ebd119e5-639e-45b4-9806-782ca57f574c", {
-			method: "POST",
-			headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "b68c2f" },
-			body: JSON.stringify({
-				sessionId: "b68c2f",
-				runId: "billing-identifiers-debug",
-				hypothesisId: "H1,H5",
-				location: "server.js:1689",
-				message: "saveBillingPlan missing billing identifiers",
-				data: {
-					storeId,
-					planId: normalizedPlanId,
-				requestedStoreUrl,
-					hasBillingConceptCode: Boolean(billingIdentifiers.conceptCode),
-					hasBillingServiceId: Boolean(billingIdentifiers.serviceId),
-					hasFallbackConceptCode: Boolean(getBillingConceptCodeFallback()),
-				},
-				timestamp: Date.now(),
-			}),
-		}).catch(() => {});
-		// #endregion
 		throw error;
 		}
 	}
@@ -2819,27 +2768,6 @@ function buildAdminContext(storeContext, session, storeRecord) {
 async function resolveSession(storeId, storeUrl = "") {
 	const localSession = getSession(storeId);
 	if (localSession?.accessToken) {
-		// #region agent log
-		fetch("http://127.0.0.1:7523/ingest/ebd119e5-639e-45b4-9806-782ca57f574c", {
-			method: "POST",
-			headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "b68c2f" },
-			body: JSON.stringify({
-				sessionId: "b68c2f",
-				runId: "billing-identifiers-debug",
-				hypothesisId: "H5",
-				location: "server.js:1970",
-				message: "resolveSession returned local session",
-				data: {
-					storeId,
-					hasAccessToken: Boolean(localSession.accessToken),
-					hasBillingConceptCode: Boolean(localSession.billingConceptCode),
-					hasBillingServiceId: Boolean(localSession.billingServiceId),
-					hasWebhooksSyncedAt: Boolean(localSession.webhooksSyncedAt),
-				},
-				timestamp: Date.now(),
-			}),
-		}).catch(() => {});
-		// #endregion
 		return localSession;
 	}
 	if (!storeId) return localSession;
@@ -2853,57 +2781,8 @@ async function resolveSession(storeId, storeUrl = "") {
 		recoveredFromStoreRecord ||
 		buildSessionFromNuvemshopCredential(storeId, credentialRecord, storeUrl, storeRecord);
 	if (!recoveredSession?.accessToken) {
-		// #region agent log
-		fetch("http://127.0.0.1:7523/ingest/ebd119e5-639e-45b4-9806-782ca57f574c", {
-			method: "POST",
-			headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "b68c2f" },
-			body: JSON.stringify({
-				sessionId: "b68c2f",
-				runId: "billing-identifiers-debug",
-				hypothesisId: "H4",
-				location: "server.js:1975",
-				message: "resolveSession could not recover session",
-				data: {
-					storeId,
-					storeUrl,
-					hasStoreRecord: Boolean(storeRecord),
-					hasCredentialRecord: Boolean(credentialRecord),
-					hasRecoveredSession: Boolean(recoveredSession),
-				},
-				timestamp: Date.now(),
-			}),
-		}).catch(() => {});
-		// #endregion
 		return localSession;
 	}
-
-	// #region agent log
-	fetch("http://127.0.0.1:7523/ingest/ebd119e5-639e-45b4-9806-782ca57f574c", {
-		method: "POST",
-		headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "b68c2f" },
-		body: JSON.stringify({
-			sessionId: "b68c2f",
-			runId: "billing-identifiers-debug",
-			hypothesisId: "H5",
-			location: "server.js:1977",
-			message: "resolveSession rebuilt session from store record",
-			data: {
-				storeId,
-				storeUrl,
-				hasStoreRecord: Boolean(storeRecord),
-				recoveredFrom: recoveredFromStoreRecord?.accessToken
-					? "store_record"
-					: credentialRecord?.access_token
-						? "nuvemshop_credentials"
-						: "unknown",
-				hasRecoveredAccessToken: Boolean(recoveredSession.accessToken),
-				hasRecoveredBillingConceptCode: Boolean(recoveredSession.billingConceptCode),
-				hasRecoveredBillingServiceId: Boolean(recoveredSession.billingServiceId),
-			},
-			timestamp: Date.now(),
-		}),
-	}).catch(() => {});
-	// #endregion
 
 	persistSession(recoveredSession);
 	return recoveredSession;
@@ -3394,50 +3273,11 @@ async function handleApi(req, res, reqUrl) {
 			} catch (_error) {
 				invalidPayload = {};
 			}
-			// #region agent log
-			fetch("http://127.0.0.1:7523/ingest/ebd119e5-639e-45b4-9806-782ca57f574c", {
-				method: "POST",
-				headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "b68c2f" },
-				body: JSON.stringify({
-					sessionId: "b68c2f",
-					runId: "billing-identifiers-debug",
-					hypothesisId: "H2",
-					location: "server.js:2321",
-					message: "webhook rejected by signature verification",
-					data: {
-						event: String(invalidPayload?.event || ""),
-						storeId: String(invalidPayload?.store_id || ""),
-						hasSignature: Boolean(signature),
-					},
-					timestamp: Date.now(),
-				}),
-			}).catch(() => {});
-			// #endregion
 			sendJson(res, 401, { error: "Invalid webhook signature" });
 			return true;
 		}
 		const payload = JSON.parse(rawBody.toString("utf8") || "{}");
 		const storeId = String(payload.store_id || "").trim();
-		// #region agent log
-		fetch("http://127.0.0.1:7523/ingest/ebd119e5-639e-45b4-9806-782ca57f574c", {
-			method: "POST",
-			headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "b68c2f" },
-			body: JSON.stringify({
-				sessionId: "b68c2f",
-				runId: "billing-identifiers-debug",
-				hypothesisId: "H1,H3",
-				location: "server.js:2326",
-				message: "webhook accepted by server",
-				data: {
-					event: String(payload.event || ""),
-					storeId,
-					hasConceptCode: Boolean(payload.concept_code),
-					hasServiceId: Boolean(payload.service_id),
-				},
-				timestamp: Date.now(),
-			}),
-		}).catch(() => {});
-		// #endregion
 		if (payload.event === "app/uninstalled" && storeId) {
 			deleteSession(storeId);
 			await deleteNuvemshopCredential(storeId);
@@ -3470,49 +3310,8 @@ async function handleApi(req, res, reqUrl) {
 						subscription,
 						subscription?.plan?.external_reference || "",
 					);
-					// #region agent log
-					fetch("http://127.0.0.1:7523/ingest/ebd119e5-639e-45b4-9806-782ca57f574c", {
-						method: "POST",
-						headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "b68c2f" },
-						body: JSON.stringify({
-							sessionId: "b68c2f",
-							runId: "billing-identifiers-debug",
-							hypothesisId: "H1,H3",
-							location: "server.js:2348",
-							message: "subscription webhook synced identifiers",
-							data: {
-								storeId,
-								hasConceptCode: Boolean(conceptCode),
-								hasServiceId: Boolean(serviceId),
-								hasNextExecution: Boolean(subscription?.next_execution),
-								planExternalReference: String(
-									subscription?.plan?.external_reference || "",
-								),
-							},
-							timestamp: Date.now(),
-						}),
-					}).catch(() => {});
-					// #endregion
 				}
-			} catch (error) {
-				// #region agent log
-				fetch("http://127.0.0.1:7523/ingest/ebd119e5-639e-45b4-9806-782ca57f574c", {
-					method: "POST",
-					headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "b68c2f" },
-					body: JSON.stringify({
-						sessionId: "b68c2f",
-						runId: "billing-identifiers-debug",
-						hypothesisId: "H3",
-						location: "server.js:2355",
-						message: "subscription webhook sync failed",
-						data: {
-							storeId,
-							error: String(error?.message || "unknown"),
-						},
-						timestamp: Date.now(),
-					}),
-				}).catch(() => {});
-				// #endregion
+			} catch (_error) {
 				// best effort sync
 			}
 		}

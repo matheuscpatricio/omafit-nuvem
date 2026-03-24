@@ -10,9 +10,6 @@ function debugLog(
 	data: Record<string, unknown>,
 	hypothesisId: string,
 ) {
-	// #region agent log
-	fetch('http://127.0.0.1:7523/ingest/ebd119e5-639e-45b4-9806-782ca57f574c',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b68c2f'},body:JSON.stringify({sessionId:'b68c2f',runId:'pre-fix',hypothesisId,location:'src/home.ts',message,data,timestamp:Date.now()})}).catch(()=>{});
-	// #endregion
 	console.info("[Omafit Debug]", hypothesisId, message, data);
 }
 

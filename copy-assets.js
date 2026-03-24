@@ -63,11 +63,7 @@ const appHtml = `<!DOCTYPE html>
 <body>
   <div id="app"></div>
   <script type="module">
-    const omafitDebugLog = (message, data, hypothesisId = "H1") => {
-      // #region agent log
-      fetch('http://127.0.0.1:7523/ingest/ebd119e5-639e-45b4-9806-782ca57f574c',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b68c2f'},body:JSON.stringify({sessionId:'b68c2f',runId:'pre-fix',hypothesisId,location:'app.html:inline',message,data,timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
-    };
+    const omafitDebugLog = () => {};
 
     const homeModuleUrl = \`/assets/home-${buildId}.min.js?debug=b68c2f-v2\`;
     omafitDebugLog("app_html_boot", {

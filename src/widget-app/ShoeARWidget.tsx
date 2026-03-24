@@ -526,7 +526,11 @@ export function ShoeARWidget(props: ShoeARWidgetProps) {
 	const chatEndRef = useRef<HTMLDivElement | null>(null);
 	const sessionIdRef = useRef(`shoe_${Date.now().toString(36)}`);
 	const initialGptRequestedRef = useRef(false);
-	const { detectPose } = useMediaPipePose({ useWorker: false, silentNoPose: true });
+	const { detectPose } = useMediaPipePose({
+		useWorker: false,
+		silentNoPose: true,
+		footPhotoMode: true,
+	});
 
 	useEffect(() => {
 		interactionCountRef.current = interactionCount;

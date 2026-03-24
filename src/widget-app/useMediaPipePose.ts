@@ -29,6 +29,11 @@ export interface UseMediaPipePoseOptions {
 	/** Ignorado: bundle sem worker; sempre main thread (igual `useWorker: false` no widget). */
 	useWorker?: boolean;
 	silentNoPose?: boolean;
+	/**
+	 * Foto só perna/pé (calçados): limiares mais baixos e validação focada em quadril/joelho/tornozelo.
+	 * Sem isto, a média de visibilidade dos ombros falha e `detectPose` devolve null mesmo com WASM ok.
+	 */
+	footPhotoMode?: boolean;
 }
 
 type MainThreadLandmarker = {
@@ -39,7 +44,9 @@ type MainThreadLandmarker = {
 export function useMediaPipePose(options?: UseMediaPipePoseOptions) {
 	const enabled = options?.enabled ?? true;
 	const silentNoPose = options?.silentNoPose ?? false;
+	const footPhotoMode = options?.footPhotoMode ?? false;
 	const MIN_LANDMARK_VISIBILITY = 0.3;
+	const FOOT_MIN_LANDMARK_VISIBILITY = 0.18;
 	const mainThreadPoseLandmarkerRef = useRef<MainThreadLandmarker | null>(null);
 	const mainThreadInitPromiseRef = useRef<Promise<void> | null>(null);
 	const [isLoading, setIsLoading] = useState(false);
@@ -54,11 +61,15 @@ export function useMediaPipePose(options?: UseMediaPipePoseOptions) {
 
 		setIsLoading(true);
 		const initPromise = (async () => {
+			mainThreadPoseLandmarkerRef.current?.close?.();
+			mainThreadPoseLandmarkerRef.current = null;
+
 			const { FilesetResolver, PoseLandmarker } = await import("@mediapipe/tasks-vision");
 			const vision = await FilesetResolver.forVisionTasks(
 				"https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.32/wasm",
 			);
 
+			const confidence = footPhotoMode ? 0.28 : 0.5;
 			const landmarker = await PoseLandmarker.createFromOptions(vision, {
 				baseOptions: {
 					modelAssetPath:
@@ -67,9 +78,9 @@ export function useMediaPipePose(options?: UseMediaPipePoseOptions) {
 				},
 				runningMode: "IMAGE",
 				numPoses: 1,
-				minPoseDetectionConfidence: 0.5,
-				minPosePresenceConfidence: 0.5,
-				minTrackingConfidence: 0.5,
+				minPoseDetectionConfidence: confidence,
+				minPosePresenceConfidence: confidence,
+				minTrackingConfidence: confidence,
 			});
 			mainThreadPoseLandmarkerRef.current = {
 				detect: (img: HTMLImageElement) => landmarker.detect(img),
@@ -84,7 +95,7 @@ export function useMediaPipePose(options?: UseMediaPipePoseOptions) {
 			mainThreadInitPromiseRef.current = null;
 			setIsLoading(false);
 		}
-	}, []);
+	}, [footPhotoMode]);
 
 	useEffect(() => {
 		if (!enabled) return;
@@ -94,6 +105,26 @@ export function useMediaPipePose(options?: UseMediaPipePoseOptions) {
 			mainThreadPoseLandmarkerRef.current = null;
 		};
 	}, [enabled, initializeMainThreadPoseLandmarker]);
+
+	const hasGoodFootPhotoLandmarkVisibility = useCallback((landmarks: PoseLandmark[] | undefined): boolean => {
+		if (!landmarks || landmarks.length < 29) return false;
+		const hipL = landmarks[23];
+		const hipR = landmarks[24];
+		const kneeL = landmarks[25];
+		const kneeR = landmarks[26];
+		const ankleL = landmarks[27];
+		const ankleR = landmarks[28];
+		const ankles = [ankleL, ankleR].filter(Boolean);
+		const knees = [kneeL, kneeR].filter(Boolean);
+		const anyAnkle = ankles.some((point) => (point.visibility ?? 0) >= FOOT_MIN_LANDMARK_VISIBILITY);
+		const anyKnee = knees.some((point) => (point.visibility ?? 0) >= FOOT_MIN_LANDMARK_VISIBILITY);
+		if (anyAnkle || anyKnee) return true;
+		const lower = [hipL, hipR, kneeL, kneeR, ankleL, ankleR].filter(Boolean);
+		if (lower.length < 2) return false;
+		const avgVisibility =
+			lower.reduce((sum, point) => sum + (point.visibility ?? 0), 0) / lower.length;
+		return avgVisibility >= 0.14;
+	}, []);
 
 	const hasGoodLandmarkVisibility = useCallback((landmarks: PoseLandmark[] | undefined): boolean => {
 		if (!landmarks || landmarks.length === 0) return false;
@@ -127,10 +158,16 @@ export function useMediaPipePose(options?: UseMediaPipePoseOptions) {
 					}
 					return null;
 				}
-				if (!hasGoodLandmarkVisibility(result.landmarks[0] as unknown as PoseLandmark[])) {
+				const poseLandmarks = result.landmarks[0] as unknown as PoseLandmark[];
+				const fullBodyOk = hasGoodLandmarkVisibility(poseLandmarks);
+				const footPhotoOk = footPhotoMode && hasGoodFootPhotoLandmarkVisibility(poseLandmarks);
+
+				if (!fullBodyOk && !footPhotoOk) {
 					if (!silentNoPose) {
 						console.warn(
-							"⚠️ [MainThreadFallback] Pose detectada com baixa visibilidade. Ignorando para evitar medida imprecisa.",
+							footPhotoMode
+								? "⚠️ MediaPipe: pose insuficiente para foto de pé (tornozelos/joelhos pouco visíveis)."
+								: "⚠️ [MainThreadFallback] Pose detectada com baixa visibilidade. Ignorando para evitar medida imprecisa.",
 						);
 					}
 					return null;
@@ -142,7 +179,13 @@ export function useMediaPipePose(options?: UseMediaPipePoseOptions) {
 				return null;
 			}
 		},
-		[hasGoodLandmarkVisibility, initializeMainThreadPoseLandmarker, silentNoPose],
+		[
+			footPhotoMode,
+			hasGoodFootPhotoLandmarkVisibility,
+			hasGoodLandmarkVisibility,
+			initializeMainThreadPoseLandmarker,
+			silentNoPose,
+		],
 	);
 
 	const calculateBodyMeasurements = useCallback(

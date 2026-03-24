@@ -74,6 +74,8 @@ type ParsedParams = {
 	/** Fonte da vitrine (query `store_font`), replicada no iframe */
 	storeFont: string;
 	productDescription: string;
+	/** Slug da coleção na URL da vitrine (`/collections/.../products/...`), quando disponível */
+	collectionHandle: string;
 };
 
 type TryOnStartResponse = {
@@ -304,6 +306,7 @@ function getParams(): ParsedParams {
 		),
 		storeFont: decodeValue(search.get("store_font")),
 		productDescription: decodeValue(search.get("product_description")),
+		collectionHandle: decodeValue(search.get("collection_handle")),
 	};
 }
 
@@ -314,19 +317,49 @@ function normalizeElasticity(value: ApiChart["collection_elasticity"]): Elastici
 	return "light";
 }
 
-function chooseChart(charts: ApiChart[], gender: "male" | "female", handle: string) {
-	const normalizedHandle = String(handle || "").trim().toLowerCase();
-	return (
-		charts.find(
-			(chart) =>
-				String(chart.collection_handle || "").trim().toLowerCase() === normalizedHandle &&
-				(chart.gender === gender || chart.gender === "unisex"),
-		) ||
-		charts.find((chart) => chart.gender === gender) ||
-		charts.find((chart) => chart.gender === "unisex") ||
-		charts[0] ||
-		null
-	);
+function normalizeChartHandle(value: string) {
+	return String(value || "").trim().toLowerCase();
+}
+
+/** Sem match de handle, evita cair na primeira chart da lista se for calçado (ex.: camisa aberta numa URL de coleção). */
+function pickChartPreferNonFootwear(candidates: ApiChart[]) {
+	if (!candidates.length) return null;
+	const nonFoot = candidates.find((c) => c.collection_type !== "footwear");
+	return nonFoot ?? candidates[0] ?? null;
+}
+
+function chooseChart(charts: ApiChart[], gender: "male" | "female", handleCandidates: string[]) {
+	if (!charts.length) return null;
+
+	const normalizedCandidates = handleCandidates
+		.map((h) => normalizeChartHandle(h))
+		.filter(Boolean);
+	// Mantém ordem mas remove duplicados
+	const seen = new Set<string>();
+	const uniqueHandles = normalizedCandidates.filter((h) => {
+		if (seen.has(h)) return false;
+		seen.add(h);
+		return true;
+	});
+
+	for (const h of uniqueHandles) {
+		const exact = charts.find(
+			(c) =>
+				normalizeChartHandle(c.collection_handle) === h &&
+				(c.gender === gender || c.gender === "unisex"),
+		);
+		if (exact) return exact;
+	}
+
+	const sameGender = charts.filter((c) => c.gender === gender);
+	const fromSameGender = pickChartPreferNonFootwear(sameGender);
+	if (fromSameGender) return fromSameGender;
+
+	const unisexOnly = charts.filter((c) => c.gender === "unisex");
+	const fromUnisex = pickChartPreferNonFootwear(unisexOnly);
+	if (fromUnisex) return fromUnisex;
+
+	return pickChartPreferNonFootwear(charts) ?? charts[0] ?? null;
 }
 
 function darkenColor(hex: string, amount = 20) {
@@ -484,9 +517,13 @@ export function WidgetPage() {
 	const displayImage = step === "photo" ? selectedProductImage : params.productImage || selectedProductImage;
 	const t = useMemo(() => getT(language), [language]);
 	const hoverColor = useMemo(() => darkenColor(primaryColor, 16), [primaryColor]);
+	const chartHandleCandidates = useMemo(
+		() => [params.collectionHandle, params.productHandle],
+		[params.collectionHandle, params.productHandle],
+	);
 	const selectedChart = useMemo(
-		() => chooseChart(charts, sizeData?.gender || gender, params.productHandle),
-		[charts, sizeData?.gender, gender, params.productHandle],
+		() => chooseChart(charts, sizeData?.gender || gender, chartHandleCandidates),
+		[charts, sizeData?.gender, gender, chartHandleCandidates],
 	);
 	const availableSizes = useMemo(
 		() => (selectedChart?.sizes || []).map((row) => String(row.size || "")).filter(Boolean),

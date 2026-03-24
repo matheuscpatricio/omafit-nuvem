@@ -12,9 +12,6 @@ type StorefrontConfig = {
 };
 
 function debugLog(message: string, data: Record<string, unknown>, hypothesisId: string) {
-	// #region agent log
-	fetch('http://127.0.0.1:7523/ingest/ebd119e5-639e-45b4-9806-782ca57f574c',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'b68c2f'},body:JSON.stringify({sessionId:'b68c2f',runId:'storefront-debug',hypothesisId,location:'src/main.tsx',message,data,timestamp:Date.now()})}).catch(()=>{});
-	// #endregion
 	console.info("[Omafit Storefront Debug]", hypothesisId, message, data);
 }
 
@@ -31,6 +28,17 @@ function getCurrentProduct(nube: NubeSDK): ProductDetails | null {
 	const page = nube.getState().location.page;
 	if (page.type !== "product") return null;
 	return page.data.product;
+}
+
+/** Slug da coleção quando a página do produto está em `/collections/{slug}/products/...`. */
+function collectionHandleFromStorefrontUrl(url: string): string {
+	try {
+		const m = new URL(url).pathname.match(/\/collections\/([^/]+)/i);
+		if (!m?.[1]) return "";
+		return decodeURIComponent(m[1]).trim().toLowerCase();
+	} catch {
+		return "";
+	}
 }
 
 function buildWidgetUrl(baseUrl: string, nube: NubeSDK, config: StorefrontConfig) {
@@ -70,6 +78,10 @@ function buildWidgetUrl(baseUrl: string, nube: NubeSDK, config: StorefrontConfig
 	widgetUrl.searchParams.set("product_id", String(product.id));
 	widgetUrl.searchParams.set("product_name", product.name?.[state.store.language] || product.name?.pt || "");
 	widgetUrl.searchParams.set("product_handle", product.handle?.[state.store.language] || product.handle?.pt || "");
+	const collectionHandle = collectionHandleFromStorefrontUrl(state.location.url);
+	if (collectionHandle) {
+		widgetUrl.searchParams.set("collection_handle", collectionHandle);
+	}
 	widgetUrl.searchParams.set("currency", state.store.currency);
 	if (selectedVariant?.id) {
 		widgetUrl.searchParams.set("variant_id", String(selectedVariant.id));
