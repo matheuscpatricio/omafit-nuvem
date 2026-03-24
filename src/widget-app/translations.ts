@@ -102,6 +102,8 @@ export const widgetTranslations = {
 		noPreviewYet:
 			"Se a prévia ainda não estiver pronta, você pode seguir com o tamanho recomendado.",
 		askAboutGarment: "Restou alguma dúvida sobre esta roupa? Pergunte abaixo",
+		askAboutFootwear: "Restou alguma dúvida sobre este calçado? Pergunte abaixo",
+		recommendedFootLength: "Comprimento estimado do pé",
 		typeYourMessage: "Digite sua mensagem...",
 		assistantThanks:
 			"Obrigado por usar o assistente da {storeName}! Feche o widget e siga para o carrinho quando quiser.",
@@ -209,6 +211,8 @@ export const widgetTranslations = {
 		noPreviewYet:
 			"Si la vista previa todavía no está lista, puedes seguir con la talla recomendada.",
 		askAboutGarment: "¿Quedó alguna duda sobre esta prenda? Pregunta abajo",
+		askAboutFootwear: "¿Quedó alguna duda sobre este calzado? Pregunta abajo",
+		recommendedFootLength: "Longitud estimada del pie",
 		typeYourMessage: "Escribe tu mensaje...",
 		assistantThanks:
 			"¡Gracias por usar el asistente de {storeName}! Cierra el widget y sigue al carrito cuando quieras.",
@@ -313,6 +317,8 @@ export const widgetTranslations = {
 		tryAgain: "Try again",
 		noPreviewYet: "If the preview is not ready yet, you can still continue with the recommended size.",
 		askAboutGarment: "Any questions about this garment? Ask below",
+		askAboutFootwear: "Any questions about this footwear? Ask below",
+		recommendedFootLength: "Estimated foot length",
 		typeYourMessage: "Type your message...",
 		assistantThanks:
 			"Thanks for using {storeName}'s assistant! Close the widget and continue to cart whenever you want.",

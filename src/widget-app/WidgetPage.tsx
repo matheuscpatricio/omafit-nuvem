@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, ArrowLeft, ArrowRight, Camera, Ruler, Sparkles, User, Weight } from "lucide-react";
 import {
 	calculateIdealSize,
@@ -20,6 +20,7 @@ import {
 } from "./translations";
 import { useMediaPipePose } from "./useMediaPipePose";
 import { ShoeARWidget } from "./ShoeARWidget";
+import { OMAFIT_WIDGET_FONT_FALLBACK, sanitizeFontFamilyForCss } from "../shared/storeFont";
 
 type Step = "info" | "calculator" | "photo" | "confirm" | "processing" | "result";
 
@@ -69,6 +70,8 @@ type ParsedParams = {
 	storeLogo: string;
 	primaryColor: string;
 	language: WidgetLanguage;
+	/** Fonte da vitrine (query `store_font`), replicada no iframe */
+	storeFont: string;
 };
 
 type TryOnStartResponse = {
@@ -277,6 +280,7 @@ function getParams(): ParsedParams {
 				decodeValue(search.get("admin_locale")) ||
 				decodeValue(search.get("lang")),
 		),
+		storeFont: decodeValue(search.get("store_font")),
 	};
 }
 
@@ -424,6 +428,9 @@ export function WidgetPage() {
 	const [language, setLanguage] = useState<WidgetLanguage>(params.language);
 	const [primaryColor, setPrimaryColor] = useState(params.primaryColor);
 	const [storeLogo, setStoreLogo] = useState(params.storeLogo);
+	const [storeFontFamily, setStoreFontFamily] = useState(() =>
+		sanitizeFontFamilyForCss(params.storeFont || ""),
+	);
 	const [error, setError] = useState("");
 	const [sizeData, setSizeData] = useState<SizeData | null>(null);
 	const [gender, setGender] = useState<"male" | "female">("female");
@@ -455,6 +462,11 @@ export function WidgetPage() {
 		enabled: step === "photo" || step === "confirm" || step === "processing",
 		silentNoPose: true,
 	});
+
+	useLayoutEffect(() => {
+		const stack = storeFontFamily ? storeFontFamily : OMAFIT_WIDGET_FONT_FALLBACK;
+		document.documentElement.style.setProperty("--omafit-store-font", stack);
+	}, [storeFontFamily]);
 
 	const productImages = params.productImages.length
 		? params.productImages
@@ -513,6 +525,11 @@ export function WidgetPage() {
 
 	useEffect(() => {
 		const handleMessage = (event: MessageEvent) => {
+			if (event.data?.type === "omafit-store-font") {
+				const next = sanitizeFontFamilyForCss(String(event.data.fontFamily || ""));
+				if (next) setStoreFontFamily(next);
+				return;
+			}
 			if (event.data?.type === "omafit-add-to-cart-result") {
 				setIsAddingToCart(false);
 				setAddToCartFeedback(
@@ -981,6 +998,10 @@ export function WidgetPage() {
 				productId={params.productId || ""}
 				storeDomain={params.storeDomain || ""}
 				variantId={params.variantId || ""}
+				storeId={params.storeId || ""}
+				productHandle={params.productHandle || ""}
+				collectionElasticity={selectedChart?.collection_elasticity || "structured"}
+				publicId={publicId || ""}
 			/>
 		);
 	}
@@ -988,7 +1009,7 @@ export function WidgetPage() {
 	return (
 		<>
 			<style>{`
-				* { font-family: 'Inter', sans-serif; }
+				* { font-family: var(--omafit-store-font) !important; }
 				.bg-primary { background-color: ${primaryColor} !important; }
 				.text-primary { color: ${primaryColor} !important; }
 				.border-primary { border-color: ${primaryColor} !important; }

@@ -123,6 +123,15 @@ const widgetHtml = `<!DOCTYPE html>
       margin: 0;
       min-height: 100%;
       background: #f8fafc;
+      font-family: var(
+        --omafit-store-font,
+        system-ui,
+        -apple-system,
+        BlinkMacSystemFont,
+        "Segoe UI",
+        Roboto,
+        sans-serif
+      );
     }
 
     #app {

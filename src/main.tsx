@@ -1,6 +1,7 @@
 /** @jsxImportSource @tiendanube/nube-sdk-jsx */
 import type { NubeSDK, ProductDetails } from "@tiendanube/nube-sdk-types";
 import { Button, Column, Iframe, Text } from "@tiendanube/nube-sdk-jsx";
+import { getStorefrontFontFamily, sanitizeFontFamilyForCss } from "./shared/storeFont";
 
 type StorefrontConfig = {
 	link_text: string;
@@ -84,6 +85,10 @@ function buildWidgetUrl(baseUrl: string, nube: NubeSDK, config: StorefrontConfig
 	}
 	if (config.primary_color) {
 		widgetUrl.searchParams.set("primary_color", config.primary_color);
+	}
+	const storeFont = sanitizeFontFamilyForCss(getStorefrontFontFamily());
+	if (storeFont) {
+		widgetUrl.searchParams.set("store_font", storeFont);
 	}
 	return widgetUrl.toString();
 }

@@ -1,3 +1,5 @@
+import { getStorefrontFontFamily, sanitizeFontFamilyForCss } from "./shared/storeFont";
+
 type LegacyStorefrontConfig = {
 	link_text: string;
 	store_logo?: string | null;
@@ -187,6 +189,8 @@ function buildWidgetUrl(
 	if (publicId) widgetUrl.searchParams.set("public_id", publicId);
 	if (config.store_logo) widgetUrl.searchParams.set("store_logo", config.store_logo);
 	if (config.primary_color) widgetUrl.searchParams.set("primary_color", config.primary_color);
+	const storeFont = sanitizeFontFamilyForCss(getStorefrontFontFamily());
+	if (storeFont) widgetUrl.searchParams.set("store_font", storeFont);
 	return widgetUrl.toString();
 }
 
@@ -425,6 +429,14 @@ function ensureModal(widgetUrl: string) {
 		modal.querySelector(".omafit-modal-close")?.addEventListener("click", () => {
 			modal.hidden = true;
 		});
+		const iframeNew = modal.querySelector("iframe");
+		if (iframeNew instanceof HTMLIFrameElement) {
+			iframeNew.addEventListener("load", () => {
+				const fontFamily = sanitizeFontFamilyForCss(getStorefrontFontFamily());
+				if (!fontFamily || !iframeNew.contentWindow) return;
+				iframeNew.contentWindow.postMessage({ type: "omafit-store-font", fontFamily }, "*");
+			});
+		}
 	}
 	const iframe = modal.querySelector("iframe");
 	if (iframe instanceof HTMLIFrameElement) {
