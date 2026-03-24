@@ -19,6 +19,8 @@ const PORT = Number(process.env.PORT || 8080);
 const DIST_DIR = join(__dirname, "dist");
 const DATA_DIR = join(__dirname, ".omafit-data");
 const SESSIONS_FILE = join(DATA_DIR, "nuvemshop-sessions.json");
+const TRYON_JOBS_FILE = join(DATA_DIR, "nuvemshop-tryon-jobs.json");
+const BILLING_EVENTS_FILE = join(DATA_DIR, "nuvemshop-billing-events.json");
 const WEBHOOK_EVENTS = [
 	"app/uninstalled",
 	"app/suspended",
@@ -114,6 +116,13 @@ function normalizeSession(session) {
 		updatedAt: new Date().toISOString(),
 		lastSyncAt: session.lastSyncAt || null,
 		webhooksSyncedAt: session.webhooksSyncedAt || null,
+		billingConceptCode: String(
+			session.billingConceptCode || session.billing_concept_code || "",
+		).trim(),
+		billingServiceId: String(
+			session.billingServiceId || session.billing_service_id || "",
+		).trim(),
+		billingNextExecution: session.billingNextExecution || session.billing_next_execution || null,
 		store: session.store || null,
 	};
 }
@@ -151,6 +160,60 @@ function persistSession(session) {
 	sessions[normalized.storeId] = normalized;
 	saveSessions(sessions);
 	return normalized;
+}
+
+function readTryonJobs() {
+	return readJsonFile(TRYON_JOBS_FILE, {});
+}
+
+function saveTryonJobs(jobs) {
+	writeJsonFile(TRYON_JOBS_FILE, jobs);
+}
+
+function rememberTryonJob(predictionId, payload) {
+	if (!predictionId) return;
+	const jobs = readTryonJobs();
+	jobs[String(predictionId)] = {
+		...(jobs[String(predictionId)] || {}),
+		...payload,
+		updatedAt: new Date().toISOString(),
+	};
+	saveTryonJobs(jobs);
+}
+
+function getTryonJob(predictionId) {
+	const jobs = readTryonJobs();
+	return jobs[String(predictionId)] || null;
+}
+
+function forgetTryonJob(predictionId) {
+	const jobs = readTryonJobs();
+	delete jobs[String(predictionId)];
+	saveTryonJobs(jobs);
+}
+
+function readBillingEvents() {
+	return readJsonFile(BILLING_EVENTS_FILE, {});
+}
+
+function saveBillingEvents(events) {
+	writeJsonFile(BILLING_EVENTS_FILE, events);
+}
+
+function getBillingEvent(key) {
+	const events = readBillingEvents();
+	return events[String(key)] || null;
+}
+
+function rememberBillingEvent(key, payload) {
+	if (!key) return;
+	const events = readBillingEvents();
+	events[String(key)] = {
+		...(events[String(key)] || {}),
+		...payload,
+		updatedAt: new Date().toISOString(),
+	};
+	saveBillingEvents(events);
 }
 
 function deleteSession(storeId) {
@@ -192,6 +255,18 @@ function getNuvemshopAppId() {
 	return process.env.NUVEMSHOP_APP_ID || process.env.NUVEMSHOP_CLIENT_ID || "";
 }
 
+function getPartnerActionToken() {
+	return (
+		process.env.NUVEMSHOP_CLIENT_SECRET ||
+		process.env.NUVEMSHOP_APP_SECRET ||
+		""
+	).trim();
+}
+
+function getBillingConceptCodeFallback() {
+	return String(process.env.NUVEMSHOP_BILLING_CONCEPT_CODE || "").trim();
+}
+
 function isValidNuvemshopApiHost(value) {
 	try {
 		const url = new URL(value);
@@ -210,6 +285,14 @@ function getApiBase() {
 	return isValidNuvemshopApiHost(candidate)
 		? candidate
 		: "https://api.nuvemshop.com.br/2025-03";
+}
+
+function getPartnerActionBase() {
+	const appId = getNuvemshopAppId();
+	if (!appId) {
+		throw new Error("NUVEMSHOP_APP_ID is required for billing partner actions.");
+	}
+	return `${getApiBase()}/apps/${encodeURIComponent(appId)}`;
 }
 
 function isValidNuvemshopHost(value) {
@@ -436,33 +519,370 @@ async function supabaseDelete(path) {
 	return true;
 }
 
+const DEFAULT_USD_BRL_RATE = Number(
+	process.env.USD_TO_BRL_RATE || process.env.NUVEMSHOP_BILLING_USD_BRL_RATE || 5.7,
+);
+let usdBrlRateCache = {
+	value: Number.isFinite(DEFAULT_USD_BRL_RATE) && DEFAULT_USD_BRL_RATE > 0 ? DEFAULT_USD_BRL_RATE : 5.7,
+	expiresAt: 0,
+};
+
+async function resolveUsdToBrlRate() {
+	const envRate = Number(
+		process.env.USD_TO_BRL_RATE || process.env.NUVEMSHOP_BILLING_USD_BRL_RATE || "",
+	);
+	if (Number.isFinite(envRate) && envRate > 0) {
+		return envRate;
+	}
+	if (usdBrlRateCache.expiresAt > Date.now()) {
+		return usdBrlRateCache.value;
+	}
+	const candidates = [
+		"https://economia.awesomeapi.com.br/json/last/USD-BRL",
+		"https://open.er-api.com/v6/latest/USD",
+	];
+	for (const url of candidates) {
+		try {
+			const response = await fetch(url);
+			if (!response.ok) continue;
+			const json = await response.json().catch(() => null);
+			const value =
+				Number(json?.USDBRL?.bid) ||
+				Number(json?.rates?.BRL) ||
+				0;
+			if (Number.isFinite(value) && value > 0) {
+				usdBrlRateCache = {
+					value,
+					expiresAt: Date.now() + 1000 * 60 * 60 * 12,
+				};
+				return value;
+			}
+		} catch (_error) {
+			// try next source
+		}
+	}
+	return usdBrlRateCache.value;
+}
+
+function convertUsdToBrl(value, rate = usdBrlRateCache.value) {
+	return Number((Number(value || 0) * Number(rate || 1)).toFixed(2));
+}
+
+function normalizePlanId(planId) {
+	const normalized = String(planId || "ondemand").toLowerCase();
+	if (normalized.includes("ondemand") || normalized.includes("on-demand")) return "ondemand";
+	if (normalized.includes("professional") || normalized.includes("growth") || normalized.includes("pro")) {
+		return "pro";
+	}
+	if (["growth", "professional"].includes(normalized)) return "pro";
+	if (["basic", "starter", "free"].includes(normalized)) return "ondemand";
+	return normalized;
+}
+
 function getPlanCatalog() {
+	const rate = usdBrlRateCache.value;
 	return [
 		{
 			id: "ondemand",
 			name: "On demand",
 			description:
-				"50 sessoes de try-on gratis na criacao da conta. Depois, cobranca por uso de USD 0.18 por sessao.",
+				"50 sessoes de try-on gratis na criacao da conta. Depois, cobranca por uso em real por sessao excedente.",
 			monthlyPrice: 0,
 			imagesIncluded: 50,
-			pricePerExtraImage: 0.18,
-			currency: "USD",
+			pricePerExtraImage: convertUsdToBrl(0.18, rate),
+			currency: "BRL",
+			usdPricePerExtraImage: 0.18,
+			monthlyPriceUsd: 0,
 		},
 		{
 			id: "pro",
 			name: "Pro",
 			description:
-				"USD 300 por mes com 3.000 sessoes de try-on incluidas. Excedente cobrado por uso a USD 0.08 por sessao.",
-			monthlyPrice: 300,
+				"Mensalidade em real com 3.000 sessoes de try-on incluidas. Excedente cobrado por uso em real.",
+			monthlyPrice: convertUsdToBrl(300, rate),
 			imagesIncluded: 3000,
-			pricePerExtraImage: 0.08,
-			currency: "USD",
+			pricePerExtraImage: convertUsdToBrl(0.08, rate),
+			currency: "BRL",
+			usdPricePerExtraImage: 0.08,
+			monthlyPriceUsd: 300,
 		},
 	];
 }
 
 function getPlanDefinition(planId) {
-	return getPlanCatalog().find((plan) => plan.id === planId) || getPlanCatalog()[0];
+	const normalized = normalizePlanId(planId);
+	return getPlanCatalog().find((plan) => plan.id === normalized) || getPlanCatalog()[0];
+}
+
+async function nuvemshopPartnerActionRequest(path, options = {}) {
+	const token = getPartnerActionToken();
+	if (!token) {
+		throw new Error("NUVEMSHOP_CLIENT_SECRET is required for Nuvemshop billing API.");
+	}
+	const response = await fetch(`${getPartnerActionBase()}${path}`, {
+		...options,
+		headers: {
+			Authentication: `bearer ${token}`,
+			"User-Agent": `${getAppName()} (${getSupportEmail()})`,
+			"Content-Type": "application/json; charset=utf-8",
+			...(options.headers || {}),
+		},
+	});
+	return response;
+}
+
+async function ensureNuvemshopBillingPlan(planId) {
+	const planDef = getPlanDefinition(planId);
+	const externalReference = `omafit-${planDef.id}-brl`;
+	const body = {
+		code: "BRL",
+		external_reference: externalReference,
+		description: planDef.description,
+	};
+	const patchResponse = await nuvemshopPartnerActionRequest(
+		`/plans/${encodeURIComponent(externalReference)}`,
+		{
+			method: "PATCH",
+			body: JSON.stringify(body),
+		},
+	);
+	if (patchResponse.ok) {
+		return {
+			ok: true,
+			externalReference,
+			plan: await patchResponse.json().catch(() => body),
+		};
+	}
+	if (patchResponse.status !== 404) {
+		const text = await patchResponse.text().catch(() => "");
+		throw new Error(
+			parseSupabaseError(text)?.message || "Nao foi possivel atualizar o plano na Billing API.",
+		);
+	}
+	const createResponse = await nuvemshopPartnerActionRequest("/plans", {
+		method: "POST",
+		body: JSON.stringify(body),
+	});
+	if (!createResponse.ok) {
+		const text = await createResponse.text().catch(() => "");
+		throw new Error(
+			parseSupabaseError(text)?.message || "Nao foi possivel criar o plano na Billing API.",
+		);
+	}
+	return {
+		ok: true,
+		externalReference,
+		plan: await createResponse.json().catch(() => body),
+	};
+}
+
+function resolveBillingIdentifiers(storeId) {
+	const session = getSession(storeId);
+	return {
+		conceptCode:
+			String(session?.billingConceptCode || getBillingConceptCodeFallback() || "").trim(),
+		serviceId:
+			String(session?.billingServiceId || getNuvemshopAppId() || "").trim(),
+	};
+}
+
+async function getNuvemshopSubscription(conceptCode, serviceId) {
+	const response = await nuvemshopPartnerActionRequest(
+		`/concepts/${encodeURIComponent(conceptCode)}/services/${encodeURIComponent(serviceId)}/subscriptions`,
+		{ method: "GET" },
+	);
+	const text = await response.text().catch(() => "");
+	if (!response.ok) {
+		throw new Error(parseSupabaseError(text)?.message || "Nao foi possivel consultar a assinatura.");
+	}
+	return text ? JSON.parse(text) : {};
+}
+
+async function patchNuvemshopSubscription({
+	conceptCode,
+	serviceId,
+	planId,
+	amountValue,
+	amountCurrency,
+}) {
+	const response = await nuvemshopPartnerActionRequest(
+		`/concepts/${encodeURIComponent(conceptCode)}/services/${encodeURIComponent(serviceId)}/subscriptions`,
+		{
+			method: "PATCH",
+			body: JSON.stringify({
+				amount_currency: amountCurrency,
+				amount_value: amountValue,
+				plan_external_id: `omafit-${normalizePlanId(planId)}-brl`,
+			}),
+		},
+	);
+	const text = await response.text().catch(() => "");
+	if (!response.ok) {
+		throw new Error(parseSupabaseError(text)?.message || "Nao foi possivel atualizar a assinatura.");
+	}
+	return text ? JSON.parse(text) : {};
+}
+
+async function createNuvemshopCharge({
+	serviceId,
+	conceptCode,
+	externalReference,
+	description,
+	fromDate,
+	toDate,
+	amountValue,
+	amountCurrency,
+}) {
+	const response = await nuvemshopPartnerActionRequest(
+		`/services/${encodeURIComponent(serviceId)}/charges`,
+		{
+			method: "POST",
+			body: JSON.stringify({
+				external_reference: externalReference,
+				description,
+				from_date: fromDate,
+				to_date: toDate,
+				amount_value: amountValue,
+				amount_currency: amountCurrency,
+				concept_code: conceptCode,
+			}),
+		},
+	);
+	const text = await response.text().catch(() => "");
+	if (!response.ok) {
+		throw new Error(parseSupabaseError(text)?.message || "Nao foi possivel criar a cobranca extra.");
+	}
+	return text ? JSON.parse(text) : {};
+}
+
+function getCurrentBillingWindow(shopRecord, subscription = null) {
+	const start = new Date(shopRecord?.billing_cycle_start || Date.now());
+	const nextExecution = new Date(
+		subscription?.next_execution || shopRecord?.billing_cycle_end || Date.now() + 30 * 24 * 60 * 60 * 1000,
+	);
+	return {
+		fromDate: start.toISOString().slice(0, 10),
+		toDate: nextExecution.toISOString().slice(0, 10),
+		nextExecution: nextExecution.toISOString(),
+	};
+}
+
+async function syncBillingStateFromSubscription(storeId, storeUrl, subscription, planOverride = "") {
+	if (!storeId || !subscription) return null;
+	const planId = normalizePlanId(
+		planOverride || subscription?.plan?.external_reference || subscription?.plan?.id || "ondemand",
+	);
+	const planDef = getPlanDefinition(planId);
+	const amountValue = Number(subscription?.amount_value ?? planDef.monthlyPrice) || planDef.monthlyPrice;
+	const amountCurrency = String(subscription?.amount_currency || "BRL").toUpperCase();
+	const session = await resolveSession(storeId, storeUrl);
+	return upsertStoreRecord(session || { storeId }, {
+		id: storeId,
+		url: storeUrl,
+		plan: planDef.id,
+		billing_status: "active",
+		images_included: planDef.imagesIncluded,
+		price_per_extra_image: planDef.pricePerExtraImage,
+		currency: amountCurrency,
+		billing_cycle_start: new Date().toISOString(),
+		billing_cycle_end: subscription?.next_execution || null,
+		subscription_amount_value: amountValue,
+	});
+}
+
+function calculateExtraUnitsForCompletedTryon(previousRecord, nextRecord, planDef) {
+	const planId = normalizePlanId(nextRecord?.plan || previousRecord?.plan || planDef.id);
+	if (planId === "ondemand") {
+		const previousExtra = Number(previousRecord?.images_used_month || 0) || 0;
+		const nextExtra = Number(nextRecord?.images_used_month || 0) || 0;
+		return Math.max(0, nextExtra - previousExtra);
+	}
+	const previousUsed = Number(previousRecord?.images_used_month || 0) || 0;
+	const nextUsed = Number(nextRecord?.images_used_month || 0) || 0;
+	return Math.max(
+		0,
+		nextUsed - Math.max(planDef.imagesIncluded, previousUsed),
+	);
+}
+
+async function recordCompletedTryonUsage(storeId, storeUrl, predictionId) {
+	if (!storeId) return { ok: false, reason: "missing_store_id" };
+	const eventKey = `tryon:${predictionId}`;
+	if (getBillingEvent(eventKey)) {
+		return { ok: true, alreadyProcessed: true };
+	}
+
+	const rate = await resolveUsdToBrlRate();
+	usdBrlRateCache = {
+		value: rate,
+		expiresAt: Date.now() + 1000 * 60 * 60 * 12,
+	};
+	const shopRecord = await loadLegacyShopRecord(storeId, storeUrl);
+	const planDef = getPlanDefinition(shopRecord?.plan || "ondemand");
+	const updatedRecord = await upsertStoreRecord(await resolveSession(storeId, storeUrl) || { storeId }, {
+		...(shopRecord || {}),
+		id: storeId,
+		url: storeUrl || shopRecord?.store_url || "",
+		plan: planDef.id,
+		currency: "BRL",
+		free_images_used:
+			planDef.id === "ondemand"
+				? Math.min(50, (Number(shopRecord?.free_images_used || 0) || 0) + 1)
+				: Number(shopRecord?.free_images_used || 0) || 0,
+		images_used_month:
+			planDef.id === "ondemand"
+				? Math.max(0, (Number(shopRecord?.free_images_used || 0) || 0) + 1 - 50) +
+					(Number(shopRecord?.images_used_month || 0) || 0)
+				: (Number(shopRecord?.images_used_month || 0) || 0) + 1,
+		price_per_extra_image: convertUsdToBrl(planDef.usdPricePerExtraImage || 0, rate),
+	});
+
+	const extraUnits = calculateExtraUnitsForCompletedTryon(
+		shopRecord || {},
+		updatedRecord || shopRecord || {},
+		planDef,
+	);
+	const identifiers = resolveBillingIdentifiers(storeId);
+	let charge = null;
+
+	if (extraUnits > 0 && identifiers.conceptCode && identifiers.serviceId) {
+		const subscription = await getNuvemshopSubscription(
+			identifiers.conceptCode,
+			identifiers.serviceId,
+		).catch(() => null);
+		const billingWindow = getCurrentBillingWindow(updatedRecord || shopRecord || {}, subscription);
+		charge = await createNuvemshopCharge({
+			serviceId: identifiers.serviceId,
+			conceptCode: identifiers.conceptCode,
+			externalReference: `omafit-${predictionId}`,
+			description:
+				extraUnits === 1
+					? "Sessao extra de try-on Omafit"
+					: `${extraUnits} sessoes extras de try-on Omafit`,
+			fromDate: billingWindow.fromDate,
+			toDate: billingWindow.toDate,
+			amountValue: Number(
+				(convertUsdToBrl(planDef.usdPricePerExtraImage || 0, rate) * extraUnits).toFixed(2),
+			),
+			amountCurrency: "BRL",
+		}).catch((error) => ({
+			error: error?.message || "charge_failed",
+		}));
+	}
+
+	rememberBillingEvent(eventKey, {
+		storeId,
+		predictionId,
+		charged: Boolean(charge && !charge.error),
+		charge,
+	});
+
+	return {
+		ok: true,
+		charged: Boolean(charge && !charge.error),
+		charge,
+		record: updatedRecord,
+	};
 }
 
 async function loadLegacyShopRecord(storeId, storeUrl = "") {
@@ -1206,7 +1626,7 @@ async function saveSizeCharts(storeId, charts) {
 }
 
 function toUsageSummary(shopRecord) {
-	const planId = String(shopRecord?.plan || "ondemand").toLowerCase();
+	const planId = normalizePlanId(shopRecord?.plan || "ondemand");
 	const planDef = getPlanDefinition(planId);
 	const isOnDemand = ["ondemand", "basic", "starter", "free"].includes(planId);
 	const imagesIncluded =
@@ -1251,7 +1671,7 @@ async function getBillingSummary(storeId, storeUrl = "") {
 		};
 	}
 	return {
-		plan: String(shopRecord.plan || "ondemand").toLowerCase(),
+		plan: normalizePlanId(shopRecord.plan || "ondemand"),
 		billingStatus: String(shopRecord.billing_status || "active").toLowerCase(),
 		usage: toUsageSummary(shopRecord),
 		plans: getPlanCatalog(),
@@ -1259,16 +1679,51 @@ async function getBillingSummary(storeId, storeUrl = "") {
 }
 
 async function saveBillingPlan(storeId, planId) {
-	const planDef = getPlanDefinition(String(planId || "ondemand").toLowerCase());
-	const session = getSession(storeId);
-	const storeInfo = session?.store || { id: storeId };
+	const normalizedPlanId = normalizePlanId(planId || "ondemand");
+	const planDef = getPlanDefinition(normalizedPlanId);
+	const storeRecord = await loadLegacyShopRecord(storeId, "");
+	const session = await resolveSession(storeId, storeRecord?.store_url || "");
+	const storeInfo = session?.store || storeRecord || { id: storeId };
+	const billingIdentifiers = resolveBillingIdentifiers(storeId);
+
+	if (!billingIdentifiers.conceptCode || !billingIdentifiers.serviceId) {
+		throw new Error(
+			"A assinatura da loja ainda nao informou o identificador de billing da Nuvemshop. Aguarde o webhook subscription/updated ou configure NUVEMSHOP_BILLING_CONCEPT_CODE.",
+		);
+	}
+
+	await ensureNuvemshopBillingPlan(normalizedPlanId);
+	const rate = await resolveUsdToBrlRate();
+	usdBrlRateCache = {
+		value: rate,
+		expiresAt: Date.now() + 1000 * 60 * 60 * 12,
+	};
+	const monthlyPriceBrl = convertUsdToBrl(planDef.monthlyPriceUsd || 0, rate);
+	const pricePerExtraImageBrl = convertUsdToBrl(planDef.usdPricePerExtraImage || 0, rate);
+	const subscription = await patchNuvemshopSubscription({
+		conceptCode: billingIdentifiers.conceptCode,
+		serviceId: billingIdentifiers.serviceId,
+		planId: normalizedPlanId,
+		amountValue: monthlyPriceBrl,
+		amountCurrency: "BRL",
+	});
+
+	persistSession({
+		...(session || { storeId }),
+		billingConceptCode: billingIdentifiers.conceptCode,
+		billingServiceId: billingIdentifiers.serviceId,
+		billingNextExecution: subscription?.next_execution || null,
+	});
+
 	return upsertStoreRecord(session || { storeId }, {
 		...storeInfo,
 		plan: planDef.id,
 		billing_status: "active",
 		images_included: planDef.imagesIncluded,
-		price_per_extra_image: planDef.pricePerExtraImage,
-		currency: planDef.currency,
+		price_per_extra_image: pricePerExtraImageBrl,
+		currency: "BRL",
+		billing_cycle_start: new Date().toISOString(),
+		billing_cycle_end: subscription?.next_execution || null,
 	});
 }
 
@@ -1716,10 +2171,14 @@ async function handleApi(req, res, reqUrl) {
 				});
 				return true;
 			}
-			res.writeHead(response.status, {
-				"Content-Type": response.headers.get("content-type") || "application/json; charset=utf-8",
-			});
-			res.end(payload);
+			const parsedPayload = parseSupabaseError(payload) || {};
+			if (parsedPayload?.fal_request_id) {
+				rememberTryonJob(parsedPayload.fal_request_id, {
+					storeId: forwarded.storeId || tryonDebug?.incoming?.storeId || "",
+					storeUrl: forwarded.shopDomain || tryonDebug?.incoming?.shopDomain || "",
+				});
+			}
+			sendJson(res, response.status, parsedPayload);
 		} catch (error) {
 			sendJson(res, 500, {
 				error: error.message || "Nao foi possivel processar o try-on.",
@@ -1741,10 +2200,23 @@ async function handleApi(req, res, reqUrl) {
 				{ method: "GET" },
 			);
 			const payload = await response.text();
-			res.writeHead(response.status, {
-				"Content-Type": response.headers.get("content-type") || "application/json; charset=utf-8",
-			});
-			res.end(payload);
+			const parsedPayload = parseSupabaseError(payload) || {};
+			if (
+				response.ok &&
+				parsedPayload?.status === "completed" &&
+				parsedPayload?.output
+			) {
+				const tryonJob = getTryonJob(predictionId);
+				if (tryonJob?.storeId) {
+					await recordCompletedTryonUsage(
+						tryonJob.storeId,
+						tryonJob.storeUrl || "",
+						predictionId,
+					).catch(() => null);
+				}
+				forgetTryonJob(predictionId);
+			}
+			sendJson(res, response.status, parsedPayload);
 		} catch (error) {
 			sendJson(res, 500, {
 				error: error.message || "Nao foi possivel verificar o try-on.",
@@ -1855,13 +2327,42 @@ async function handleApi(req, res, reqUrl) {
 		if (payload.event === "app/uninstalled" && storeId) {
 			deleteSession(storeId);
 		}
-		if (["subscription/updated", "app/resumed"].includes(payload.event) && storeId) {
+		if (payload.event === "subscription/updated" && storeId) {
+			const currentSession = getSession(storeId);
+			persistSession({
+				...(currentSession || { storeId }),
+				billingConceptCode: String(payload.concept_code || "").trim(),
+				billingServiceId: String(payload.service_id || getNuvemshopAppId() || "").trim(),
+			});
+			try {
+				const conceptCode = String(payload.concept_code || "").trim();
+				const serviceId = String(payload.service_id || getNuvemshopAppId() || "").trim();
+				if (conceptCode && serviceId) {
+					const subscription = await getNuvemshopSubscription(conceptCode, serviceId);
+					persistSession({
+						...(getSession(storeId) || { storeId }),
+						billingConceptCode: conceptCode,
+						billingServiceId: serviceId,
+						billingNextExecution: subscription?.next_execution || null,
+					});
+					await syncBillingStateFromSubscription(
+						storeId,
+						currentSession?.store?.url || "",
+						subscription,
+						subscription?.plan?.external_reference || "",
+					);
+				}
+			} catch (_error) {
+				// best effort sync
+			}
+		}
+		if (payload.event === "app/resumed" && storeId) {
 			const activeSession = getSession(storeId);
 			if (activeSession) {
 				await upsertStoreRecord(activeSession, {
 					...activeSession.store,
 					id: storeId,
-					billing_status: payload.event === "app/resumed" ? "active" : "pending",
+					billing_status: "active",
 				});
 			}
 		}
