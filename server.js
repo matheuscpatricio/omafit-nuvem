@@ -678,8 +678,13 @@ async function supabaseRpc(functionName, payload = {}) {
 	return response.json().catch(() => null);
 }
 
-async function supabaseUpsert(table, payload) {
-	const response = await supabaseRequest(table, {
+async function supabaseUpsert(table, payload, options = {}) {
+	const tableName = String(table || "").trim();
+	const onConflict = String(options?.onConflict || "").trim();
+	const endpoint = onConflict
+		? `${tableName}${tableName.includes("?") ? "&" : "?"}on_conflict=${encodeURIComponent(onConflict)}`
+		: tableName;
+	const response = await supabaseRequest(endpoint, {
 		method: "POST",
 		headers: {
 			Prefer: "resolution=merge-duplicates,return=representation",
@@ -1845,7 +1850,9 @@ async function saveWidgetConfig(storeId, payload) {
 		admin_locale: String(payload.admin_locale || "pt-BR"),
 		updated_at: new Date().toISOString(),
 	};
-	const rows = await supabaseUpsert("widget_configurations", [record]);
+	const rows = await supabaseUpsert("widget_configurations", [record], {
+		onConflict: "shop_domain",
+	});
 	return Array.isArray(rows) ? rows[0] || record : record;
 }
 
