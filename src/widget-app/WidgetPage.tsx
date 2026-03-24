@@ -184,11 +184,14 @@ function decodeValue(value: string | null) {
 function formatTryonDebug(debug?: Record<string, unknown>) {
 	if (!debug) return "";
 	const incoming = (debug.incoming as Record<string, unknown> | undefined) || {};
+	const resolution = (debug.resolution as Record<string, unknown> | undefined) || {};
 	const widgetKey = (debug.widgetKey as Record<string, unknown> | undefined) || {};
 	const requestShop = (debug.requestShop as Record<string, unknown> | undefined) || {};
 	const widgetShop = (debug.widgetShop as Record<string, unknown> | undefined) || {};
 	const forwarded = (debug.forwarded as Record<string, unknown> | undefined) || {};
 	const parts = [
+		`path=${String(resolution.path || "")}`,
+		`skipSync=${String(resolution.wouldSkipCompatSync ?? "")}`,
 		`reqDomain=${String(incoming.shopDomain || "")}`,
 		`resolvedPublicId=${String(debug.resolvedPublicId || "")}`,
 		`widgetDomain=${String(widgetKey.shopDomain || widgetKey.domain || "")}`,
