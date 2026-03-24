@@ -1007,7 +1007,11 @@ export function WidgetPage() {
 						<button onClick={resetWidget} className="text-gray-500 hover:text-gray-700 transition-colors">
 							<ArrowLeft className="w-6 h-6" />
 						</button>
-						<div className="flex-1" />
+						<div className="flex-1 flex justify-center">
+							{storeLogo ? (
+								<img src={storeLogo} alt={params.storeName} className="h-10 w-auto object-contain" />
+							) : null}
+						</div>
 						<div className="w-10" />
 					</div>
 
@@ -1134,7 +1138,11 @@ export function WidgetPage() {
 							<div className="w-6" />
 						)}
 
-						<div className="flex-1" />
+						<div className="flex-1 flex justify-center">
+							{storeLogo ? (
+								<img src={storeLogo} alt={params.storeName} className="h-10 w-auto object-contain" />
+							) : null}
+						</div>
 						<div className="w-6" />
 					</div>
 
