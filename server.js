@@ -1678,6 +1678,59 @@ async function getBillingSummary(storeId, storeUrl = "") {
 	};
 }
 
+async function buildBillingDebugSnapshot(storeId, storeUrl = "") {
+	const storeRecord = await loadLegacyShopRecord(storeId, storeUrl).catch(() => null);
+	const session = await resolveSession(storeId, storeUrl).catch(() => null);
+	let webhookState = {
+		registered: false,
+		subscriptionUpdatedWebhook: false,
+		webhookCount: 0,
+	};
+	if (session?.accessToken && session?.storeId) {
+		try {
+			const response = await nuvemshopApi(session, "/webhooks?per_page=200&page=1", {
+				method: "GET",
+			});
+			const hooks = response.ok ? await response.json().catch(() => []) : [];
+			const expectedUrl = `${getWebhookPublicBaseUrl({ headers: {} }) || ""}/api/webhooks/nuvemshop`;
+			const subscriptionWebhook = Array.isArray(hooks)
+				? hooks.find(
+						(item) =>
+							item?.event === "subscription/updated" &&
+							(!expectedUrl || item?.url === expectedUrl),
+				  )
+				: null;
+			webhookState = {
+				registered: Array.isArray(hooks) && hooks.length > 0,
+				subscriptionUpdatedWebhook: Boolean(subscriptionWebhook),
+				webhookCount: Array.isArray(hooks) ? hooks.length : 0,
+			};
+		} catch (error) {
+			webhookState = {
+				...webhookState,
+				error: String(error?.message || "unknown"),
+			};
+		}
+	}
+	return {
+		storeId,
+		storeUrl,
+		hasSession: Boolean(session),
+		hasStoreRecord: Boolean(storeRecord),
+		hasAccessToken: Boolean(session?.accessToken),
+		sessionStoreId: String(session?.storeId || ""),
+		sessionStoreUrl: String(session?.store?.url || ""),
+		sessionBillingConceptCode: String(session?.billingConceptCode || ""),
+		sessionBillingServiceId: String(session?.billingServiceId || ""),
+		sessionWebhooksSyncedAt: session?.webhooksSyncedAt || null,
+		fallbackConceptCode: String(getBillingConceptCodeFallback() || ""),
+		recordPlan: String(storeRecord?.plan || ""),
+		recordBillingStatus: String(storeRecord?.billing_status || ""),
+		recordStoreUrl: String(storeRecord?.store_url || storeRecord?.platform_store_url || ""),
+		webhookState,
+	};
+}
+
 async function saveBillingPlan(storeId, planId) {
 	const normalizedPlanId = normalizePlanId(planId || "ondemand");
 	const planDef = getPlanDefinition(normalizedPlanId);
@@ -1715,6 +1768,13 @@ async function saveBillingPlan(storeId, planId) {
 	// #endregion
 
 	if (!billingIdentifiers.conceptCode || !billingIdentifiers.serviceId) {
+		const error = new Error(
+			"A assinatura da loja ainda nao informou o identificador de billing da Nuvemshop. Aguarde o webhook subscription/updated ou configure NUVEMSHOP_BILLING_CONCEPT_CODE.",
+		);
+		error.debug = await buildBillingDebugSnapshot(
+			storeId,
+			String(session?.store?.url || storeRecord?.store_url || ""),
+		).catch(() => null);
 		// #region agent log
 		fetch("http://127.0.0.1:7523/ingest/ebd119e5-639e-45b4-9806-782ca57f574c", {
 			method: "POST",
@@ -1736,9 +1796,7 @@ async function saveBillingPlan(storeId, planId) {
 			}),
 		}).catch(() => {});
 		// #endregion
-		throw new Error(
-			"A assinatura da loja ainda nao informou o identificador de billing da Nuvemshop. Aguarde o webhook subscription/updated ou configure NUVEMSHOP_BILLING_CONCEPT_CODE.",
-		);
+		throw error;
 	}
 
 	await ensureNuvemshopBillingPlan(normalizedPlanId);
@@ -2390,7 +2448,15 @@ async function handleApi(req, res, reqUrl) {
 			const record = await saveBillingPlan(storeContext.storeId, payload.planId);
 			sendJson(res, 200, { ok: true, record });
 		} catch (error) {
-			sendJson(res, 500, { error: error.message || "Nao foi possivel atualizar o plano." });
+			sendJson(res, 500, {
+				error: error.message || "Nao foi possivel atualizar o plano.",
+				debug:
+					error?.debug ||
+					(await buildBillingDebugSnapshot(
+						storeContext.storeId,
+						storeContext.storeUrl,
+					).catch(() => null)),
+			});
 		}
 		return true;
 	}
