@@ -357,22 +357,22 @@ function ensureStyles(primaryColor: string) {
   background: #fff;
   border-radius: 16px;
   overflow: hidden;
-  display: grid;
-  grid-template-rows: auto 1fr;
-}
-#${MODAL_ID} .omafit-modal-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 14px 16px;
-  border-bottom: 1px solid #e5e7eb;
-  font-family: Arial, sans-serif;
+  position: relative;
 }
 #${MODAL_ID} .omafit-modal-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
   border: none;
-  background: transparent;
-  font-size: 22px;
+  background: rgba(255, 255, 255, 0.92);
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  font-size: 24px;
+  line-height: 1;
   cursor: pointer;
+  z-index: 3;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
 }
 #${MODAL_ID} iframe {
   width: 100%;
@@ -397,10 +397,7 @@ function ensureModal(widgetUrl: string) {
 		modal.hidden = true;
 		modal.innerHTML = `
       <div class="omafit-modal-card" role="dialog" aria-modal="true" aria-label="Omafit">
-        <div class="omafit-modal-header">
-          <strong>Omafit</strong>
-          <button type="button" class="omafit-modal-close" aria-label="Fechar">×</button>
-        </div>
+        <button type="button" class="omafit-modal-close" aria-label="Fechar">×</button>
         <iframe title="Omafit" src=""></iframe>
       </div>
     `;
