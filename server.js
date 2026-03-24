@@ -21,6 +21,7 @@ const DATA_DIR = join(__dirname, ".omafit-data");
 const SESSIONS_FILE = join(DATA_DIR, "nuvemshop-sessions.json");
 const TRYON_JOBS_FILE = join(DATA_DIR, "nuvemshop-tryon-jobs.json");
 const BILLING_EVENTS_FILE = join(DATA_DIR, "nuvemshop-billing-events.json");
+const WEBHOOK_AUDIT_FILE = join(DATA_DIR, "nuvemshop-webhook-audit.json");
 const WEBHOOK_EVENTS = [
 	"app/uninstalled",
 	"app/suspended",
@@ -320,6 +321,20 @@ function rememberBillingEvent(key, payload) {
 		updatedAt: new Date().toISOString(),
 	};
 	saveBillingEvents(events);
+}
+
+function readWebhookAudit() {
+	return readJsonFile(WEBHOOK_AUDIT_FILE, []);
+}
+
+function appendWebhookAudit(entry) {
+	const current = readWebhookAudit();
+	const next = Array.isArray(current) ? current : [];
+	next.unshift({
+		...entry,
+		recordedAt: new Date().toISOString(),
+	});
+	writeJsonFile(WEBHOOK_AUDIT_FILE, next.slice(0, 30));
 }
 
 function deleteSession(storeId) {
@@ -789,6 +804,68 @@ function resolveBillingIdentifiers(storeId) {
 			String(session?.billingConceptCode || getBillingConceptCodeFallback() || "").trim(),
 		serviceId:
 			String(session?.billingServiceId || getNuvemshopAppId() || "").trim(),
+	};
+}
+
+async function discoverBillingIdentifiers(storeId, storeUrl = "", storeRecord = null) {
+	const session = await resolveSession(storeId, storeUrl);
+	const sourceRecord = storeRecord || (await loadLegacyShopRecord(storeId, storeUrl));
+	const serviceId = String(
+		session?.billingServiceId || getNuvemshopAppId() || sourceRecord?.service_id || "",
+	).trim();
+	const rawCandidates = [
+		session?.billingConceptCode,
+		getBillingConceptCodeFallback(),
+		sourceRecord?.billing_concept_code,
+		sourceRecord?.public_id,
+		sourceRecord?.shop_domain,
+	];
+	const candidates = Array.from(
+		new Set(
+			rawCandidates
+				.map((value) => String(value || "").trim())
+				.filter(Boolean),
+		),
+	);
+	const attempts = [];
+	if (!serviceId || candidates.length === 0) {
+		return {
+			conceptCode: "",
+			serviceId,
+			attempts,
+		};
+	}
+	for (const candidate of candidates) {
+		try {
+			const subscription = await getNuvemshopSubscription(candidate, serviceId);
+			if (subscription?.concept_code) {
+				const persisted = persistSession({
+					...(session || { storeId }),
+					billingConceptCode: String(subscription.concept_code || candidate),
+					billingServiceId: serviceId,
+					billingNextExecution: subscription?.next_execution || null,
+				});
+				await saveNuvemshopCredential(persisted || { storeId }).catch(() => null);
+				attempts.push({ candidate, ok: true });
+				return {
+					conceptCode: String(subscription.concept_code || candidate),
+					serviceId,
+					attempts,
+				};
+			}
+			attempts.push({ candidate, ok: false, reason: "subscription_missing_concept" });
+		} catch (error) {
+			attempts.push({
+				candidate,
+				ok: false,
+				reason: String(error?.message || "subscription_lookup_failed"),
+			});
+		}
+	}
+	return {
+		conceptCode: "",
+		serviceId,
+		attempts,
 	};
 }
 
@@ -1837,6 +1914,9 @@ async function buildBillingDebugSnapshot(storeId, storeUrl = "") {
 		recordStoreUrl: String(storeRecord?.store_url || storeRecord?.platform_store_url || ""),
 		credentialUpdatedAt: credentialRecord?.updated_at || null,
 		webhookState,
+		webhookAudit: readWebhookAudit()
+			.filter((item) => String(item?.storeId || "") === String(storeId || ""))
+			.slice(0, 5),
 	};
 }
 
@@ -1850,7 +1930,7 @@ async function saveBillingPlan(storeId, planId, storeUrl = "") {
 		requestedStoreUrl || storeRecord?.store_url || storeRecord?.platform_store_url || "",
 	);
 	const storeInfo = session?.store || storeRecord || { id: storeId };
-	const billingIdentifiers = resolveBillingIdentifiers(storeId);
+	let billingIdentifiers = resolveBillingIdentifiers(storeId);
 
 	// #region agent log
 	fetch("http://127.0.0.1:7523/ingest/ebd119e5-639e-45b4-9806-782ca57f574c", {
@@ -1882,6 +1962,19 @@ async function saveBillingPlan(storeId, planId, storeUrl = "") {
 	// #endregion
 
 	if (!billingIdentifiers.conceptCode || !billingIdentifiers.serviceId) {
+		const discovered = await discoverBillingIdentifiers(
+			storeId,
+			requestedStoreUrl || String(storeInfo?.url || ""),
+			storeRecord,
+		);
+		if (discovered.conceptCode && discovered.serviceId) {
+			billingIdentifiers = {
+				conceptCode: discovered.conceptCode,
+				serviceId: discovered.serviceId,
+			};
+		}
+		const discoveryAttempts = discovered?.attempts || [];
+		if (!billingIdentifiers.conceptCode || !billingIdentifiers.serviceId) {
 		const error = new Error(
 			"A assinatura da loja ainda nao informou o identificador de billing da Nuvemshop. Aguarde o webhook subscription/updated ou configure NUVEMSHOP_BILLING_CONCEPT_CODE.",
 		);
@@ -1895,6 +1988,9 @@ async function saveBillingPlan(storeId, planId, storeUrl = "") {
 					"",
 			),
 		).catch(() => null);
+		if (error.debug && typeof error.debug === "object") {
+			error.debug.discoveryAttempts = discoveryAttempts;
+		}
 		// #region agent log
 		fetch("http://127.0.0.1:7523/ingest/ebd119e5-639e-45b4-9806-782ca57f574c", {
 			method: "POST",
@@ -1918,6 +2014,7 @@ async function saveBillingPlan(storeId, planId, storeUrl = "") {
 		}).catch(() => {});
 		// #endregion
 		throw error;
+		}
 	}
 
 	await ensureNuvemshopBillingPlan(normalizedPlanId);
@@ -2639,7 +2736,21 @@ async function handleApi(req, res, reqUrl) {
 		const signature =
 			req.headers["x-linkedstore-hmac-sha256"] ||
 			req.headers["http_x_linkedstore_hmac_sha256"];
-		if (!verifyWebhookSignature(rawBody, signature)) {
+		let parsedForAudit = {};
+		try {
+			parsedForAudit = JSON.parse(rawBody.toString("utf8") || "{}");
+		} catch (_error) {
+			parsedForAudit = {};
+		}
+		const signatureValid = verifyWebhookSignature(rawBody, signature);
+		appendWebhookAudit({
+			event: String(parsedForAudit?.event || ""),
+			storeId: String(parsedForAudit?.store_id || ""),
+			signatureValid,
+			hasConceptCode: Boolean(parsedForAudit?.concept_code),
+			hasServiceId: Boolean(parsedForAudit?.service_id),
+		});
+		if (!signatureValid) {
 			let invalidPayload = {};
 			try {
 				invalidPayload = JSON.parse(rawBody.toString("utf8") || "{}");
@@ -2897,7 +3008,7 @@ function serveStaticFile(reqUrl, res) {
 		sendText(res, 404, "Not found");
 		return;
 	}
-
+	
 	let filePath = join(DIST_DIR, urlPath);
 	if (!filePath.startsWith(DIST_DIR)) {
 		sendText(res, 403, "Forbidden");
@@ -2922,7 +3033,7 @@ function serveStaticFile(reqUrl, res) {
 	} catch (error) {
 		if (error.code === "ENOENT") {
 			sendText(res, 404, "File not found");
-			return;
+					return;
 		}
 		sendText(res, 500, "Server error");
 	}
