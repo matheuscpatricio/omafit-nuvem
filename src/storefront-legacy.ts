@@ -43,6 +43,26 @@ const CTA_WRAPPER_ID = "omafit-legacy-wrapper";
 const CTA_BUTTON_ID = "omafit-legacy-button";
 const MODAL_ID = "omafit-legacy-modal";
 const STYLE_ID = "omafit-legacy-style";
+const FOOTWEAR_KEYWORDS = [
+	"calcado",
+	"calcados",
+	"tenis",
+	"sapato",
+	"sapatos",
+	"bota",
+	"botas",
+	"sandalia",
+	"sandalias",
+	"chuteira",
+	"chuteiras",
+	"papete",
+	"papetes",
+	"rasteira",
+	"rasteiras",
+	"mocassim",
+	"sapatilha",
+	"sapatilhas",
+];
 
 function debugLog(message: string, data: Record<string, unknown>, hypothesisId: string) {
 	// #region agent log
@@ -200,6 +220,55 @@ function normalizeText(value: string) {
 		.normalize("NFD")
 		.replace(/[\u0300-\u036f]/g, "")
 		.trim();
+}
+
+function removeLegacyWidgetUi() {
+	document.getElementById(CTA_WRAPPER_ID)?.remove();
+	document.getElementById(MODAL_ID)?.remove();
+}
+
+function collectFootwearDomSignals() {
+	const selectors = [
+		'meta[property="og:title"]',
+		'meta[name="twitter:title"]',
+		'[itemprop="category"]',
+		".breadcrumb",
+		".breadcrumbs",
+		'nav[aria-label*="breadcrumb"]',
+		"[data-store*='breadcrumb']",
+		"h1",
+	];
+	const texts = selectors.flatMap((selector) =>
+		Array.from(document.querySelectorAll<HTMLElement>(selector))
+			.map((element) => {
+				if (element instanceof HTMLMetaElement) return element.content;
+				return element.textContent || "";
+			})
+			.map((text) => normalizeText(String(text || "")))
+			.filter(Boolean),
+	);
+	const links = Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href*="/cal"], a[href*="calcado"], a[href*="tenis"], a[href*="sapato"], a[href*="bota"]'))
+		.map((item) => normalizeText(`${item.href} ${item.textContent || ""}`))
+		.filter(Boolean);
+	return [...texts, ...links];
+}
+
+function shouldRenderForFootwear(product: LegacyProductContext) {
+	const handleSignal = normalizeText(product.handle || "");
+	const nameSignal = normalizeText(product.name || "");
+	const domSignals = collectFootwearDomSignals();
+	const signalBag = [handleSignal, nameSignal, ...domSignals];
+	const matchedKeyword = FOOTWEAR_KEYWORDS.find((keyword) =>
+		signalBag.some((signal) => signal.includes(keyword)),
+	);
+	return {
+		shouldRender: Boolean(matchedKeyword),
+		reason: matchedKeyword
+			? `footwear_detected:${matchedKeyword}`
+			: "footwear_not_detected_in_handle_or_dom",
+		matchedKeyword: matchedKeyword || "",
+		signals: signalBag.slice(0, 8),
+	};
 }
 
 function findProductForm() {
@@ -472,6 +541,32 @@ async function init() {
 		"L0",
 	);
 	if (!store || !product) return;
+	const footwearGate = shouldRenderForFootwear(product);
+	if (!footwearGate.shouldRender) {
+		removeLegacyWidgetUi();
+		debugLog(
+			"render_skipped_non_footwear",
+			{
+				storeId: store.id,
+				productHandle: product.handle,
+				productName: product.name,
+				reason: footwearGate.reason,
+				signals: footwearGate.signals,
+			},
+			"L2",
+		);
+		return;
+	}
+	debugLog(
+		"render_allowed_footwear",
+		{
+			storeId: store.id,
+			productHandle: product.handle,
+			productName: product.name,
+			matchedKeyword: footwearGate.matchedKeyword,
+		},
+		"L2",
+	);
 	const appBaseUrl = getAppBaseUrl();
 	const { config, widgetUrl, publicId } = await loadConfig(appBaseUrl, store.id);
 	renderButton(store, product, config, widgetUrl, publicId);

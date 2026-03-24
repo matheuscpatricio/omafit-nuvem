@@ -19,6 +19,7 @@ import {
 	widgetTranslations,
 } from "./translations";
 import { useMediaPipePose } from "./useMediaPipePose";
+import { ShoeARWidget } from "./ShoeARWidget";
 
 type Step = "info" | "calculator" | "photo" | "confirm" | "processing" | "result";
 
@@ -953,6 +954,30 @@ export function WidgetPage() {
 					<p className="text-gray-700 text-base">{t("loadingProduct")}</p>
 				</div>
 			</div>
+		);
+	}
+
+	if (selectedChart?.collection_type === "footwear") {
+		return (
+			<ShoeARWidget
+				productImage={selectedProductImage || params.productImage || ""}
+				productName={params.productName || ""}
+				storeName={params.storeName || "Omafit"}
+				storeLogo={storeLogo || ""}
+				primaryColor={primaryColor}
+				language={language}
+				chart={
+					selectedChart
+						? {
+								measurement_refs: selectedChart.measurement_refs || [],
+								sizes: selectedChart.sizes || [],
+							}
+						: null
+				}
+				productId={params.productId || ""}
+				storeDomain={params.storeDomain || ""}
+				variantId={params.variantId || ""}
+			/>
 		);
 	}
 

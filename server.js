@@ -620,7 +620,18 @@ async function ensureStorageBucket(bucketId) {
 		method: "GET",
 	});
 	if (getResponse.ok) return true;
-	if (getResponse.status !== 404) return true;
+	const getBody = await getResponse.text().catch(() => "");
+	const getErrorMessage = String(parseSupabaseError(getBody)?.message || "").toLowerCase();
+	const missingBucket =
+		getResponse.status === 404 ||
+		getErrorMessage.includes("bucket not found") ||
+		getErrorMessage.includes("not found");
+	if (!missingBucket) {
+		throw new Error(
+			parseSupabaseError(getBody)?.message ||
+				`Nao foi possivel verificar bucket de logos (status ${getResponse.status}).`,
+		);
+	}
 	const createResponse = await supabaseStorageRequest("bucket", {
 		method: "POST",
 		headers: {
