@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PoseLandmarkerResult } from "@mediapipe/tasks-vision";
 
+/**
+ * Paridade com `omafit-widget/src/hooks/useMediaPipePose.ts` no caminho usado em produção:
+ * TryOnWidget e ShoeARWidget passam `useWorker: false` (MediaPipe só no main thread).
+ * Worker não é empacotado no bundle tsup deste app; `useWorker: true` cai no mesmo fluxo.
+ */
+
 export interface PoseLandmark {
 	x: number;
 	y: number;
@@ -16,18 +22,13 @@ export interface BodyMeasurements {
 	height: number;
 	armLength: number;
 	legLength: number;
-	confidence: number;
-	source: "frontend_mediapipe";
 }
 
 export interface UseMediaPipePoseOptions {
 	enabled?: boolean;
+	/** Ignorado: bundle sem worker; sempre main thread (igual `useWorker: false` no widget). */
+	useWorker?: boolean;
 	silentNoPose?: boolean;
-	/**
-	 * Fotos de pé/perna (ângulo de cima): o modelo costuma não ver ombros — valida só quadril/joelho/tornozelo
-	 * e usa limiares de detecção mais baixos, como no fluxo dedicado a calçados.
-	 */
-	footPhotoMode?: boolean;
 }
 
 type MainThreadLandmarker = {
@@ -38,9 +39,7 @@ type MainThreadLandmarker = {
 export function useMediaPipePose(options?: UseMediaPipePoseOptions) {
 	const enabled = options?.enabled ?? true;
 	const silentNoPose = options?.silentNoPose ?? false;
-	const footPhotoMode = options?.footPhotoMode ?? false;
 	const MIN_LANDMARK_VISIBILITY = 0.3;
-	const FOOT_MIN_LANDMARK_VISIBILITY = 0.18;
 	const mainThreadPoseLandmarkerRef = useRef<MainThreadLandmarker | null>(null);
 	const mainThreadInitPromiseRef = useRef<Promise<void> | null>(null);
 	const [isLoading, setIsLoading] = useState(false);
@@ -60,7 +59,6 @@ export function useMediaPipePose(options?: UseMediaPipePoseOptions) {
 				"https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.32/wasm",
 			);
 
-			const confidence = footPhotoMode ? 0.28 : 0.5;
 			const landmarker = await PoseLandmarker.createFromOptions(vision, {
 				baseOptions: {
 					modelAssetPath:
@@ -69,13 +67,12 @@ export function useMediaPipePose(options?: UseMediaPipePoseOptions) {
 				},
 				runningMode: "IMAGE",
 				numPoses: 1,
-				minPoseDetectionConfidence: confidence,
-				minPosePresenceConfidence: confidence,
-				minTrackingConfidence: confidence,
+				minPoseDetectionConfidence: 0.5,
+				minPosePresenceConfidence: 0.5,
+				minTrackingConfidence: 0.5,
 			});
-
 			mainThreadPoseLandmarkerRef.current = {
-				detect: async (img: HTMLImageElement) => landmarker.detect(img),
+				detect: (img: HTMLImageElement) => landmarker.detect(img),
 				close: () => landmarker.close(),
 			};
 		})();
@@ -83,17 +80,15 @@ export function useMediaPipePose(options?: UseMediaPipePoseOptions) {
 		mainThreadInitPromiseRef.current = initPromise;
 		try {
 			await initPromise;
-			setError(null);
 		} finally {
 			mainThreadInitPromiseRef.current = null;
 			setIsLoading(false);
 		}
-	}, [footPhotoMode]);
+	}, []);
 
 	useEffect(() => {
 		if (!enabled) return;
 		void initializeMainThreadPoseLandmarker();
-
 		return () => {
 			mainThreadPoseLandmarkerRef.current?.close?.();
 			mainThreadPoseLandmarkerRef.current = null;
@@ -118,28 +113,7 @@ export function useMediaPipePose(options?: UseMediaPipePoseOptions) {
 
 		const avgVisibility =
 			keyPoints.reduce((sum, point) => sum + (point.visibility ?? 0), 0) / keyPoints.length;
-
 		return avgVisibility >= MIN_LANDMARK_VISIBILITY;
-	}, []);
-
-	const hasGoodFootPhotoLandmarkVisibility = useCallback((landmarks: PoseLandmark[] | undefined): boolean => {
-		if (!landmarks || landmarks.length < 29) return false;
-		const hipL = landmarks[23];
-		const hipR = landmarks[24];
-		const kneeL = landmarks[25];
-		const kneeR = landmarks[26];
-		const ankleL = landmarks[27];
-		const ankleR = landmarks[28];
-		const ankles = [ankleL, ankleR].filter(Boolean);
-		const knees = [kneeL, kneeR].filter(Boolean);
-		const anyAnkle = ankles.some((point) => (point.visibility ?? 0) >= FOOT_MIN_LANDMARK_VISIBILITY);
-		const anyKnee = knees.some((point) => (point.visibility ?? 0) >= FOOT_MIN_LANDMARK_VISIBILITY);
-		if (anyAnkle || anyKnee) return true;
-		const lower = [hipL, hipR, kneeL, kneeR, ankleL, ankleR].filter(Boolean);
-		if (lower.length < 2) return false;
-		const avgVisibility =
-			lower.reduce((sum, point) => sum + (point.visibility ?? 0), 0) / lower.length;
-		return avgVisibility >= 0.14;
 	}, []);
 
 	const detectPose = useCallback(
@@ -147,43 +121,28 @@ export function useMediaPipePose(options?: UseMediaPipePoseOptions) {
 			try {
 				await initializeMainThreadPoseLandmarker();
 				const result = (await mainThreadPoseLandmarkerRef.current?.detect(imageElement)) || null;
-
 				if (!result?.landmarks?.length) {
 					if (!silentNoPose) {
-						console.warn("MediaPipe não detectou pose na imagem.");
+						console.warn("⚠️ [MainThreadFallback] Nenhuma pose detectada na imagem");
 					}
 					return null;
 				}
-
-				const poseLandmarks = result.landmarks[0] as unknown as PoseLandmark[];
-				const fullBodyOk = hasGoodLandmarkVisibility(poseLandmarks);
-				const footPhotoOk = footPhotoMode && hasGoodFootPhotoLandmarkVisibility(poseLandmarks);
-
-				if (!fullBodyOk && !footPhotoOk) {
+				if (!hasGoodLandmarkVisibility(result.landmarks[0] as unknown as PoseLandmark[])) {
 					if (!silentNoPose) {
 						console.warn(
-							footPhotoMode
-								? "MediaPipe: pose insuficiente para foto de pé (tornozelos/joelhos pouco visíveis)."
-								: "MediaPipe detectou pose com baixa visibilidade; ignorando medições.",
+							"⚠️ [MainThreadFallback] Pose detectada com baixa visibilidade. Ignorando para evitar medida imprecisa.",
 						);
 					}
 					return null;
 				}
-
 				return result;
-			} catch (caughtError) {
-				console.error("Erro ao detectar pose com MediaPipe:", caughtError);
-				setError(caughtError instanceof Error ? caughtError.message : "MediaPipe detection failed");
+			} catch (err) {
+				console.error("❌ [MainThreadFallback] Falha na detecção:", err);
+				setError(err instanceof Error ? err.message : "Main thread fallback failed");
 				return null;
 			}
 		},
-		[
-			footPhotoMode,
-			hasGoodFootPhotoLandmarkVisibility,
-			hasGoodLandmarkVisibility,
-			initializeMainThreadPoseLandmarker,
-			silentNoPose,
-		],
+		[hasGoodLandmarkVisibility, initializeMainThreadPoseLandmarker, silentNoPose],
 	);
 
 	const calculateBodyMeasurements = useCallback(
@@ -195,6 +154,8 @@ export function useMediaPipePose(options?: UseMediaPipePoseOptions) {
 			userWeight?: number,
 			userGender?: string,
 		): BodyMeasurements => {
+			const startTime = performance.now();
+
 			const nose = landmarks[0];
 			const leftEye = landmarks[2];
 			const rightEye = landmarks[5];
@@ -202,10 +163,6 @@ export function useMediaPipePose(options?: UseMediaPipePoseOptions) {
 			const rightEar = landmarks[8];
 			const leftShoulder = landmarks[11];
 			const rightShoulder = landmarks[12];
-			const leftElbow = landmarks[13];
-			const rightElbow = landmarks[14];
-			const leftWrist = landmarks[15];
-			const rightWrist = landmarks[16];
 			const leftHip = landmarks[23];
 			const rightHip = landmarks[24];
 			const leftKnee = landmarks[25];
@@ -214,27 +171,34 @@ export function useMediaPipePose(options?: UseMediaPipePoseOptions) {
 			const rightAnkle = landmarks[28];
 
 			const headLandmarks = [nose, leftEye, rightEye, leftEar, rightEar];
-			const headY = Math.min(...headLandmarks.map((landmark) => landmark.y));
+			const headY = Math.min(...headLandmarks.map((l) => l.y));
 			const footY = Math.max(leftAnkle.y, rightAnkle.y);
 
 			const shoulderAngle =
-				(Math.atan2(rightShoulder.y - leftShoulder.y, rightShoulder.x - leftShoulder.x) *
-					180) /
+				(Math.atan2(rightShoulder.y - leftShoulder.y, rightShoulder.x - leftShoulder.x) * 180) /
 				Math.PI;
 			const hipAngle =
 				(Math.atan2(rightHip.y - leftHip.y, rightHip.x - leftHip.x) * 180) / Math.PI;
 			const avgTilt = (Math.abs(shoulderAngle) + Math.abs(hipAngle)) / 2;
 
-			let tiltPenalty = 1;
-			if (avgTilt > 15) tiltPenalty = 0.6;
-			else if (avgTilt > 10) tiltPenalty = 0.8;
+			let tiltPenalty = 1.0;
+			if (avgTilt > 15) {
+				tiltPenalty = 0.6;
+				console.warn("   ⚠️ Inclinação excessiva detectada (>15°)");
+			} else if (avgTilt > 10) {
+				tiltPenalty = 0.8;
+				console.warn("   ⚠️ Inclinação moderada detectada (>10°)");
+			}
 
 			const shoulderSymmetry = Math.abs(leftShoulder.y - rightShoulder.y);
 			const hipSymmetry = Math.abs(leftHip.y - rightHip.y);
-
-			let symmetryPenalty = 1;
-			if (shoulderSymmetry > 0.05 || hipSymmetry > 0.05) symmetryPenalty = 0.7;
-			else if (shoulderSymmetry > 0.03 || hipSymmetry > 0.03) symmetryPenalty = 0.85;
+			let symmetryPenalty = 1.0;
+			if (shoulderSymmetry > 0.05 || hipSymmetry > 0.05) {
+				symmetryPenalty = 0.7;
+				console.warn("   ⚠️ Assimetria corporal detectada");
+			} else if (shoulderSymmetry > 0.03 || hipSymmetry > 0.03) {
+				symmetryPenalty = 0.85;
+			}
 
 			const shoulderHipAlignment = Math.abs(
 				(leftShoulder.x + rightShoulder.x) / 2 - (leftHip.x + rightHip.x) / 2,
@@ -242,21 +206,24 @@ export function useMediaPipePose(options?: UseMediaPipePoseOptions) {
 			const hipKneeAlignment = Math.abs(
 				(leftHip.x + rightHip.x) / 2 - (leftKnee.x + rightKnee.x) / 2,
 			);
+			let posturePenalty = 1.0;
+			if (shoulderHipAlignment > 0.08 || hipKneeAlignment > 0.08) {
+				posturePenalty = 0.7;
+				console.warn("   ⚠️ Postura desalinhada detectada");
+			} else if (shoulderHipAlignment > 0.05 || hipKneeAlignment > 0.05) {
+				posturePenalty = 0.85;
+			}
 
-			let posturePenalty = 1;
-			if (shoulderHipAlignment > 0.08 || hipKneeAlignment > 0.08) posturePenalty = 0.7;
-			else if (shoulderHipAlignment > 0.05 || hipKneeAlignment > 0.05) posturePenalty = 0.85;
-
-			const distance = (pointA: PoseLandmark, pointB: PoseLandmark) => {
-				const dx = (pointB.x - pointA.x) * imageWidth;
-				const dy = (pointB.y - pointA.y) * imageHeight;
+			const distance = (p1: PoseLandmark, p2: PoseLandmark): number => {
+				const dx = (p2.x - p1.x) * imageWidth;
+				const dy = (p2.y - p1.y) * imageHeight;
 				return Math.sqrt(dx * dx + dy * dy);
 			};
 
 			const bodyHeightPx = Math.abs(footY - headY) * imageHeight;
 			const referenceHeightCm = userHeight || 170;
 			const pixelToCmRatio = referenceHeightCm / bodyHeightPx;
-			const pixelToCm = (pixels: number) => pixels * pixelToCmRatio;
+			const pixelToCm = (pixels: number): number => pixels * pixelToCmRatio;
 
 			const shoulderWidthPx = distance(leftShoulder, rightShoulder);
 			const hipWidthPx = distance(leftHip, rightHip);
@@ -264,17 +231,25 @@ export function useMediaPipePose(options?: UseMediaPipePoseOptions) {
 			const hipWidthCm = pixelToCm(hipWidthPx);
 
 			const shoulderToHeightRatio = shoulderWidthCm / referenceHeightCm;
-			let perspectivePenalty = 1;
-			if (shoulderToHeightRatio > 0.35 || shoulderToHeightRatio < 0.2) perspectivePenalty = 0.6;
-			else if (shoulderToHeightRatio > 0.32 || shoulderToHeightRatio < 0.22) {
+			let perspectivePenalty = 1.0;
+			if (shoulderToHeightRatio > 0.35 || shoulderToHeightRatio < 0.2) {
+				perspectivePenalty = 0.6;
+				console.warn(
+					"   ⚠️ Distorção de perspectiva detectada (ratio:",
+					shoulderToHeightRatio.toFixed(2),
+					")",
+				);
+			} else if (shoulderToHeightRatio > 0.32 || shoulderToHeightRatio < 0.22) {
 				perspectivePenalty = 0.8;
 			}
 
 			const isPlausible =
-				shoulderWidthCm >= 30 &&
-				shoulderWidthCm <= 70 &&
-				hipWidthCm >= 25 &&
-				hipWidthCm <= 60;
+				shoulderWidthCm >= 30 && shoulderWidthCm <= 70 && hipWidthCm >= 25 && hipWidthCm <= 60;
+			if (!isPlausible) {
+				console.error("   ❌ MEDIDAS FORA DA FAIXA HUMANA PLAUSÍVEL");
+				console.error("   • Ombros:", shoulderWidthCm, "cm (esperado: 30-70cm)");
+				console.error("   • Quadril:", hipWidthCm, "cm (esperado: 25-60cm)");
+			}
 
 			const heightM = referenceHeightCm / 100;
 			const weightKg = userWeight || 70;
@@ -296,47 +271,53 @@ export function useMediaPipePose(options?: UseMediaPipePoseOptions) {
 				hipCircumference = referenceHeightCm * 0.56 + bmiAdjustmentFactor * 2.0;
 			}
 
-			type MeasurementRange = {
-				expected: number;
-				min: number;
-				max: number;
-			};
+			type MeasurementRange = { expected: number; min: number; max: number };
+
+			const bmiAdjustmentFactorValidation = bmi - (gender === "male" ? 22 : 21);
 
 			let chestRange: MeasurementRange;
 			let waistRange: MeasurementRange;
 			let hipRange: MeasurementRange;
 
 			if (gender === "male") {
-				const baseChest = referenceHeightCm * 0.53 + bmiAdjustmentFactor * 2.0;
-				const baseWaist = referenceHeightCm * 0.46 + bmiAdjustmentFactor * 2.2;
-				const baseHip = referenceHeightCm * 0.54 + bmiAdjustmentFactor * 1.8;
+				const baseChest = referenceHeightCm * 0.53 + bmiAdjustmentFactorValidation * 2.0;
+				const baseWaist = referenceHeightCm * 0.46 + bmiAdjustmentFactorValidation * 2.2;
+				const baseHip = referenceHeightCm * 0.54 + bmiAdjustmentFactorValidation * 1.8;
 				chestRange = { expected: baseChest, min: baseChest - 10, max: baseChest + 10 };
 				waistRange = { expected: baseWaist, min: baseWaist - 8, max: baseWaist + 12 };
 				hipRange = { expected: baseHip, min: baseHip - 10, max: baseHip + 10 };
 			} else {
-				const baseChest = referenceHeightCm * 0.52 + bmiAdjustmentFactor * 1.8;
-				const baseWaist = referenceHeightCm * 0.42 + bmiAdjustmentFactor * 1.5;
-				const baseHip = referenceHeightCm * 0.56 + bmiAdjustmentFactor * 2.0;
+				const baseChest = referenceHeightCm * 0.52 + bmiAdjustmentFactorValidation * 1.8;
+				const baseWaist = referenceHeightCm * 0.42 + bmiAdjustmentFactorValidation * 1.5;
+				const baseHip = referenceHeightCm * 0.56 + bmiAdjustmentFactorValidation * 2.0;
 				chestRange = { expected: baseChest, min: baseChest - 10, max: baseChest + 10 };
 				waistRange = { expected: baseWaist, min: baseWaist - 8, max: baseWaist + 12 };
 				hipRange = { expected: baseHip, min: baseHip - 10, max: baseHip + 10 };
 			}
 
-			const clampToRange = (measured: number, range: MeasurementRange) => {
-				if (measured < range.min || measured > range.max) return range.expected;
+			const clampToRange = (measured: number, range: MeasurementRange, label: string): number => {
+				if (measured < range.min) {
+					console.warn(`   ⚠️ ${label} ABAIXO do mínimo:`, measured.toFixed(1), "cm");
+					return range.expected;
+				}
+				if (measured > range.max) {
+					console.warn(`   ⚠️ ${label} ACIMA do máximo:`, measured.toFixed(1), "cm");
+					return range.expected;
+				}
 				return measured;
 			};
 
-			chestCircumference = clampToRange(chestCircumference, chestRange);
-			waistCircumference = clampToRange(waistCircumference, waistRange);
-			hipCircumference = clampToRange(hipCircumference, hipRange);
+			chestCircumference = clampToRange(chestCircumference, chestRange, "Peito");
+			waistCircumference = clampToRange(waistCircumference, waistRange, "Cintura");
+			hipCircumference = clampToRange(hipCircumference, hipRange, "Quadril");
 
 			if (hipCircumference < waistCircumference) {
 				hipCircumference = waistCircumference + 5;
 			}
 
 			if (gender === "female" && hipCircumference < waistCircumference * 1.08) {
-				hipCircumference = waistCircumference * 1.08;
+				const minHip = waistCircumference * 1.08;
+				hipCircumference = minHip;
 			}
 
 			const chestHipRatio = chestCircumference / hipCircumference;
@@ -362,19 +343,6 @@ export function useMediaPipePose(options?: UseMediaPipePoseOptions) {
 				legRatio *= 1.02;
 			}
 
-			const _armLengthPx =
-				(distance(leftShoulder, leftElbow) +
-					distance(leftElbow, leftWrist) +
-					distance(rightShoulder, rightElbow) +
-					distance(rightElbow, rightWrist)) /
-				2;
-			const _legLengthPx =
-				(distance(leftHip, leftKnee) +
-					distance(leftKnee, leftAnkle) +
-					distance(rightHip, rightKnee) +
-					distance(rightKnee, rightAnkle)) /
-				2;
-
 			const armLength = Math.round(referenceHeightCm * armRatio);
 			const legLength = Math.round(referenceHeightCm * legRatio);
 
@@ -384,11 +352,11 @@ export function useMediaPipePose(options?: UseMediaPipePoseOptions) {
 				symmetryPenalty,
 				posturePenalty,
 				perspectivePenalty,
-				isPlausible ? 1 : 0.3,
+				isPlausible ? 1.0 : 0.3,
 				anthropometricMethodConfidence,
 			);
 
-			return {
+			const measurements = {
 				shoulder_width: Math.round(shoulderWidthCm),
 				chest: Math.round(chestCircumference),
 				waist: Math.round(waistCircumference),
@@ -396,9 +364,13 @@ export function useMediaPipePose(options?: UseMediaPipePoseOptions) {
 				height: Math.round(referenceHeightCm),
 				armLength,
 				legLength,
-				confidence: Number(globalConfidence.toFixed(2)),
-				source: "frontend_mediapipe",
 			};
+
+			console.log("✅ Medidas calculadas (PREMIUM):");
+			console.log("   • Confiança global:", (globalConfidence * 100).toFixed(0), "%");
+			console.log(`⏱️ Tempo de cálculo: ${(performance.now() - startTime).toFixed(2)}ms`);
+
+			return measurements;
 		},
 		[],
 	);

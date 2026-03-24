@@ -292,6 +292,11 @@ function calculateSizeScores(
 	return scores.sort((a, b) => a.score - b.score);
 }
 
+function applyBoundaryZone(sortedScores: SizeScore[], _fitMultiplier: number): string {
+	if (sortedScores.length === 0) return "";
+	return sortedScores[0].size;
+}
+
 function calculateConfidence(
 	bestScore: number,
 	secondScore: number,
@@ -351,9 +356,11 @@ export function calculateIdealSize(
 		measurements = sizeChart[0].measurement_labels;
 	else measurements = ["Busto", "Cintura", "Quadril"];
 
-	const weights = { ...(measurementWeights || {}) };
+	const weights = measurementWeights || {};
 	for (const name of measurements) {
-		if (weights[name] === undefined) weights[name] = 1;
+		if (weights[name] === undefined) {
+			weights[name] = 1.0;
+		}
 	}
 
 	const normalizedWeights = normalizeWeights(weights);
@@ -368,6 +375,8 @@ export function calculateIdealSize(
 	);
 	if (!scores.length) return null;
 
+	const recommendedSize = applyBoundaryZone(scores, fitFactor);
+
 	const confidence =
 		scores.length >= 2
 			? calculateConfidence(scores[0].score, scores[1].score, elasticityLevel)
@@ -378,7 +387,7 @@ export function calculateIdealSize(
 				};
 
 	return {
-		size: scores[0].size,
+		size: recommendedSize,
 		measurements: bodyModel,
 		confidence,
 		debug: {

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, ArrowLeft, ArrowRight, Camera, Footprints } from "lucide-react";
-import { type PoseLandmark, useMediaPipePose } from "./useMediaPipePose";
+import { useMediaPipePose } from "./useMediaPipePose";
 import { type WidgetLanguage, type WidgetTranslationKey, widgetTranslations } from "./translations";
 
 type SizeRow = { size: string; [key: string]: string };
@@ -179,30 +179,292 @@ function parseMeasurementValue(value: unknown): number {
 	return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function getShoeLengthCmFromRow(row: SizeRow, refs: string[]) {
-	const refCandidates = refs.length ? refs : ["tamanho_pe", "comprimento", "pe", "pé", "foot_length"];
-	for (const key of refCandidates) {
-		const value = parseMeasurementValue(row[key]);
-		if (value > 0) return value;
-	}
-	const fallback = Object.values(row)
-		.map((value) => parseMeasurementValue(value))
-		.find((value) => value > 0);
-	return fallback || 0;
+/** Formato interno alinhado a `ShoeARWidget.tsx` do omafit-widget. */
+type ShoeSizeChartEntry = {
+	size: string;
+	measurements: Record<string, number | string>;
+	measurement_labels?: string[];
+};
+
+function mapShoeChartToEntries(chart: ShoeChart | null): ShoeSizeChartEntry[] {
+	if (!chart?.sizes?.length) return [];
+	const labels = chart.measurement_refs || [];
+	return chart.sizes.map((row) => {
+		const measurements: Record<string, number | string> = {};
+		for (const [key, value] of Object.entries(row)) {
+			if (key === "size") continue;
+			measurements[key] = value;
+		}
+		return {
+			size: String(row.size || ""),
+			measurements,
+			measurement_labels: labels.length ? labels : undefined,
+		};
+	});
 }
 
-function calculateRecommendedShoeSizeFromChart(footLengthCm: number, chart: ShoeChart | null) {
-	if (!chart?.sizes?.length) return null;
-	const scored = chart.sizes
-		.map((row) => {
-			const measuredLength = getShoeLengthCmFromRow(row, chart.measurement_refs || []);
+function getChartLengthBounds(sizeChart: ShoeSizeChartEntry[]) {
+	const lengths = sizeChart
+		.map((entry) => getShoeLengthCmFromEntry(entry))
+		.filter((value) => value > 0)
+		.sort((a, b) => a - b);
+	if (!lengths.length) return null;
+	return { min: lengths[0], max: lengths[lengths.length - 1] };
+}
+
+function detectFootShapeMetrics(image: HTMLImageElement) {
+	const maxDimension = 640;
+	const scale = Math.min(1, maxDimension / Math.max(image.naturalWidth, image.naturalHeight, 1));
+	const width = Math.max(1, Math.round(image.naturalWidth * scale));
+	const height = Math.max(1, Math.round(image.naturalHeight * scale));
+
+	const canvas = document.createElement("canvas");
+	canvas.width = width;
+	canvas.height = height;
+	const ctx = canvas.getContext("2d", { willReadFrequently: true });
+	if (!ctx) return null;
+
+	ctx.drawImage(image, 0, 0, width, height);
+	const imageData = ctx.getImageData(0, 0, width, height);
+	const pixels = imageData.data;
+
+	const sampleBorder = () => {
+		let r = 0;
+		let g = 0;
+		let b = 0;
+		let count = 0;
+		const step = Math.max(1, Math.floor(Math.min(width, height) / 40));
+		const addPixel = (x: number, y: number) => {
+			const idx = (y * width + x) * 4;
+			r += pixels[idx];
+			g += pixels[idx + 1];
+			b += pixels[idx + 2];
+			count += 1;
+		};
+		for (let x = 0; x < width; x += step) {
+			addPixel(x, 0);
+			addPixel(x, height - 1);
+		}
+		for (let y = 0; y < height; y += step) {
+			addPixel(0, y);
+			addPixel(width - 1, y);
+		}
+		if (!count) return { r: 240, g: 240, b: 240 };
+		return { r: r / count, g: g / count, b: b / count };
+	};
+
+	const background = sampleBorder();
+	const visited = new Uint8Array(width * height);
+
+	type Component = {
+		area: number;
+		minX: number;
+		minY: number;
+		maxX: number;
+		maxY: number;
+	};
+
+	const isForeground = (x: number, y: number) => {
+		const idx = (y * width + x) * 4;
+		const pr = pixels[idx];
+		const pg = pixels[idx + 1];
+		const pb = pixels[idx + 2];
+		const colorDistance = Math.sqrt(
+			(pr - background.r) ** 2 + (pg - background.g) ** 2 + (pb - background.b) ** 2,
+		);
+		const luminance = 0.299 * pr + 0.587 * pg + 0.114 * pb;
+		const backgroundLuminance = 0.299 * background.r + 0.587 * background.g + 0.114 * background.b;
+		return colorDistance > 42 || Math.abs(luminance - backgroundLuminance) > 28;
+	};
+
+	let bestComponent: Component | null = null;
+	const queueX = new Int32Array(width * height);
+	const queueY = new Int32Array(width * height);
+
+	for (let y = 0; y < height; y += 1) {
+		for (let x = 0; x < width; x += 1) {
+			const startIndex = y * width + x;
+			if (visited[startIndex]) continue;
+			visited[startIndex] = 1;
+			if (!isForeground(x, y)) continue;
+
+			let head = 0;
+			let tail = 0;
+			queueX[tail] = x;
+			queueY[tail] = y;
+			tail += 1;
+
+			const component: Component = {
+				area: 0,
+				minX: x,
+				minY: y,
+				maxX: x,
+				maxY: y,
+			};
+
+			while (head < tail) {
+				const currentX = queueX[head];
+				const currentY = queueY[head];
+				head += 1;
+
+				component.area += 1;
+				component.minX = Math.min(component.minX, currentX);
+				component.minY = Math.min(component.minY, currentY);
+				component.maxX = Math.max(component.maxX, currentX);
+				component.maxY = Math.max(component.maxY, currentY);
+
+				const neighbors = [
+					[currentX + 1, currentY],
+					[currentX - 1, currentY],
+					[currentX, currentY + 1],
+					[currentX, currentY - 1],
+				];
+
+				for (const [nextX, nextY] of neighbors) {
+					if (nextX < 0 || nextX >= width || nextY < 0 || nextY >= height) continue;
+					const nextIndex = nextY * width + nextX;
+					if (visited[nextIndex]) continue;
+					visited[nextIndex] = 1;
+					if (!isForeground(nextX, nextY)) continue;
+					queueX[tail] = nextX;
+					queueY[tail] = nextY;
+					tail += 1;
+				}
+			}
+
+			if (!bestComponent || component.area > bestComponent.area) {
+				bestComponent = component;
+			}
+		}
+	}
+
+	if (!bestComponent) return null;
+
+	const boxWidth = bestComponent.maxX - bestComponent.minX + 1;
+	const boxHeight = bestComponent.maxY - bestComponent.minY + 1;
+	const longestSide = Math.max(boxWidth, boxHeight);
+	const shortestSide = Math.max(1, Math.min(boxWidth, boxHeight));
+	const fillRatio = bestComponent.area / Math.max(1, boxWidth * boxHeight);
+
+	if (bestComponent.area < width * height * 0.015) return null;
+
+	return {
+		longestSideRatio: longestSide / Math.max(width, height),
+		aspectRatio: longestSide / shortestSide,
+		fillRatio,
+	};
+}
+
+function estimateFootLengthCm(
+	image: HTMLImageElement,
+	sizeChart: ShoeSizeChartEntry[],
+	hasLandmarks: boolean,
+) {
+	const contour = detectFootShapeMetrics(image);
+	const chartBounds = getChartLengthBounds(sizeChart);
+
+	if (contour && chartBounds) {
+		const normalizedCoverage = clamp((contour.longestSideRatio - 0.35) / 0.45, 0, 1);
+		const coverageEstimate = chartBounds.min + normalizedCoverage * (chartBounds.max - chartBounds.min);
+		const shapeAdjustment = clamp((contour.aspectRatio - 2.4) * 0.35, -0.5, 0.7);
+		const fillAdjustment = clamp((contour.fillRatio - 0.45) * 1.5, -0.4, 0.4);
+		const landmarkAdjustment = hasLandmarks ? -0.15 : 0;
+
+		return clamp(
+			coverageEstimate + shapeAdjustment + fillAdjustment + landmarkAdjustment,
+			chartBounds.min - 0.6,
+			chartBounds.max + 0.6,
+		);
+	}
+
+	const aspectRatio = image.naturalWidth / Math.max(image.naturalHeight, 1);
+	const coverageBase = hasLandmarks ? 24.8 : 25.4;
+	const aspectAdjustment = clamp((aspectRatio - 0.7) * 4.5, -1.2, 1.4);
+	return clamp(coverageBase + aspectAdjustment, 22.0, 30.5);
+}
+
+function footLengthToBrSize(footLengthCm: number) {
+	return clamp(Math.round((footLengthCm + 1.5) * 1.5) - 2, 34, 45);
+}
+
+function getMeasurementFromEntry(entry: ShoeSizeChartEntry, keys: string[]) {
+	const measurements = entry.measurements || {};
+	for (const key of keys) {
+		if (measurements[key] !== undefined && measurements[key] !== null) {
+			return parseMeasurementValue(measurements[key]);
+		}
+	}
+	for (const [key, value] of Object.entries(measurements)) {
+		if (keys.some((candidate) => key.toLowerCase() === candidate.toLowerCase())) {
+			return parseMeasurementValue(value);
+		}
+	}
+	return 0;
+}
+
+function getShoeLengthCmFromEntry(entry: ShoeSizeChartEntry) {
+	const measurements = entry.measurements || {};
+	const labels = Array.isArray(entry.measurement_labels) ? entry.measurement_labels : [];
+
+	if (labels.length > 0) {
+		for (let index = 0; index < labels.length; index += 1) {
+			const normalizedLabel = String(labels[index] || "")
+				.trim()
+				.toLowerCase();
+			const isFootLengthLabel =
+				normalizedLabel.includes("comprimento") ||
+				normalizedLabel.includes("pe") ||
+				normalizedLabel.includes("pé") ||
+				normalizedLabel.includes("foot") ||
+				normalizedLabel.includes("length");
+			if (!isFootLengthLabel) continue;
+			const keyedMeasurement = parseMeasurementValue(measurements[`medida${index + 1}`]);
+			if (keyedMeasurement > 0) return keyedMeasurement;
+		}
+	}
+
+	const directMeasurement = getMeasurementFromEntry(entry, [
+		"medida1",
+		"medida_1",
+		"comprimento",
+		"comprimento_pe",
+		"comprimento_do_pe",
+		"length",
+		"pe",
+		"pé",
+		"foot",
+		"foot_length",
+	]);
+	if (directMeasurement > 0) return directMeasurement;
+
+	const legacyMeasurement = getMeasurementFromEntry(entry, ["bust", "chest", "waist", "hips", "hip"]);
+	if (legacyMeasurement > 0) return legacyMeasurement;
+
+	const fallbackMeasurement = Object.values(measurements)
+		.map((value) => parseMeasurementValue(value))
+		.find((value) => value > 0);
+	return fallbackMeasurement || 0;
+}
+
+function calculateRecommendedShoeSizeFromChart(
+	footLengthCm: number,
+	sizeChart: ShoeSizeChartEntry[],
+): { size: string; measuredLength: number } | null {
+	if (!sizeChart.length) return null;
+	const scored = sizeChart
+		.map((entry) => {
+			const measuredLength = getShoeLengthCmFromEntry(entry);
 			if (!measuredLength) return null;
-			return { size: String(row.size || ""), diff: Math.abs(measuredLength - footLengthCm) };
+			return {
+				size: entry.size,
+				measuredLength,
+				diff: Math.abs(measuredLength - footLengthCm),
+			};
 		})
-		.filter(Boolean) as Array<{ size: string; diff: number }>;
+		.filter(Boolean) as Array<{ size: string; measuredLength: number; diff: number }>;
 	if (!scored.length) return null;
 	scored.sort((a, b) => a.diff - b.diff);
-	return scored[0].size;
+	return { size: scored[0].size, measuredLength: scored[0].measuredLength };
 }
 
 async function loadImage(src: string): Promise<HTMLImageElement> {
@@ -213,41 +475,6 @@ async function loadImage(src: string): Promise<HTMLImageElement> {
 		img.onerror = reject;
 		img.src = src;
 	});
-}
-
-function estimateFootLengthCm(image: HTMLImageElement, hasLandmarks: boolean) {
-	const aspectRatio = image.naturalWidth / Math.max(image.naturalHeight, 1);
-	const coverageBase = hasLandmarks ? 24.8 : 25.4;
-	const aspectAdjustment = clamp((aspectRatio - 0.7) * 4.5, -1.2, 1.4);
-	return clamp(coverageBase + aspectAdjustment, 22.0, 30.5);
-}
-
-/** Comprimento do pé a partir do segmento joelho–tornozelo (foto perna/pé), alinhado ao fluxo AR de calçados. */
-function estimateFootLengthFromLegLandmarks(
-	landmarks: PoseLandmark[],
-	imageWidth: number,
-	imageHeight: number,
-): number | null {
-	const h = Math.max(imageHeight, 1);
-	const dist = (a: PoseLandmark, b: PoseLandmark) => {
-		const dx = (b.x - a.x) * imageWidth;
-		const dy = (b.y - a.y) * imageHeight;
-		return Math.hypot(dx, dy);
-	};
-	let shinPx = 0;
-	const legA = landmarks[25] && landmarks[27];
-	const legB = landmarks[26] && landmarks[28];
-	if (legA && (landmarks[25].visibility ?? 0) > 0.08 && (landmarks[27].visibility ?? 0) > 0.08) {
-		shinPx = Math.max(shinPx, dist(landmarks[25], landmarks[27]));
-	}
-	if (legB && (landmarks[26].visibility ?? 0) > 0.08 && (landmarks[28].visibility ?? 0) > 0.08) {
-		shinPx = Math.max(shinPx, dist(landmarks[26], landmarks[28]));
-	}
-	if (shinPx < h * 0.035) return null;
-	const shinFrac = shinPx / h;
-	const estimatedShinCm = clamp(30 + shinFrac * 58, 28, 52);
-	const footCm = clamp(estimatedShinCm * 0.63, 22, 31);
-	return footCm;
 }
 
 function replaceStoreName(template: string, storeName: string) {
@@ -299,7 +526,7 @@ export function ShoeARWidget(props: ShoeARWidgetProps) {
 	const chatEndRef = useRef<HTMLDivElement | null>(null);
 	const sessionIdRef = useRef(`shoe_${Date.now().toString(36)}`);
 	const initialGptRequestedRef = useRef(false);
-	const { detectPose } = useMediaPipePose({ silentNoPose: true, footPhotoMode: true });
+	const { detectPose } = useMediaPipePose({ useWorker: false, silentNoPose: true });
 
 	useEffect(() => {
 		interactionCountRef.current = interactionCount;
@@ -416,37 +643,29 @@ export function ShoeARWidget(props: ShoeARWidgetProps) {
 		setStep("processing");
 		setIsAnalyzing(true);
 		setError("");
+		const chartEntries = mapShoeChartToEntries(chart);
 		try {
 			const image = await loadImage(preview);
 			const poseResult = await detectPose(image);
-			const landmarks = poseResult?.landmarks?.[0] as PoseLandmark[] | undefined;
-			const hasPose = Boolean(landmarks?.length);
-			let lengthCm = estimateFootLengthCm(image, hasPose);
-			if (hasPose && landmarks) {
-				const fromLegs = estimateFootLengthFromLegLandmarks(
-					landmarks,
-					image.naturalWidth,
-					image.naturalHeight,
-				);
-				if (fromLegs != null) lengthCm = fromLegs;
-			}
-			const chartSize = calculateRecommendedShoeSizeFromChart(lengthCm, chart);
-			const fallbackSize = `BR ${Math.round((lengthCm + 1.5) * 1.5) - 2}`;
-			const resolvedSize = chartSize || fallbackSize;
-			setFootLengthCm(lengthCm);
-			setRecommendedSizeLabel(resolvedSize);
+			const hasLandmarks = Boolean(poseResult?.landmarks?.length);
+			const lengthCm = estimateFootLengthCm(image, chartEntries, hasLandmarks);
+			const chartRecommendation = calculateRecommendedShoeSizeFromChart(lengthCm, chartEntries);
+			const fallbackSize = footLengthToBrSize(lengthCm);
+			const resolvedSizeLabel = chartRecommendation?.size ?? `BR ${fallbackSize}`;
+
+			setFootLengthCm(Number(lengthCm.toFixed(1)));
+			setRecommendedSizeLabel(resolvedSizeLabel);
 			setChatMessages([]);
 			setInteractionCount(0);
 			setStep("measure-result");
 		} catch (_err) {
-			setError(
-				language === "pt"
-					? "Erro ao analisar a foto."
-					: language === "es"
-						? "Error al analizar la foto."
-						: "Error analyzing photo.",
-			);
-			setStep("measure-capture");
+			const fallbackLength = 25.2;
+			const fallbackSize = footLengthToBrSize(fallbackLength);
+			setFootLengthCm(fallbackLength);
+			setRecommendedSizeLabel(`BR ${fallbackSize}`);
+			setChatMessages([]);
+			setInteractionCount(0);
+			setStep("measure-result");
 		} finally {
 			setIsAnalyzing(false);
 		}

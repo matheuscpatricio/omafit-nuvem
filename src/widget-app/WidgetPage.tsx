@@ -1,10 +1,6 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, ArrowLeft, ArrowRight, Camera, Ruler, Sparkles, User, Weight } from "lucide-react";
-import {
-	calculateIdealSize,
-	type ElasticityLevel,
-	type SizeChartEntry,
-} from "./sizeCalculation";
+import type { ElasticityLevel } from "./sizeCalculation";
 import {
 	getDefaultMeasurementWeights,
 	getOptimizedRemoteTryOnImageUrl,
@@ -18,6 +14,11 @@ import {
 	type WidgetTranslationKey,
 	widgetTranslations,
 } from "./translations";
+import {
+	calculateTryOnRecommendedSize,
+	mapApiChartToTryOnRows,
+	type TryOnRecommendedSizeResult,
+} from "./tryOnRecommendedSize";
 import { useMediaPipePose } from "./useMediaPipePose";
 import { ShoeARWidget } from "./ShoeARWidget";
 import { OMAFIT_WIDGET_FONT_FALLBACK, sanitizeFontFamilyForCss } from "../shared/storeFont";
@@ -201,6 +202,26 @@ const FIT_OPTIONS = [
 	{ labelKey: "fitLoose", factor: 1.03 },
 ] as const;
 
+/** Rótulos semânticos para o prompt do GPT (evita enviar fatores numéricos 1.04, 0.97, etc.). */
+function gptLabelForBodyType(
+	sizeData: SizeData,
+	t: (key: WidgetTranslationKey) => string,
+): string {
+	const list = BODY_TYPES[sizeData.gender === "male" ? "male" : "female"];
+	const entry = list?.[sizeData.bodyTypeIndex];
+	return entry ? t(entry.labelKey as WidgetTranslationKey) : "regular";
+}
+
+function gptLabelForFit(
+	sizeData: SizeData,
+	t: (key: WidgetTranslationKey) => string,
+): string {
+	const entry = FIT_OPTIONS[sizeData.fitIndex];
+	return entry ? t(entry.labelKey as WidgetTranslationKey) : "regular";
+}
+
+const GPT_PRODUCT_DESCRIPTION_MAX = 8000;
+
 const PROCESSING_MESSAGES: WidgetTranslationKey[] = [
 	"creatingTryOn",
 	"sendingImages",
@@ -293,45 +314,6 @@ function normalizeElasticity(value: ApiChart["collection_elasticity"]): Elastici
 	return "light";
 }
 
-function normalizeMeasurementLabel(value: string) {
-	switch (value.toLowerCase()) {
-		case "peito":
-		case "busto":
-			return "Busto";
-		case "cintura":
-			return "Cintura";
-		case "quadril":
-			return "Quadril";
-		case "ombro":
-			return "Ombro";
-		case "comprimento":
-			return "Comprimento";
-		default:
-			return value.charAt(0).toUpperCase() + value.slice(1);
-	}
-}
-
-function mapChart(chart: ApiChart): SizeChartEntry[] {
-	return chart.sizes.map((row, index) => {
-		const measurements: Record<string, number> = {};
-		for (const key of chart.measurement_refs) {
-			const numeric = Number(row[key]);
-			if (Number.isFinite(numeric)) {
-				measurements[key.toLowerCase()] = numeric;
-				if (key === "peito") measurements.bust = numeric;
-				if (key === "cintura") measurements.waist = numeric;
-				if (key === "quadril") measurements.hips = numeric;
-			}
-		}
-		return {
-			size_name: row.size,
-			order: index,
-			measurements,
-			measurement_labels: chart.measurement_refs.map(normalizeMeasurementLabel),
-		};
-	});
-}
-
 function chooseChart(charts: ApiChart[], gender: "male" | "female", handle: string) {
 	const normalizedHandle = String(handle || "").trim().toLowerCase();
 	return (
@@ -376,6 +358,25 @@ function estimateBodyMeasurements(sizeData: SizeData | null) {
 	};
 }
 
+/** Mescla o modelo corporal do TryOnWidget (pós-recomendação) com medidas do MediaPipe. */
+function mergeTryOnBodyIntoMeasurements(
+	detected: SizeCalculatorMeasurements | null,
+	model: TryOnRecommendedSizeResult["measurements"],
+	bodyHeightCm: number,
+): SizeCalculatorMeasurements {
+	return {
+		shoulderWidth: Math.round(model.shoulder),
+		chestCircumference: Math.round(model.chest),
+		waistCircumference: Math.round(model.waist),
+		hipCircumference: Math.round(model.hip),
+		bodyHeight: bodyHeightCm,
+		armLength: detected?.armLength,
+		legLength: detected?.legLength,
+		confidence: detected?.confidence ?? 0.65,
+		source: "try_on_recommended_size",
+	};
+}
+
 function mapFrontendMeasurements(
 	measurements?: {
 		shoulder_width: number;
@@ -385,11 +386,13 @@ function mapFrontendMeasurements(
 		height: number;
 		armLength: number;
 		legLength: number;
-		confidence: number;
-		source: string;
+		confidence?: number;
+		source?: string;
 	} | null,
 ): SizeCalculatorMeasurements | null {
 	if (!measurements) return null;
+	/** Mesmo `anthropometricMethodConfidence` usado no hook (paridade com omafit-widget). */
+	const confidence = measurements.confidence ?? 0.65;
 	return {
 		shoulderWidth: measurements.shoulder_width,
 		chestCircumference: measurements.chest,
@@ -398,8 +401,8 @@ function mapFrontendMeasurements(
 		bodyHeight: measurements.height,
 		armLength: measurements.armLength,
 		legLength: measurements.legLength,
-		confidence: measurements.confidence,
-		source: measurements.source,
+		confidence,
+		source: measurements.source ?? "frontend_mediapipe",
 	};
 }
 
@@ -459,9 +462,11 @@ export function WidgetPage() {
 	const weightInputRef = useRef<HTMLInputElement | null>(null);
 	const pollingTimerRef = useRef<number | null>(null);
 	const sessionIdRef = useRef(`widget_${Date.now().toString(36)}`);
+	const interactionCountRef = useRef(0);
 	const chatEndRef = useRef<HTMLDivElement | null>(null);
 	const { detectPose, calculateBodyMeasurements, error: mediapipeError } = useMediaPipePose({
 		enabled: step === "photo" || step === "confirm" || step === "processing",
+		useWorker: false,
 		silentNoPose: true,
 	});
 
@@ -551,6 +556,10 @@ export function WidgetPage() {
 	}, [photoPreview]);
 
 	useEffect(() => {
+		interactionCountRef.current = interactionCount;
+	}, [interactionCount]);
+
+	useEffect(() => {
 		if (chatEndRef.current) {
 			chatEndRef.current.scrollIntoView({ behavior: "smooth" });
 		}
@@ -622,19 +631,31 @@ export function WidgetPage() {
 		setStep("confirm");
 	}
 
-	function getRecommendation(rawMeasurements?: SizeCalculatorMeasurements | null) {
+	function getRecommendation(
+		rawMeasurements?: SizeCalculatorMeasurements | null,
+	): TryOnRecommendedSizeResult | null {
 		if (!sizeData || !selectedChart) return null;
 
-		return calculateIdealSize(
-			sizeData.height,
-			sizeData.weight,
-			sizeData.bodyType,
-			sizeData.fit,
-			mapChart(selectedChart),
-			selectedChart.measurement_refs.map(normalizeMeasurementLabel),
-			getDefaultMeasurementWeights(selectedChart.collection_type),
-			rawMeasurements || null,
-			normalizeElasticity(selectedChart.collection_elasticity),
+		const tryOnChart = mapApiChartToTryOnRows(selectedChart);
+		return calculateTryOnRecommendedSize(
+			{
+				height: sizeData.height,
+				weight: sizeData.weight,
+				bodyTypeIndex: sizeData.bodyTypeIndex,
+				fitIndex: sizeData.fitIndex,
+				gender: sizeData.gender,
+				chest: rawMeasurements?.chestCircumference,
+				waist: rawMeasurements?.waistCircumference,
+				hip: rawMeasurements?.hipCircumference,
+				shoulder: rawMeasurements?.shoulderWidth,
+				legLength: rawMeasurements?.legLength,
+			},
+			tryOnChart,
+			{
+				collectionType: selectedChart.collection_type,
+				collectionElasticity: selectedChart.collection_elasticity,
+				measurementWeights: getDefaultMeasurementWeights(selectedChart.collection_type),
+			},
 		);
 	}
 
@@ -732,9 +753,10 @@ export function WidgetPage() {
 			if (recommendation?.size) {
 				provisionalSize = recommendation.size;
 				setRecommendedSize(recommendation.size);
-			}
-
-			if (detectedMeasurements) {
+				setFinalBodyMeasurements(
+					mergeTryOnBodyIntoMeasurements(detectedMeasurements, recommendation.measurements, sizeData.height),
+				);
+			} else if (detectedMeasurements) {
 				setFinalBodyMeasurements(detectedMeasurements);
 			}
 
@@ -777,10 +799,18 @@ export function WidgetPage() {
 			}
 
 			if (result.body_measurements) {
-				setFinalBodyMeasurements(result.body_measurements);
 				const responseRecommendation = getRecommendation(result.body_measurements);
 				if (responseRecommendation?.size) {
 					setRecommendedSize(responseRecommendation.size);
+					setFinalBodyMeasurements(
+						mergeTryOnBodyIntoMeasurements(
+							result.body_measurements,
+							responseRecommendation.measurements,
+							sizeData.height,
+						),
+					);
+				} else {
+					setFinalBodyMeasurements(result.body_measurements);
 				}
 			}
 
@@ -801,6 +831,10 @@ export function WidgetPage() {
 
 		setGptLoading(true);
 		try {
+			const trimmedDescription = params.productDescription.trim();
+			const productDescriptionForGpt = trimmedDescription
+				? trimmedDescription.slice(0, GPT_PRODUCT_DESCRIPTION_MAX)
+				: undefined;
 			const mediaPipeEstimate =
 				finalBodyMeasurements &&
 				finalBodyMeasurements.chestCircumference &&
@@ -824,8 +858,8 @@ export function WidgetPage() {
 					peito_cm: estimated.chest,
 					cintura_cm: estimated.waist,
 					quadril_cm: estimated.hip,
-					tipo_corpo: String(sizeData.bodyType || "regular"),
-					ajuste_preferido: String(sizeData.fit || "regular"),
+					tipo_corpo: gptLabelForBodyType(sizeData, t),
+					ajuste_preferido: gptLabelForFit(sizeData, t),
 					genero: sizeData.gender || "unisex",
 					elasticidade: selectedChart?.collection_elasticity || "light_flex",
 					categoria: selectedChart?.collection_type || "upper",
@@ -834,11 +868,12 @@ export function WidgetPage() {
 						intention === "custom_message" ? "custom_message" : "induzir_adicionar_carrinho",
 					custom_message: customMessage,
 					session_id: sessionIdRef.current,
-					interaction_count: interactionCount,
+					interaction_count: interactionCountRef.current,
 					shop_name: params.storeName,
 					shop_domain: params.storeDomain,
 					language,
 					product_name: params.productName,
+					...(productDescriptionForGpt ? { product_description: productDescriptionForGpt } : {}),
 					available_sizes: availableSizes,
 					available_colors: [],
 					selected_image: selectedProductImage,
