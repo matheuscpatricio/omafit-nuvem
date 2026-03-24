@@ -2195,6 +2195,32 @@ async function saveBillingPlan(storeId, planId, storeUrl = "") {
 	});
 }
 
+async function fetchSessionAnalyticsByDomains(domainCandidates, normalizedSince, userId) {
+	const dateFilters = normalizedSince
+		? [`created_at=gte.${encodeURIComponent(normalizedSince)}`]
+		: [];
+	const queryWithFilters = async (extraFilters) => {
+		const filters = [...extraFilters, ...dateFilters];
+		const suffix = filters.length ? `&${filters.join("&")}` : "";
+		for (const candidate of domainCandidates) {
+			try {
+				const rows = await supabaseSelectAll(
+					`session_analytics?shop_domain=eq.${encodeURIComponent(candidate)}&select=*${suffix}&order=created_at.desc&limit=500`,
+				);
+				if (Array.isArray(rows) && rows.length > 0) return rows;
+			} catch (_error) {
+				// try next candidate
+			}
+		}
+		return [];
+	};
+	if (userId) {
+		const scoped = await queryWithFilters([`user_id=eq.${encodeURIComponent(userId)}`]);
+		if (scoped.length > 0) return scoped;
+	}
+	return queryWithFilters([]);
+}
+
 async function loadSessionAnalytics(shopKey, storeId, sinceIso, shopRecord = null, storeUrl = "") {
 	const normalizedSince = String(sinceIso || "").trim();
 	const userId = String(shopRecord?.user_id || "").trim();
@@ -2212,88 +2238,96 @@ async function loadSessionAnalytics(shopKey, storeId, sinceIso, shopRecord = nul
 				.filter(Boolean),
 		),
 	);
+	const preferSessionAnalyticsFirst = String(shopKey || "").toLowerCase().startsWith("nuvemshop/");
 
-	// 1) Shopify-like priority: user_measurements first + hydrate through tryon_sessions by ids.
-	try {
-		const measurementsFirst = await supabaseSelectAll(
-			"user_measurements?select=*&order=updated_at.desc&limit=500",
+	if (preferSessionAnalyticsFirst) {
+		const fromAnalytics = await fetchSessionAnalyticsByDomains(
+			domainCandidates,
+			normalizedSince,
+			userId,
 		);
-		if (Array.isArray(measurementsFirst) && measurementsFirst.length > 0) {
-			const sessionIds = Array.from(
-				new Set(
-					measurementsFirst
-						.map((item) => item?.tryon_session_id || item?.tryonSessionId)
-						.filter(Boolean)
-						.map((value) => String(value)),
-				),
-			);
-			if (sessionIds.length > 0) {
-				const bySessionRows = [];
-				for (let index = 0; index < sessionIds.length; index += 100) {
-					const chunk = sessionIds.slice(index, index + 100).join(",");
-					const rows = await supabaseSelectAll(
-						`tryon_sessions?id=in.(${chunk})&select=id,user_id,session_start_time,session_end_time,created_at,updated_at,shop_name`,
-					).catch(() => []);
-					if (Array.isArray(rows) && rows.length > 0) bySessionRows.push(...rows);
-				}
+		if (fromAnalytics.length > 0) return fromAnalytics;
+	}
 
-				const allowedSessionIds = new Set();
-				for (const row of bySessionRows) {
-					if (normalizedSince) {
-						const rowDate = row?.session_start_time || row?.created_at || "";
-						if (rowDate && new Date(rowDate).getTime() < new Date(normalizedSince).getTime()) {
-							continue;
-						}
+	// 1) Shopify-like priority: user_measurements + tryon_sessions (requires user_id — never mix all tenants).
+	if (userId) {
+		try {
+			const measurementsFirst = await supabaseSelectAll(
+				"user_measurements?select=*&order=updated_at.desc&limit=500",
+			);
+			if (Array.isArray(measurementsFirst) && measurementsFirst.length > 0) {
+				const sessionIds = Array.from(
+					new Set(
+						measurementsFirst
+							.map((item) => item?.tryon_session_id || item?.tryonSessionId)
+							.filter(Boolean)
+							.map((value) => String(value)),
+					),
+				);
+				if (sessionIds.length > 0) {
+					const bySessionRows = [];
+					for (let index = 0; index < sessionIds.length; index += 100) {
+						const chunk = sessionIds.slice(index, index + 100).join(",");
+						const rows = await supabaseSelectAll(
+							`tryon_sessions?id=in.(${chunk})&select=id,user_id,session_start_time,session_end_time,created_at,updated_at,shop_name`,
+						).catch(() => []);
+						if (Array.isArray(rows) && rows.length > 0) bySessionRows.push(...rows);
 					}
-					if (userId) {
+
+					const allowedSessionIds = new Set();
+					for (const row of bySessionRows) {
+						if (normalizedSince) {
+							const rowDate = row?.session_start_time || row?.created_at || "";
+							if (rowDate && new Date(rowDate).getTime() < new Date(normalizedSince).getTime()) {
+								continue;
+							}
+						}
 						if (normalize(row?.user_id) === normalize(userId)) {
 							allowedSessionIds.add(normalize(row?.id));
 						}
-					} else {
-						allowedSessionIds.add(normalize(row?.id));
-					}
-				}
-
-				if (allowedSessionIds.size > 0) {
-					const groupedMeasurements = new Map();
-					for (const measurement of measurementsFirst) {
-						const sid = normalize(
-							measurement?.tryon_session_id || measurement?.tryonSessionId || "",
-						);
-						if (!sid || !allowedSessionIds.has(sid)) continue;
-						if (!groupedMeasurements.has(sid)) groupedMeasurements.set(sid, []);
-						groupedMeasurements.get(sid).push(measurement);
 					}
 
-					const combined = [];
-					for (const sessionRow of bySessionRows) {
-						const sid = normalize(sessionRow?.id || "");
-						if (!sid || !allowedSessionIds.has(sid)) continue;
-						const measurements = groupedMeasurements.get(sid) || [];
-						if (measurements.length === 0) continue;
-						const latestMeasurement = measurements[measurements.length - 1];
-						combined.push({
-							...sessionRow,
-							...latestMeasurement,
-							created_at:
-								sessionRow?.session_start_time ||
-								sessionRow?.created_at ||
-								latestMeasurement?.created_at ||
-								latestMeasurement?.updated_at ||
-								null,
-							user_measurements: JSON.stringify(latestMeasurement),
-							collection_handle:
-								latestMeasurement?.collection_handle ||
-								latestMeasurement?.collectionHandle ||
-								"geral",
-						});
+					if (allowedSessionIds.size > 0) {
+						const groupedMeasurements = new Map();
+						for (const measurement of measurementsFirst) {
+							const sid = normalize(
+								measurement?.tryon_session_id || measurement?.tryonSessionId || "",
+							);
+							if (!sid || !allowedSessionIds.has(sid)) continue;
+							if (!groupedMeasurements.has(sid)) groupedMeasurements.set(sid, []);
+							groupedMeasurements.get(sid).push(measurement);
+						}
+
+						const combined = [];
+						for (const sessionRow of bySessionRows) {
+							const sid = normalize(sessionRow?.id || "");
+							if (!sid || !allowedSessionIds.has(sid)) continue;
+							const measurements = groupedMeasurements.get(sid) || [];
+							if (measurements.length === 0) continue;
+							const latestMeasurement = measurements[measurements.length - 1];
+							combined.push({
+								...sessionRow,
+								...latestMeasurement,
+								created_at:
+									sessionRow?.session_start_time ||
+									sessionRow?.created_at ||
+									latestMeasurement?.created_at ||
+									latestMeasurement?.updated_at ||
+									null,
+								user_measurements: JSON.stringify(latestMeasurement),
+								collection_handle:
+									latestMeasurement?.collection_handle ||
+									latestMeasurement?.collectionHandle ||
+									"geral",
+							});
+						}
+						if (combined.length > 0) return combined;
 					}
-					if (combined.length > 0) return combined;
 				}
 			}
+		} catch (_error) {
+			// fallback chain below
 		}
-	} catch (_error) {
-		// fallback chain below
 	}
 
 	// 2) Secondary path: tryon_sessions scoped by user_id + user_measurements join.
@@ -2347,19 +2381,10 @@ async function loadSessionAnalytics(shopKey, storeId, sinceIso, shopRecord = nul
 		}
 	}
 
-	// 3) Final fallback: session_analytics by shop_domain candidates (canonical + real store domain).
-	const filters = [];
-	if (normalizedSince) filters.push(`created_at=gte.${encodeURIComponent(normalizedSince)}`);
-	if (userId) filters.unshift(`user_id=eq.${encodeURIComponent(userId)}`);
-	for (const candidate of domainCandidates) {
-		try {
-			const rows = await supabaseSelectAll(
-				`session_analytics?shop_domain=eq.${encodeURIComponent(candidate)}&select=*${filters.length ? `&${filters.join("&")}` : ""}&order=created_at.desc&limit=500`,
-			);
-			if (Array.isArray(rows) && rows.length > 0) return rows;
-		} catch (_error) {
-			// keep trying candidates
-		}
+	// 3) session_analytics by shop_domain (scoped user_id first when present, then sem user_id).
+	if (!preferSessionAnalyticsFirst) {
+		const rows = await fetchSessionAnalyticsByDomains(domainCandidates, normalizedSince, userId);
+		if (rows.length > 0) return rows;
 	}
 	return [];
 }
@@ -2371,32 +2396,75 @@ function average(values) {
 }
 
 function normalizeGender(value) {
-	const normalized = String(value || "").toLowerCase();
-	if (["male", "masculino", "m"].includes(normalized)) return "male";
-	if (["female", "feminino", "f"].includes(normalized)) return "female";
+	const normalized = String(value || "").toLowerCase().trim();
+	if (["male", "masculino", "m", "man", "homem", "h"].includes(normalized)) return "male";
+	if (["female", "feminino", "f", "woman", "mulher", "w"].includes(normalized)) return "female";
 	return null;
+}
+
+function parseJsonObject(value) {
+	if (value == null) return null;
+	if (typeof value === "object" && !Array.isArray(value)) return value;
+	const text = String(value).trim();
+	if (!text) return null;
+	try {
+		const parsed = JSON.parse(text);
+		return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? parsed : null;
+	} catch (_error) {
+		return null;
+	}
+}
+
+function pickRecommendedSize(measurements, session) {
+	const raw =
+		measurements?.recommended_size ??
+		measurements?.recommendedSize ??
+		measurements?.recommended_size_label ??
+		measurements?.size ??
+		measurements?.tamanho ??
+		measurements?.selected_size ??
+		session?.recommended_size ??
+		session?.recommended_size_label ??
+		session?.selected_size ??
+		null;
+	if (raw == null) return null;
+	const text = String(raw).trim();
+	return text.length > 0 ? text : null;
 }
 
 function getMeasurements(session) {
 	if (!session) return null;
 	let measurements = session.user_measurements || null;
 	if (typeof measurements === "string") {
-		try {
-			measurements = JSON.parse(measurements);
-		} catch (_error) {
-			measurements = null;
+		measurements = parseJsonObject(measurements) || measurements;
+	}
+	if (!measurements || typeof measurements !== "object") {
+		const nested =
+			parseJsonObject(session.payload) ||
+			parseJsonObject(session.metadata) ||
+			parseJsonObject(session.event_data) ||
+			parseJsonObject(session.data) ||
+			null;
+		if (nested && typeof nested === "object") {
+			const inner = nested.user_measurements ?? nested.userMeasurements;
+			measurements =
+				(typeof inner === "string" ? parseJsonObject(inner) : inner) ||
+				nested.measurements ||
+				nested;
 		}
 	}
-	const gender = normalizeGender(measurements?.gender || session.gender);
+	if (!measurements || typeof measurements !== "object") {
+		measurements = {};
+	}
+	const gender = normalizeGender(
+		measurements.gender ?? measurements.genero ?? session.gender ?? session.genero,
+	);
+	const recommendedSize = pickRecommendedSize(measurements, session);
 	return {
 		gender,
 		height: Number(measurements?.height ?? session.height ?? NaN),
 		weight: Number(measurements?.weight ?? session.weight ?? NaN),
-		recommendedSize:
-			measurements?.recommended_size ??
-			measurements?.recommendedSize ??
-			session.recommended_size ??
-			null,
+		recommendedSize,
 		bodyType:
 			measurements?.body_type_index ??
 			measurements?.bodyType ??
