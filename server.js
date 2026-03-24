@@ -2195,10 +2195,23 @@ async function saveBillingPlan(storeId, planId, storeUrl = "") {
 	});
 }
 
-async function loadSessionAnalytics(shopKey, storeId, sinceIso, shopRecord = null) {
+async function loadSessionAnalytics(shopKey, storeId, sinceIso, shopRecord = null, storeUrl = "") {
 	const normalizedSince = String(sinceIso || "").trim();
 	const userId = String(shopRecord?.user_id || "").trim();
 	const normalize = (value) => String(value || "").trim().toLowerCase();
+	const domainCandidates = Array.from(
+		new Set(
+			[
+				shopKey,
+				normalizeStoreUrl(storeUrl),
+				normalizeStoreUrl(shopRecord?.store_url || ""),
+				normalizeStoreUrl(shopRecord?.platform_store_url || ""),
+				normalizeStoreUrl(shopRecord?.shop_domain || ""),
+			]
+				.map((value) => String(value || "").trim())
+				.filter(Boolean),
+		),
+	);
 
 	// 1) Shopify-like priority: user_measurements first + hydrate through tryon_sessions by ids.
 	try {
@@ -2334,17 +2347,21 @@ async function loadSessionAnalytics(shopKey, storeId, sinceIso, shopRecord = nul
 		}
 	}
 
-	// 3) Final fallback: session_analytics by shop_domain (same fallback strategy as Shopify app).
+	// 3) Final fallback: session_analytics by shop_domain candidates (canonical + real store domain).
 	const filters = [];
 	if (normalizedSince) filters.push(`created_at=gte.${encodeURIComponent(normalizedSince)}`);
 	if (userId) filters.unshift(`user_id=eq.${encodeURIComponent(userId)}`);
-	try {
-		return await supabaseSelectAll(
-			`session_analytics?shop_domain=eq.${encodeURIComponent(shopKey)}&select=*${filters.length ? `&${filters.join("&")}` : ""}&order=created_at.desc&limit=500`,
-		);
-	} catch (_error) {
-		return [];
+	for (const candidate of domainCandidates) {
+		try {
+			const rows = await supabaseSelectAll(
+				`session_analytics?shop_domain=eq.${encodeURIComponent(candidate)}&select=*${filters.length ? `&${filters.join("&")}` : ""}&order=created_at.desc&limit=500`,
+			);
+			if (Array.isArray(rows) && rows.length > 0) return rows;
+		} catch (_error) {
+			// keep trying candidates
+		}
 	}
+	return [];
 }
 
 function average(values) {
@@ -2404,7 +2421,13 @@ async function getAnalyticsSummary(storeId, storeUrl = "", days = 30) {
 	} catch (_error) {
 		shopRecord = null;
 	}
-	const sessions = await loadSessionAnalytics(shopKey, storeId, since.toISOString(), shopRecord);
+	const sessions = await loadSessionAnalytics(
+		shopKey,
+		storeId,
+		since.toISOString(),
+		shopRecord,
+		storeUrl,
+	);
 
 	const genderStats = {
 		male: { heights: [], weights: [] },

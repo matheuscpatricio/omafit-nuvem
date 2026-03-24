@@ -379,6 +379,21 @@ function ensureStyles(primaryColor: string) {
   height: 100%;
   border: 0;
 }
+@media (max-width: 768px) {
+  #${MODAL_ID} {
+    padding: 0;
+    background: #fff;
+  }
+  #${MODAL_ID} .omafit-modal-card {
+    width: 100vw;
+    height: 100vh;
+    border-radius: 0;
+  }
+  #${MODAL_ID} .omafit-modal-close {
+    top: 12px;
+    right: 12px;
+  }
+}
 `;
 	document.head.appendChild(style);
 }
