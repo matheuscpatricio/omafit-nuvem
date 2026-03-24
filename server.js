@@ -2001,7 +2001,7 @@ async function saveBillingPlan(storeId, planId, storeUrl = "") {
 				expiresAt: Date.now() + 1000 * 60 * 60 * 12,
 			};
 			const pricePerExtraImageBrl = convertUsdToBrl(planDef.usdPricePerExtraImage || 0, rate);
-			return upsertStoreRecord(session || { storeId }, {
+			const desiredRecord = {
 				...storeInfo,
 				plan: planDef.id,
 				billing_status: "active",
@@ -2010,7 +2010,50 @@ async function saveBillingPlan(storeId, planId, storeUrl = "") {
 				currency: "BRL",
 				billing_mode: "self",
 				billing_cycle_start: new Date().toISOString(),
-			});
+			};
+			const domainCandidates = Array.from(
+				new Set(
+					[
+						requestedStoreUrl,
+						normalizeStoreUrl(storeInfo?.url || ""),
+						normalizeStoreUrl(storeRecord?.store_url || ""),
+						normalizeStoreUrl(storeRecord?.platform_store_url || ""),
+						String(storeRecord?.shop_domain || "").includes(".")
+							? normalizeStoreUrl(storeRecord?.shop_domain || "")
+							: "",
+					].filter(Boolean),
+				),
+			);
+			for (const domain of domainCandidates) {
+				try {
+					const response = await supabaseRequest(
+						`shopify_shops?shop_domain=eq.${encodeURIComponent(domain)}&select=*`,
+						{
+							method: "PATCH",
+							headers: {
+								Prefer: "return=representation",
+							},
+							body: JSON.stringify({
+								plan: desiredRecord.plan,
+								billing_status: desiredRecord.billing_status,
+								images_included: desiredRecord.images_included,
+								price_per_extra_image: desiredRecord.price_per_extra_image,
+								currency: desiredRecord.currency,
+								updated_at: new Date().toISOString(),
+							}),
+						},
+					);
+					if (response.ok) {
+						const rows = await response.json().catch(() => []);
+						if (Array.isArray(rows) && rows[0]) {
+							return rows[0];
+						}
+					}
+				} catch (_error) {
+					// try next candidate
+				}
+			}
+			return upsertStoreRecord(session || { storeId }, desiredRecord);
 		}
 		const error = new Error(
 			"A assinatura da loja ainda nao informou o identificador de billing da Nuvemshop. Aguarde o webhook subscription/updated ou configure NUVEMSHOP_BILLING_CONCEPT_CODE.",
