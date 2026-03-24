@@ -596,6 +596,51 @@ async function supabaseFunctionRequest(path, options = {}) {
 	});
 }
 
+async function supabaseStorageRequest(path, options = {}) {
+	const config = getSupabaseConfig();
+	if (!config) {
+		throw new Error("Supabase not configured");
+	}
+	const normalizedPath = String(path || "").replace(/^\/+/, "");
+	const headers = {
+		apikey: config.key,
+		Authorization: `Bearer ${config.key}`,
+		...(options.headers || {}),
+	};
+	return fetch(`${config.url}/storage/v1/${normalizedPath}`, {
+		...options,
+		headers,
+	});
+}
+
+async function ensureStorageBucket(bucketId) {
+	const bucket = String(bucketId || "").trim();
+	if (!bucket) throw new Error("bucket id is required");
+	const getResponse = await supabaseStorageRequest(`bucket/${encodeURIComponent(bucket)}`, {
+		method: "GET",
+	});
+	if (getResponse.ok) return true;
+	if (getResponse.status !== 404) return true;
+	const createResponse = await supabaseStorageRequest("bucket", {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+		},
+		body: JSON.stringify({
+			id: bucket,
+			name: bucket,
+			public: true,
+			file_size_limit: "5242880",
+			allowed_mime_types: ["image/png", "image/jpeg", "image/webp", "image/svg+xml"],
+		}),
+	});
+	if (!createResponse.ok) {
+		const text = await createResponse.text().catch(() => "");
+		throw new Error(parseSupabaseError(text)?.message || "Nao foi possivel criar bucket de logos.");
+	}
+	return true;
+}
+
 async function supabaseSelectFirst(path) {
 	const response = await supabaseRequest(path, { method: "GET" });
 	if (!response.ok) return null;
@@ -2132,20 +2177,152 @@ async function saveBillingPlan(storeId, planId, storeUrl = "") {
 	});
 }
 
-async function loadSessionAnalytics(shopKey, storeId, sinceIso) {
-	const filters = [];
-	if (sinceIso) filters.push(`created_at=gte.${encodeURIComponent(sinceIso)}`);
+async function loadSessionAnalytics(shopKey, storeId, sinceIso, shopRecord = null) {
+	const normalizedSince = String(sinceIso || "").trim();
+	const userId = String(shopRecord?.user_id || "").trim();
+	const normalize = (value) => String(value || "").trim().toLowerCase();
+
+	// 1) Shopify-like priority: user_measurements first + hydrate through tryon_sessions by ids.
 	try {
-		const rows = await supabaseSelectAll(
-			`session_analytics?shop_domain=eq.${encodeURIComponent(shopKey)}&select=*${filters.length ? `&${filters.join("&")}` : ""}&order=created_at.desc&limit=500`,
+		const measurementsFirst = await supabaseSelectAll(
+			"user_measurements?select=*&order=updated_at.desc&limit=500",
 		);
-		if (rows.length > 0) return rows;
+		if (Array.isArray(measurementsFirst) && measurementsFirst.length > 0) {
+			const sessionIds = Array.from(
+				new Set(
+					measurementsFirst
+						.map((item) => item?.tryon_session_id || item?.tryonSessionId)
+						.filter(Boolean)
+						.map((value) => String(value)),
+				),
+			);
+			if (sessionIds.length > 0) {
+				const bySessionRows = [];
+				for (let index = 0; index < sessionIds.length; index += 100) {
+					const chunk = sessionIds.slice(index, index + 100).join(",");
+					const rows = await supabaseSelectAll(
+						`tryon_sessions?id=in.(${chunk})&select=id,user_id,session_start_time,session_end_time,created_at,updated_at,shop_name`,
+					).catch(() => []);
+					if (Array.isArray(rows) && rows.length > 0) bySessionRows.push(...rows);
+				}
+
+				const allowedSessionIds = new Set();
+				for (const row of bySessionRows) {
+					if (normalizedSince) {
+						const rowDate = row?.session_start_time || row?.created_at || "";
+						if (rowDate && new Date(rowDate).getTime() < new Date(normalizedSince).getTime()) {
+							continue;
+						}
+					}
+					if (userId) {
+						if (normalize(row?.user_id) === normalize(userId)) {
+							allowedSessionIds.add(normalize(row?.id));
+						}
+					} else {
+						allowedSessionIds.add(normalize(row?.id));
+					}
+				}
+
+				if (allowedSessionIds.size > 0) {
+					const groupedMeasurements = new Map();
+					for (const measurement of measurementsFirst) {
+						const sid = normalize(
+							measurement?.tryon_session_id || measurement?.tryonSessionId || "",
+						);
+						if (!sid || !allowedSessionIds.has(sid)) continue;
+						if (!groupedMeasurements.has(sid)) groupedMeasurements.set(sid, []);
+						groupedMeasurements.get(sid).push(measurement);
+					}
+
+					const combined = [];
+					for (const sessionRow of bySessionRows) {
+						const sid = normalize(sessionRow?.id || "");
+						if (!sid || !allowedSessionIds.has(sid)) continue;
+						const measurements = groupedMeasurements.get(sid) || [];
+						if (measurements.length === 0) continue;
+						const latestMeasurement = measurements[measurements.length - 1];
+						combined.push({
+							...sessionRow,
+							...latestMeasurement,
+							created_at:
+								sessionRow?.session_start_time ||
+								sessionRow?.created_at ||
+								latestMeasurement?.created_at ||
+								latestMeasurement?.updated_at ||
+								null,
+							user_measurements: JSON.stringify(latestMeasurement),
+							collection_handle:
+								latestMeasurement?.collection_handle ||
+								latestMeasurement?.collectionHandle ||
+								"geral",
+						});
+					}
+					if (combined.length > 0) return combined;
+				}
+			}
+		}
 	} catch (_error) {
-		// ignore
+		// fallback chain below
 	}
+
+	// 2) Secondary path: tryon_sessions scoped by user_id + user_measurements join.
+	if (userId) {
+		try {
+			const baseFilter = normalizedSince
+				? `&session_start_time=gte.${encodeURIComponent(normalizedSince)}`
+				: "";
+			const sessions = await supabaseSelectAll(
+				`tryon_sessions?user_id=eq.${encodeURIComponent(userId)}&select=*&order=session_start_time.desc&limit=500${baseFilter}`,
+			);
+			if (Array.isArray(sessions) && sessions.length > 0) {
+				const ids = sessions.map((item) => item?.id).filter(Boolean).map((value) => String(value));
+				const bySessionMeasurement = new Map();
+				for (let index = 0; index < ids.length; index += 100) {
+					const chunk = ids.slice(index, index + 100).join(",");
+					const rows = await supabaseSelectAll(
+						`user_measurements?tryon_session_id=in.(${chunk})&select=*&order=updated_at.desc`,
+					).catch(() => []);
+					for (const row of rows) {
+						const sid = normalize(row?.tryon_session_id || row?.tryonSessionId || "");
+						if (sid && !bySessionMeasurement.has(sid)) bySessionMeasurement.set(sid, row);
+					}
+				}
+				const combined = sessions
+					.map((sessionRow) => {
+						const sid = normalize(sessionRow?.id || "");
+						const measurement = bySessionMeasurement.get(sid);
+						if (!measurement) return null;
+						return {
+							...sessionRow,
+							...measurement,
+							created_at:
+								sessionRow?.session_start_time ||
+								sessionRow?.created_at ||
+								measurement?.created_at ||
+								measurement?.updated_at ||
+								null,
+							user_measurements: JSON.stringify(measurement),
+							collection_handle:
+								measurement?.collection_handle ||
+								measurement?.collectionHandle ||
+								"geral",
+						};
+					})
+					.filter(Boolean);
+				if (combined.length > 0) return combined;
+			}
+		} catch (_error) {
+			// continue fallback
+		}
+	}
+
+	// 3) Final fallback: session_analytics by shop_domain (same fallback strategy as Shopify app).
+	const filters = [];
+	if (normalizedSince) filters.push(`created_at=gte.${encodeURIComponent(normalizedSince)}`);
+	if (userId) filters.unshift(`user_id=eq.${encodeURIComponent(userId)}`);
 	try {
 		return await supabaseSelectAll(
-			`tryon_sessions?user_id=eq.${encodeURIComponent(storeId)}&select=*&order=session_start_time.desc&limit=500`,
+			`session_analytics?shop_domain=eq.${encodeURIComponent(shopKey)}&select=*${filters.length ? `&${filters.join("&")}` : ""}&order=created_at.desc&limit=500`,
 		);
 	} catch (_error) {
 		return [];
@@ -2202,7 +2379,6 @@ async function getAnalyticsSummary(storeId, storeUrl = "", days = 30) {
 	const shopKey = getCanonicalShopKey(storeId);
 	const since = new Date();
 	since.setDate(since.getDate() - Number(days || 30));
-	const sessions = await loadSessionAnalytics(shopKey, storeId, since.toISOString());
 
 	let shopRecord = null;
 	try {
@@ -2210,6 +2386,7 @@ async function getAnalyticsSummary(storeId, storeUrl = "", days = 30) {
 	} catch (_error) {
 		shopRecord = null;
 	}
+	const sessions = await loadSessionAnalytics(shopKey, storeId, since.toISOString(), shopRecord);
 
 	const genderStats = {
 		male: { heights: [], weights: [] },
@@ -2576,6 +2753,74 @@ async function handleApi(req, res, reqUrl) {
 			}
 			return true;
 		}
+	}
+
+	if (pathname === "/api/widget/logo-upload" && method === "POST") {
+		if (!storeContext.storeId) {
+			sendJson(res, 400, { error: "store_id is required" });
+			return true;
+		}
+		try {
+			const rawBody = await readRequestBody(req);
+			const contentType = req.headers["content-type"] || "";
+			const request = new Request("http://localhost/api/widget/logo-upload", {
+				method: "POST",
+				headers: { "Content-Type": contentType },
+				body: rawBody,
+			});
+			const formData = await request.formData();
+			const file = formData.get("file");
+			if (!(file instanceof File)) {
+				sendJson(res, 400, { error: "Arquivo de logo nao enviado." });
+				return true;
+			}
+			const acceptedMime = ["image/png", "image/jpeg", "image/webp", "image/svg+xml"];
+			if (!acceptedMime.includes(file.type)) {
+				sendJson(res, 400, { error: "Formato invalido. Use PNG, JPG, WEBP ou SVG." });
+				return true;
+			}
+			if (file.size > 5 * 1024 * 1024) {
+				sendJson(res, 400, { error: "Arquivo muito grande. Limite de 5MB." });
+				return true;
+			}
+			const config = getSupabaseConfig();
+			if (!config) {
+				sendJson(res, 500, { error: "Supabase nao configurado para upload de logo." });
+				return true;
+			}
+			const bucket = "widget-assets";
+			await ensureStorageBucket(bucket);
+			const extension = (file.name.split(".").pop() || "png").toLowerCase();
+			const safeExt = /^[a-z0-9]+$/.test(extension) ? extension : "png";
+			const objectPath = `nuvemshop/${encodeURIComponent(
+				storeContext.storeId,
+			)}/logo-${Date.now()}.${safeExt}`;
+			const fileBuffer = Buffer.from(await file.arrayBuffer());
+			const uploadResponse = await supabaseStorageRequest(
+				`object/${bucket}/${objectPath}`,
+				{
+					method: "POST",
+					headers: {
+						"Content-Type": file.type || "application/octet-stream",
+						"x-upsert": "true",
+					},
+					body: fileBuffer,
+				},
+			);
+			if (!uploadResponse.ok) {
+				const text = await uploadResponse.text().catch(() => "");
+				sendJson(res, 500, {
+					error:
+						parseSupabaseError(text)?.message || "Nao foi possivel enviar o logo para o storage.",
+				});
+				return true;
+			}
+			const publicUrl = `${config.url}/storage/v1/object/public/${bucket}/${objectPath}`;
+			sendJson(res, 200, { ok: true, url: publicUrl });
+		} catch (error) {
+			sendJson(res, 500, { error: error.message || "Nao foi possivel enviar o logo." });
+		}
+		return true;
 	}
 
 	if (pathname === "/api/storefront/widget-config") {

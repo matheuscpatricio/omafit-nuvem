@@ -180,13 +180,58 @@ function defaultChart(): OmafitSizeChart {
 	};
 }
 
+const COLLECTION_TYPE_OPTIONS: Array<{ value: OmafitSizeChart["collection_type"]; label: string }> = [
+	{ value: "upper", label: "Superior (camisas, jaquetas...)" },
+	{ value: "lower", label: "Inferior (calças, saias...)" },
+	{ value: "full", label: "Corpo inteiro (vestidos, macacões...)" },
+	{ value: "footwear", label: "Calçados (tênis, botas...)" },
+];
+
+const COLLECTION_ELASTICITY_OPTIONS: Array<{
+	value: Exclude<OmafitSizeChart["collection_elasticity"], "">;
+	label: string;
+}> = [
+	{ value: "structured", label: "Estruturada" },
+	{ value: "light_flex", label: "Leve flexibilidade" },
+	{ value: "flexible", label: "Flexível" },
+	{ value: "high_elasticity", label: "Alta elasticidade" },
+];
+
+const MEASUREMENT_REF_OPTIONS = [
+	{ value: "peito", label: "Peito" },
+	{ value: "cintura", label: "Cintura" },
+	{ value: "quadril", label: "Quadril" },
+	{ value: "comprimento", label: "Comprimento" },
+	{ value: "tornozelo", label: "Tornozelo" },
+];
+
+const FOOTWEAR_MEASUREMENT_REF_OPTIONS = [{ value: "tamanho_pe", label: "Tamanho do pé" }];
+
+function normalizeMeasurementRefsForCollectionType(
+	collectionType: OmafitSizeChart["collection_type"],
+	refs: string[],
+) {
+	if (collectionType === "footwear") return ["tamanho_pe"];
+	const allowed = new Set(MEASUREMENT_REF_OPTIONS.map((option) => option.value));
+	const sanitized = Array.isArray(refs)
+		? refs
+				.map((value) => String(value || "").trim())
+				.filter((value) => allowed.has(value))
+		: [];
+	const defaults = ["peito", "cintura", "quadril"];
+	const result = [...sanitized];
+	for (const fallback of defaults) {
+		if (result.length >= 3) break;
+		if (!result.includes(fallback)) result.push(fallback);
+	}
+	return result.slice(0, 3);
+}
+
 function normalizeChartForType(chart: OmafitSizeChart): OmafitSizeChart {
-	const measurementRefs =
-		chart.collection_type === "footwear"
-			? ["tamanho_pe"]
-			: chart.measurement_refs.length === 3
-				? chart.measurement_refs
-				: ["peito", "cintura", "quadril"];
+	const measurementRefs = normalizeMeasurementRefsForCollectionType(
+		chart.collection_type,
+		chart.measurement_refs,
+	);
 	return {
 		...chart,
 		collection_elasticity:
@@ -353,6 +398,35 @@ function AppContent({ nexo, store }: AdminAppProps) {
 			setBusyAction(null);
 		}
 	}, [t, widgetConfig, withStoreQuery]);
+
+	const uploadLogo = useCallback(
+		async (file: File) => {
+			setBusyAction("logo-upload");
+			setError(null);
+			try {
+				const formData = new FormData();
+				formData.append("file", file);
+				const response = await fetch(withStoreQuery("/api/widget/logo-upload"), {
+					method: "POST",
+					body: formData,
+				});
+				const payload = await response.json().catch(() => ({}));
+				if (!response.ok || !payload?.url) {
+					throw new Error(payload?.error || "Nao foi possivel enviar o logo.");
+				}
+				setWidgetConfig((current) => ({
+					...current,
+					store_logo: String(payload.url),
+				}));
+				setNotice("Logo enviado com sucesso.");
+			} catch (requestError) {
+				setError(requestError instanceof Error ? requestError.message : t("feedback.error"));
+			} finally {
+				setBusyAction(null);
+			}
+		},
+		[t, withStoreQuery],
+	);
 
 	const saveCharts = useCallback(async () => {
 		setBusyAction("charts");
@@ -568,7 +642,9 @@ function AppContent({ nexo, store }: AdminAppProps) {
 						collections={collections}
 						onChange={setWidgetConfig}
 						onSave={saveWidget}
+						onUploadLogo={uploadLogo}
 						busy={busyAction === "widget"}
+						logoUploading={busyAction === "logo-upload"}
 					/>
 				) : null}
 
@@ -759,13 +835,17 @@ function WidgetSection({
 	collections,
 	onChange,
 	onSave,
+	onUploadLogo,
 	busy,
+	logoUploading,
 }: {
 	config: OmafitWidgetConfig;
 	collections: OmafitCollection[];
 	onChange: (next: OmafitWidgetConfig) => void;
 	onSave: () => Promise<void>;
+	onUploadLogo: (file: File) => Promise<void>;
 	busy: boolean;
+	logoUploading: boolean;
 }) {
 	const { t } = useI18n();
 	return (
@@ -786,15 +866,24 @@ function WidgetSection({
 						/>
 					</label>
 
-					<label style={labelStyle}>
-						<span>{t("widget.logoUrl")}</span>
+					<div style={{ display: "grid", gap: 8 }}>
+						<span style={{ ...labelStyle, gap: 0 }}>{t("widget.logoUrl")}</span>
 						<input
-							style={inputStyle}
-							value={config.store_logo || ""}
-							onChange={(event) => onChange({ ...config, store_logo: event.target.value })}
-							placeholder="https://..."
+							type="file"
+							accept="image/png,image/jpeg,image/webp,image/svg+xml"
+							onChange={(event) => {
+								const file = event.target.files?.[0];
+								if (file) void onUploadLogo(file);
+								event.currentTarget.value = "";
+							}}
+							disabled={logoUploading}
 						/>
-					</label>
+						{config.store_logo ? (
+							<span style={subtleTextStyle}>
+								Logo atual carregado. {logoUploading ? "Enviando novo arquivo..." : ""}
+							</span>
+						) : null}
+					</div>
 
 					<label style={labelStyle}>
 						<span>{t("widget.primaryColor")}</span>
@@ -1017,10 +1106,11 @@ function SizeChartEditor({
 							})
 						}
 					>
-						<option value="upper">Upper</option>
-						<option value="lower">Lower</option>
-						<option value="full">Full</option>
-						<option value="footwear">Footwear</option>
+						{COLLECTION_TYPE_OPTIONS.map((option) => (
+							<option key={option.value} value={option.value}>
+								{option.label}
+							</option>
+						))}
 					</select>
 				</label>
 
@@ -1037,10 +1127,11 @@ function SizeChartEditor({
 							})
 						}
 					>
-						<option value="structured">Structured</option>
-						<option value="light_flex">Light flex</option>
-						<option value="flexible">Flexible</option>
-						<option value="high_elasticity">High elasticity</option>
+						{COLLECTION_ELASTICITY_OPTIONS.map((option) => (
+							<option key={option.value} value={option.value}>
+								{option.label}
+							</option>
+						))}
 					</select>
 				</label>
 			</div>
@@ -1048,19 +1139,31 @@ function SizeChartEditor({
 			<div style={{ display: "grid", gap: 8 }}>
 				<strong>{t("sizeCharts.measurements")}</strong>
 				<div style={{ display: "grid", gridTemplateColumns: `repeat(${measurementRefs.length}, 1fr)`, gap: 12 }}>
-					{measurementRefs.map((measurement, measurementIndex) => (
-						<input
-							key={`${measurement}-${measurementIndex}`}
-							style={inputStyle}
-							value={measurement}
-							disabled={chart.collection_type === "footwear"}
-							onChange={(event) => {
-								const nextRefs = [...measurementRefs];
-								nextRefs[measurementIndex] = event.target.value;
-								update({ measurement_refs: nextRefs });
-							}}
-						/>
-					))}
+					{measurementRefs.map((measurement, measurementIndex) => {
+						const options =
+							chart.collection_type === "footwear"
+								? FOOTWEAR_MEASUREMENT_REF_OPTIONS
+								: MEASUREMENT_REF_OPTIONS;
+						return (
+							<select
+								key={`${measurement}-${measurementIndex}`}
+								style={inputStyle}
+								value={measurement}
+								disabled={chart.collection_type === "footwear"}
+								onChange={(event) => {
+									const nextRefs = [...measurementRefs];
+									nextRefs[measurementIndex] = event.target.value;
+									update({ measurement_refs: nextRefs });
+								}}
+							>
+								{options.map((option) => (
+									<option key={option.value} value={option.value}>
+										{option.label}
+									</option>
+								))}
+							</select>
+						);
+					})}
 				</div>
 			</div>
 
