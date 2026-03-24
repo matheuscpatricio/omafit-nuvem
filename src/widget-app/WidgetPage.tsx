@@ -489,7 +489,11 @@ export function WidgetPage() {
 				if (configPayload?.config) {
 					setConfig(configPayload.config);
 					if (configPayload.config.primary_color) setPrimaryColor(configPayload.config.primary_color);
-					if (configPayload.config.store_logo) setStoreLogo(configPayload.config.store_logo);
+					const resolvedStoreLogo =
+						configPayload.config.store_logo ||
+						configPayload.config?.modal_config?.storeLogo ||
+						"";
+					if (resolvedStoreLogo) setStoreLogo(String(resolvedStoreLogo));
 					if (configPayload.config.admin_locale) {
 						setLanguage(detectWidgetLanguage(configPayload.config.admin_locale));
 					}

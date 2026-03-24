@@ -324,6 +324,16 @@ function ensureStyles(primaryColor: string) {
   font-size: 14px;
   font-weight: 700;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+#${CTA_BUTTON_ID} img {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  border-radius: 4px;
 }
 #${CTA_BUTTON_ID}:hover {
   opacity: 0.9;
@@ -438,7 +448,10 @@ function renderButton(
 	}
 	const button = wrapper.querySelector<HTMLButtonElement>(`#${CTA_BUTTON_ID}`);
 	if (!button) return;
-	button.textContent = config.link_text || "Ver meu tamanho ideal";
+	const logoMarkup = config.store_logo
+		? `<img src="${String(config.store_logo).replace(/"/g, "&quot;")}" alt="" />`
+		: "";
+	button.innerHTML = `${logoMarkup}<span>${config.link_text || "Ver meu tamanho ideal"}</span>`;
 	button.onclick = () => {
 		const modal = ensureModal(widgetUrl);
 		modal.hidden = false;
