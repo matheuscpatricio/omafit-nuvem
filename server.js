@@ -1731,11 +1731,15 @@ async function buildBillingDebugSnapshot(storeId, storeUrl = "") {
 	};
 }
 
-async function saveBillingPlan(storeId, planId) {
+async function saveBillingPlan(storeId, planId, storeUrl = "") {
 	const normalizedPlanId = normalizePlanId(planId || "ondemand");
 	const planDef = getPlanDefinition(normalizedPlanId);
-	const storeRecord = await loadLegacyShopRecord(storeId, "");
-	const session = await resolveSession(storeId, storeRecord?.store_url || "");
+	const requestedStoreUrl = normalizeStoreUrl(storeUrl);
+	const storeRecord = await loadLegacyShopRecord(storeId, requestedStoreUrl);
+	const session = await resolveSession(
+		storeId,
+		requestedStoreUrl || storeRecord?.store_url || storeRecord?.platform_store_url || "",
+	);
 	const storeInfo = session?.store || storeRecord || { id: storeId };
 	const billingIdentifiers = resolveBillingIdentifiers(storeId);
 
@@ -1752,6 +1756,7 @@ async function saveBillingPlan(storeId, planId) {
 			data: {
 				storeId,
 				planId: normalizedPlanId,
+				requestedStoreUrl,
 				hasStoreRecord: Boolean(storeRecord),
 				hasSession: Boolean(session),
 				sessionStoreId: String(session?.store?.id || ""),
@@ -1773,7 +1778,13 @@ async function saveBillingPlan(storeId, planId) {
 		);
 		error.debug = await buildBillingDebugSnapshot(
 			storeId,
-			String(session?.store?.url || storeRecord?.store_url || ""),
+			String(
+				requestedStoreUrl ||
+					session?.store?.url ||
+					storeRecord?.store_url ||
+					storeRecord?.platform_store_url ||
+					"",
+			),
 		).catch(() => null);
 		// #region agent log
 		fetch("http://127.0.0.1:7523/ingest/ebd119e5-639e-45b4-9806-782ca57f574c", {
@@ -1788,6 +1799,7 @@ async function saveBillingPlan(storeId, planId) {
 				data: {
 					storeId,
 					planId: normalizedPlanId,
+				requestedStoreUrl,
 					hasBillingConceptCode: Boolean(billingIdentifiers.conceptCode),
 					hasBillingServiceId: Boolean(billingIdentifiers.serviceId),
 					hasFallbackConceptCode: Boolean(getBillingConceptCodeFallback()),
@@ -2445,7 +2457,11 @@ async function handleApi(req, res, reqUrl) {
 		}
 		const payload = await readJsonBody(req);
 		try {
-			const record = await saveBillingPlan(storeContext.storeId, payload.planId);
+			const record = await saveBillingPlan(
+				storeContext.storeId,
+				payload.planId,
+				storeContext.storeUrl,
+			);
 			sendJson(res, 200, { ok: true, record });
 		} catch (error) {
 			sendJson(res, 500, {
