@@ -2718,7 +2718,27 @@ async function handleApi(req, res, reqUrl) {
 				payload.planId,
 				storeContext.storeUrl,
 			);
-			sendJson(res, 200, { ok: true, record });
+			const reloadedByStoreUrl = await loadLegacyShopRecord(
+				storeContext.storeId,
+				storeContext.storeUrl,
+			).catch(() => null);
+			const reloadedByShopKey = await loadLegacyShopRecord(storeContext.storeId, "").catch(
+				() => null,
+			);
+			sendJson(res, 200, {
+				ok: true,
+				record,
+				debug: {
+					requestedPlanId: String(payload.planId || ""),
+					requestStoreUrl: storeContext.storeUrl,
+					savedRecordPlan: String(record?.plan || ""),
+					savedRecordShopDomain: String(record?.shop_domain || ""),
+					reloadedByStoreUrlPlan: String(reloadedByStoreUrl?.plan || ""),
+					reloadedByStoreUrlShopDomain: String(reloadedByStoreUrl?.shop_domain || ""),
+					reloadedByShopKeyPlan: String(reloadedByShopKey?.plan || ""),
+					reloadedByShopKeyShopDomain: String(reloadedByShopKey?.shop_domain || ""),
+				},
+			});
 		} catch (error) {
 			sendJson(res, 500, {
 				error: error.message || "Nao foi possivel atualizar o plano.",

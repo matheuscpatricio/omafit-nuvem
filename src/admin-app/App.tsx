@@ -378,11 +378,18 @@ function AppContent({ nexo, store }: AdminAppProps) {
 			setBusyAction(`plan:${planId}`);
 			setError(null);
 			try {
-				await fetchJson(withStoreQuery("/api/billing/plan"), {
+				const response = await fetchJson<{
+					ok: boolean;
+					record?: unknown;
+					debug?: unknown;
+				}>(withStoreQuery("/api/billing/plan"), {
 					method: "POST",
 					headers: { "Content-Type": "application/json" },
 					body: JSON.stringify({ planId }),
 				});
+				// #region agent log
+				console.info("[Omafit Debug] H17 billing_plan_success_json", JSON.stringify(response));
+				// #endregion
 				await loadContext();
 				setNotice(t("feedback.saved"));
 			} catch (requestError) {
