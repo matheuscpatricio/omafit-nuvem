@@ -869,6 +869,10 @@ async function createWidgetKeyFallback(shopDomain) {
 async function resolveWidgetPublicId(storeId, storeUrl = "") {
 	const normalizedDomain = normalizeStoreUrl(storeUrl);
 	const shopKey = getCanonicalShopKey(storeId);
+	const shopRecord = await loadLegacyShopRecord(storeId, storeUrl);
+	if (normalizedDomain) {
+		await ensureShopifyCompatShop(storeId, normalizedDomain, shopRecord);
+	}
 
 	const directCandidates = [normalizedDomain, shopKey].filter(Boolean);
 	for (const candidate of directCandidates) {
@@ -878,10 +882,6 @@ async function resolveWidgetPublicId(storeId, storeUrl = "") {
 		}
 	}
 
-	const shopRecord = await loadLegacyShopRecord(storeId, storeUrl);
-	if (normalizedDomain) {
-		await ensureShopifyCompatShop(storeId, normalizedDomain, shopRecord);
-	}
 	const recordCandidates = [
 		shopRecord?.public_id,
 		shopRecord?.shop_domain,
