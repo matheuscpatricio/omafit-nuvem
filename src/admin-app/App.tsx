@@ -127,6 +127,14 @@ function formatMoney(value: number, currency: string) {
 	}
 }
 
+function getPlanDisplayName(
+	plans: { id: string; name: string }[] | undefined,
+	planId: string | null | undefined,
+) {
+	if (!planId) return "—";
+	return plans?.find((plan) => plan.id === planId)?.name || planId;
+}
+
 async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
 	const response = await fetch(url, options);
 	const text = await response.text();
@@ -443,7 +451,7 @@ function AppContent({ nexo, store }: AdminAppProps) {
 							tone={context?.auth.connected ? "success" : "warning"}
 						/>
 						<StatusPill
-							label={`${t("billing.currentPlan")}: ${context?.billing.plan || "ondemand"}`}
+							label={`${t("billing.currentPlan")}: ${getPlanDisplayName(context?.billing.plans, context?.billing.plan || "ondemand")}`}
 							tone="neutral"
 						/>
 						<StatusPill
@@ -673,7 +681,10 @@ function BillingSection({
 					gap: 16,
 				}}
 			>
-				<StatCard label={t("billing.currentPlan")} value={context.billing.plan} />
+				<StatCard
+					label={t("billing.currentPlan")}
+					value={getPlanDisplayName(context.billing.plans, context.billing.plan)}
+				/>
 				<StatCard label={t("billing.status")} value={context.billing.status} />
 				<StatCard label={t("billing.remaining")} value={String(context.billing.usage.remaining)} />
 				<StatCard label={t("billing.extra")} value={String(context.billing.usage.extraImages)} />
@@ -693,6 +704,10 @@ function BillingSection({
 							<div style={subtleTextStyle}>{plan.description}</div>
 						</div>
 						<div style={subtleTextStyle}>
+							{t("billing.monthlyPrice")}:{" "}
+							{plan.monthlyPrice > 0 ? formatMoney(plan.monthlyPrice, plan.currency) : t("billing.free")}
+						</div>
+						<div style={subtleTextStyle}>
 							{t("billing.planIncludes")}: {plan.imagesIncluded}
 						</div>
 						<div style={subtleTextStyle}>
@@ -704,7 +719,13 @@ function BillingSection({
 							onClick={() => onActivatePlan(plan.id)}
 							disabled={busyAction === `plan:${plan.id}`}
 						>
-							{busyAction === `plan:${plan.id}` ? t("common.loading") : t("billing.activate")}
+							{busyAction === `plan:${plan.id}`
+								? t("common.loading")
+								: plan.id === context.billing.plan
+									? t("billing.currentPlanBadge")
+									: context.billing.status === "active"
+										? t("billing.switchPlan")
+										: t("billing.subscribePlan")}
 						</button>
 					</div>
 				))}

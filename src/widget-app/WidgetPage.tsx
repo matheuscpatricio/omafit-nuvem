@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle, ArrowLeft, ArrowRight, Camera, Sparkles } from "lucide-react";
+import { AlertCircle, ArrowLeft, ArrowRight, Camera, Ruler, Sparkles, User, Weight } from "lucide-react";
 import {
 	calculateIdealSize,
 	type ElasticityLevel,
@@ -446,6 +446,7 @@ export function WidgetPage() {
 	const [gptLoading, setGptLoading] = useState(false);
 	const [chatInput, setChatInput] = useState("");
 	const fileInputRef = useRef<HTMLInputElement | null>(null);
+	const weightInputRef = useRef<HTMLInputElement | null>(null);
 	const pollingTimerRef = useRef<number | null>(null);
 	const sessionIdRef = useRef(`widget_${Date.now().toString(36)}`);
 	const chatEndRef = useRef<HTMLDivElement | null>(null);
@@ -593,14 +594,6 @@ export function WidgetPage() {
 		setPhotoFile(file);
 		setPhotoPreview(URL.createObjectURL(file));
 		setFinalBodyMeasurements(null);
-		setError("");
-	}
-
-	function goToConfirm() {
-		if (!photoFile) {
-			setError(t("selectProductAndPhoto"));
-			return;
-		}
 		setError("");
 		setStep("confirm");
 	}
@@ -985,13 +978,7 @@ export function WidgetPage() {
 						<button onClick={resetWidget} className="text-gray-500 hover:text-gray-700 transition-colors">
 							<ArrowLeft className="w-6 h-6" />
 						</button>
-						<div className="flex-1 flex justify-center">
-							{storeLogo ? (
-								<img src={storeLogo} alt={params.storeName} className="h-12 w-auto object-contain" />
-							) : (
-								<div className="h-12 flex items-center font-bold text-primary">{params.storeName}</div>
-							)}
-						</div>
+						<div className="flex-1" />
 						<div className="w-10" />
 					</div>
 
@@ -1118,13 +1105,7 @@ export function WidgetPage() {
 							<div className="w-6" />
 						)}
 
-						<div className="flex-1 flex justify-center">
-							{storeLogo ? (
-								<img src={storeLogo} alt={params.storeName} className="h-12 w-auto object-contain" />
-							) : (
-								<div className="h-12 flex items-center font-bold text-primary">{params.storeName}</div>
-							)}
-						</div>
+						<div className="flex-1" />
 						<div className="w-6" />
 					</div>
 
@@ -1207,18 +1188,31 @@ export function WidgetPage() {
 
 												<div className="grid grid-cols-2 gap-3">
 													<div>
-														<label className="block text-sm font-medium text-gray-700 mb-2">{t("heightLabel")}</label>
+														<label className="block text-sm font-medium text-gray-700 mb-2 flex items-center gap-2">
+															<Ruler className="w-4 h-4" />
+															{t("heightLabel")}
+														</label>
 														<input
 															type="number"
 															value={height}
-															onChange={(event) => setHeight(event.target.value)}
+															onChange={(event) => {
+																const value = event.target.value;
+																setHeight(value);
+																if (value.length === 3) {
+																	weightInputRef.current?.focus();
+																}
+															}}
 															placeholder={t("heightPlaceholder")}
 															className="w-full px-3 py-2 border border-gray-300 rounded-lg transition-all"
 														/>
 													</div>
 													<div>
-														<label className="block text-sm font-medium text-gray-700 mb-2">{t("weightLabel")}</label>
+														<label className="block text-sm font-medium text-gray-700 mb-2 flex items-center gap-2">
+															<Weight className="w-4 h-4" />
+															{t("weightLabel")}
+														</label>
 														<input
+															ref={weightInputRef}
 															type="number"
 															value={weight}
 															onChange={(event) => setWeight(event.target.value)}
@@ -1229,7 +1223,10 @@ export function WidgetPage() {
 												</div>
 
 												<div>
-													<label className="block text-sm font-medium text-gray-700 mb-2">{t("bodyTypeQuestion")}</label>
+													<label className="block text-sm font-medium text-gray-700 mb-2 flex items-center gap-2">
+														<User className="w-4 h-4" />
+														{t("bodyTypeQuestion")}
+													</label>
 													<div className="flex flex-col gap-2">
 														<div className="grid grid-cols-3 gap-2 md:hidden">
 															{BODY_TYPES[gender].slice(0, 3).map((type, index) => (
@@ -1270,16 +1267,43 @@ export function WidgetPage() {
 
 												<div>
 													<label className="block text-sm font-medium text-gray-700 mb-4">{t("fitPreferenceLabel")}</label>
-													<div className="grid grid-cols-3 gap-2">
-														{FIT_OPTIONS.map((option, index) => (
-															<button
-																key={option.labelKey}
-																onClick={() => setFitIndex(index)}
-																className={`py-2 px-4 rounded-lg font-medium transition-colors ${fitIndex === index ? "text-white bg-primary" : "bg-gray-100 text-gray-700 hover:bg-gray-200"}`}
-															>
-																{t(option.labelKey)}
-															</button>
-														))}
+													<div className="px-2">
+														<div className="relative">
+															<div className="absolute top-1/2 left-0 right-0 h-1 bg-gray-200 rounded-full -translate-y-1/2" />
+															<div
+																className="absolute top-1/2 left-0 h-1 rounded-full -translate-y-1/2 transition-all duration-300"
+																style={{
+																	backgroundColor: primaryColor,
+																	width: `${fitIndex * 50}%`,
+																}}
+															/>
+															<div className="relative flex justify-between items-center">
+																{FIT_OPTIONS.map((option, index) => (
+																	<button
+																		key={option.labelKey}
+																		onClick={() => setFitIndex(index)}
+																		className="flex flex-col items-center gap-2 z-10"
+																		type="button"
+																	>
+																		<div
+																			className={`w-6 h-6 rounded-full border-4 transition-all duration-300 ${
+																				fitIndex === index
+																					? "border-white shadow-lg scale-110"
+																					: "border-gray-300 bg-white hover:scale-105"
+																			}`}
+																			style={fitIndex === index ? { backgroundColor: primaryColor } : {}}
+																		/>
+																		<span
+																			className={`text-sm font-medium transition-colors ${
+																				fitIndex === index ? "text-gray-900" : "text-gray-500"
+																			}`}
+																		>
+																			{t(option.labelKey)}
+																		</span>
+																	</button>
+																))}
+															</div>
+														</div>
 													</div>
 												</div>
 											</div>
@@ -1422,12 +1446,9 @@ export function WidgetPage() {
 										</div>
 									</div>
 
-									<div className="grid grid-cols-2 gap-3">
+									<div className="grid grid-cols-1 gap-3">
 										<button onClick={() => setStep("calculator")} className="w-full bg-gray-100 text-gray-700 border border-gray-300 py-3 rounded-lg hover:bg-gray-200 transition-all font-medium">
 											{t("back")}
-										</button>
-										<button onClick={goToConfirm} className="w-full bg-primary text-white py-3 rounded-lg hover:bg-primary-dark transition-all font-medium">
-											{t("continue")}
 										</button>
 									</div>
 								</div>
@@ -1460,11 +1481,6 @@ export function WidgetPage() {
 												)}
 											</div>
 										</div>
-									</div>
-									<div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm text-gray-700">
-										<div className="bg-gray-50 border border-gray-200 rounded-lg p-3"><strong>{t("genderLabel")}:</strong> {sizeData?.gender === "female" ? t("female") : t("male")}</div>
-										<div className="bg-gray-50 border border-gray-200 rounded-lg p-3"><strong>{t("heightLabel")}:</strong> {sizeData?.height}cm</div>
-										<div className="bg-gray-50 border border-gray-200 rounded-lg p-3"><strong>{t("weightLabel")}:</strong> {sizeData?.weight}kg</div>
 									</div>
 									<div className="flex gap-3">
 										<button

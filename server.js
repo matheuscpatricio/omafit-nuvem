@@ -123,6 +123,27 @@ function getSession(storeId) {
 	return normalizeSession(sessions[String(storeId || "").trim()]);
 }
 
+function buildSessionFromStoreRecord(storeId, storeRecord) {
+	if (!storeId || !storeRecord?.access_token) return null;
+	return normalizeSession({
+		storeId,
+		accessToken: storeRecord.access_token,
+		scope: storeRecord.scope || "",
+		tokenType: storeRecord.token_type || "bearer",
+		lastSyncAt: storeRecord.updated_at || null,
+		store: {
+			id: String(storeRecord.store_id || storeId),
+			name: storeRecord.name || "Loja Nuvemshop",
+			url: normalizeStoreUrl(
+				storeRecord.store_url || storeRecord.platform_store_url || storeRecord.shop_domain || "",
+			),
+			language: storeRecord.language || "pt",
+			currency: storeRecord.currency || "BRL",
+			country: storeRecord.country || "",
+		},
+	});
+}
+
 function persistSession(session) {
 	const normalized = normalizeSession(session);
 	if (!normalized) return null;
@@ -420,26 +441,22 @@ function getPlanCatalog() {
 		{
 			id: "ondemand",
 			name: "On demand",
-			description: "Ideal para testes e operacao inicial.",
+			description:
+				"50 sessoes de try-on gratis na criacao da conta. Depois, cobranca por uso de USD 0.18 por sessao.",
+			monthlyPrice: 0,
 			imagesIncluded: 50,
 			pricePerExtraImage: 0.18,
-			currency: "BRL",
+			currency: "USD",
 		},
 		{
-			id: "growth",
-			name: "Growth",
-			description: "Para lojas com operacao recorrente do widget.",
-			imagesIncluded: 500,
-			pricePerExtraImage: 0.12,
-			currency: "BRL",
-		},
-		{
-			id: "professional",
-			name: "Professional",
-			description: "Maior capacidade e governanca para catalogos grandes.",
-			imagesIncluded: 1500,
+			id: "pro",
+			name: "Pro",
+			description:
+				"USD 300 por mes com 3.000 sessoes de try-on incluidas. Excedente cobrado por uso a USD 0.08 por sessao.",
+			monthlyPrice: 300,
+			imagesIncluded: 3000,
 			pricePerExtraImage: 0.08,
-			currency: "BRL",
+			currency: "USD",
 		},
 	];
 }
@@ -1479,8 +1496,8 @@ function buildAdminContext(storeContext, session, storeRecord) {
 			language: session?.store?.language || storeRecord?.language || "pt",
 		},
 		auth: {
-			connected: Boolean(session?.accessToken),
-			lastSyncAt: session?.lastSyncAt || null,
+			connected: Boolean(session?.accessToken || storeRecord?.access_token),
+			lastSyncAt: session?.lastSyncAt || storeRecord?.updated_at || null,
 			webhooksSyncedAt: session?.webhooksSyncedAt || null,
 			authUrl: buildAuthUrl(randomUUID()),
 		},
@@ -1493,11 +1510,24 @@ function buildAdminContext(storeContext, session, storeRecord) {
 	};
 }
 
+async function resolveSession(storeId, storeUrl = "") {
+	const localSession = getSession(storeId);
+	if (localSession?.accessToken) return localSession;
+	if (!storeId) return localSession;
+
+	const storeRecord = await loadLegacyShopRecord(storeId, storeUrl);
+	const recoveredSession = buildSessionFromStoreRecord(storeId, storeRecord);
+	if (!recoveredSession?.accessToken) return localSession;
+
+	persistSession(recoveredSession);
+	return recoveredSession;
+}
+
 async function handleApi(req, res, reqUrl) {
 	const method = req.method || "GET";
 	const pathname = reqUrl.pathname;
 	const storeContext = getRequestStoreContext(reqUrl, req);
-	const session = getSession(storeContext.storeId);
+	const session = await resolveSession(storeContext.storeId, storeContext.storeUrl);
 
 	if (pathname === "/api/health") {
 		const supabaseConfig = getSupabaseConfig();

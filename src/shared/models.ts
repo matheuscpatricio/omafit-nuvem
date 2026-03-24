@@ -1,9 +1,10 @@
-export type OmafitPlanId = "ondemand" | "growth" | "professional";
+export type OmafitPlanId = "ondemand" | "pro";
 
 export type OmafitPlanDefinition = {
 	id: OmafitPlanId;
 	name: string;
 	description: string;
+	monthlyPrice: number;
 	imagesIncluded: number;
 	pricePerExtraImage: number;
 	currency: string;
