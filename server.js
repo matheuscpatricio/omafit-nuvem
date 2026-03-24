@@ -3248,6 +3248,29 @@ async function handleApi(req, res, reqUrl) {
 		return true;
 	}
 
+	if (pathname === "/api/widget/validate-footwear-chat" && method === "POST") {
+		try {
+			const rawBody = await readRequestBody(req);
+			const response = await supabaseFunctionRequest("validate-footwear-chat", {
+				method: "POST",
+				headers: {
+					"Content-Type": req.headers["content-type"] || "application/json",
+				},
+				body: rawBody,
+			});
+			const payload = await response.text();
+			res.writeHead(response.status, {
+				"Content-Type": response.headers.get("content-type") || "application/json; charset=utf-8",
+			});
+			res.end(payload);
+		} catch (error) {
+			sendJson(res, 500, {
+				error: error.message || "Nao foi possivel processar o assistente de calcados.",
+			});
+		}
+		return true;
+	}
+
 	if (pathname === "/api/billing") {
 		if (!storeContext.storeId) {
 			sendJson(res, 200, {

@@ -72,6 +72,7 @@ type ParsedParams = {
 	language: WidgetLanguage;
 	/** Fonte da vitrine (query `store_font`), replicada no iframe */
 	storeFont: string;
+	productDescription: string;
 };
 
 type TryOnStartResponse = {
@@ -281,6 +282,7 @@ function getParams(): ParsedParams {
 				decodeValue(search.get("lang")),
 		),
 		storeFont: decodeValue(search.get("store_font")),
+		productDescription: decodeValue(search.get("product_description")),
 	};
 }
 
@@ -1002,6 +1004,7 @@ export function WidgetPage() {
 				productHandle={params.productHandle || ""}
 				collectionElasticity={selectedChart?.collection_elasticity || "structured"}
 				publicId={publicId || ""}
+				productDescription={params.productDescription}
 			/>
 		);
 	}
