@@ -13,6 +13,7 @@ mkdirSync(assetsDir, { recursive: true });
 copyFileSync(join(distDir, "main.min.js"), join(assetsDir, `main-${buildId}.min.js`));
 copyFileSync(join(distDir, "home.min.js"), join(assetsDir, `home-${buildId}.min.js`));
 copyFileSync(join(distDir, "widget.min.js"), join(assetsDir, `widget-${buildId}.min.js`));
+copyFileSync(join(distDir, "widget-footwear.min.js"), join(assetsDir, `widget-footwear-${buildId}.min.js`));
 copyFileSync(join(distDir, "storefront-legacy.min.js"), join(assetsDir, `storefront-legacy-${buildId}.min.js`));
 
 // Garantir que o diretorio dist existe
@@ -142,6 +143,42 @@ const widgetHtml = `<!DOCTYPE html>
 </html>`;
 
 writeFileSync(join(distDir, "widget.html"), widgetHtml);
+
+const widgetFootwearHtml = `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Omafit Widget Footwear</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      background: #f8fafc;
+      font-family: var(
+        --omafit-store-font,
+        system-ui,
+        -apple-system,
+        BlinkMacSystemFont,
+        "Segoe UI",
+        Roboto,
+        sans-serif
+      );
+    }
+
+    #app {
+      min-height: 100vh;
+    }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <script type="module" src="/assets/widget-footwear-${buildId}.min.js"></script>
+</body>
+</html>`;
+
+writeFileSync(join(distDir, "widget-footwear.html"), widgetFootwearHtml);
 
 // Criar um manifest.json valido e simples para evitar erros.
 const manifest = {

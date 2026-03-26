@@ -187,6 +187,22 @@ function collectionHandleFromPathname(): string {
 	return "";
 }
 
+function isFootwearCollectionHandle(handle: string) {
+	return String(handle || "").trim().toLowerCase() === "footwear";
+}
+
+function resolveWidgetBaseUrlByCollection(baseUrl: string, collectionHandle: string) {
+	try {
+		const resolved = new URL(baseUrl);
+		resolved.pathname = isFootwearCollectionHandle(collectionHandle)
+			? "/widget-footwear.html"
+			: "/widget.html";
+		return resolved.toString();
+	} catch {
+		return baseUrl;
+	}
+}
+
 function buildWidgetUrl(
 	baseUrl: string,
 	store: LegacyStoreContext,
@@ -501,12 +517,14 @@ function renderButton(
 		debugLog("render_skipped_disabled", { storeId: store.id }, "L2");
 		return;
 	}
+	const currentCollectionHandle = collectionHandleFromPathname();
 	const mountTarget = getMountTarget();
 	if (!mountTarget) {
 		debugLog("render_missing_mount", { selector: ".js-buy-button-container" }, "L2");
 		return;
 	}
-	const widgetUrl = buildWidgetUrl(widgetBaseUrl, store, product, config, publicId);
+	const resolvedBaseUrl = resolveWidgetBaseUrlByCollection(widgetBaseUrl, currentCollectionHandle);
+	const widgetUrl = buildWidgetUrl(resolvedBaseUrl, store, product, config, publicId);
 	ensureStyles(config.primary_color || "#810707");
 	let wrapper = document.getElementById(CTA_WRAPPER_ID);
 	if (!wrapper) {

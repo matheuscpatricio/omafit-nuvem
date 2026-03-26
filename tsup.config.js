@@ -23,7 +23,7 @@ const shared = {
 export default defineConfig([
   {
     ...shared,
-    entry: ["src/main.tsx", "src/admin.tsx", "src/home.ts", "src/widget.tsx"],
+    entry: ["src/main.tsx", "src/admin.tsx", "src/home.ts", "src/widget.tsx", "src/widget-footwear.tsx"],
     format: ["esm"],
     clean: false,
   },

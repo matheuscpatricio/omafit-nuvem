@@ -33,24 +33,10 @@ function buildFootwearFallbackMessage(
 	descriptionNorm: string,
 	customMessage?: string,
 ): string {
-	const itemName =
-		productName ||
-		(language === "pt" ? "este calçado" : language === "es" ? "este calzado" : "this footwear");
+	void language;
+	const itemName = productName || "este calçado";
 	const brandName = storeName || "Omafit";
 	const hasQuestion = Boolean(customMessage?.trim());
-
-	if (language === "es") {
-		if (hasQuestion && descriptionNorm) {
-			return `${itemName} de ${brandName}: ${descriptionNorm} La talla ${resolvedSize} es la indicada. Agrégalo al carrito para continuar con tu compra.`;
-		}
-		return `${brandName} recomienda ${resolvedSize} para ${itemName}. Va a quedar muy bien. Agrégalo al carrito para continuar con tu compra.`;
-	}
-	if (language === "en") {
-		if (hasQuestion && descriptionNorm) {
-			return `${itemName} from ${brandName}: ${descriptionNorm} ${resolvedSize} is the right size. Add it to cart to continue your purchase.`;
-		}
-		return `${brandName} recommends ${resolvedSize} for ${itemName}. It should fit really well. Add it to cart to continue your purchase.`;
-	}
 	if (hasQuestion && descriptionNorm) {
 		return `${itemName} da ${brandName}: ${descriptionNorm} O tamanho ${resolvedSize} é o ideal. Adicione ao carrinho para continuar sua compra.`;
 	}
@@ -99,50 +85,6 @@ const copy = {
 		analyzing: "Analisando sua foto...",
 		footPhotoLabel: "Foto do pé",
 		privacyNote: "Sua foto é usada só para estimar o tamanho e não é compartilhada.",
-	},
-	es: {
-		welcomeTitle: "El asistente inteligente de {storeName} para calzado",
-		infoBody:
-			"Indicamos tu talla ideal con una foto del pie y un asistente responde dudas sobre el modelo.",
-		sizeButton: "Descubrir mi talla en {storeName}",
-		photoInstructions: "Instrucciones para la foto del pie",
-		importantBadge: "IMPORTANTE",
-		measureTip1: "Ángulo superior",
-		measureTip2: "Un palmo debajo de la rodilla",
-		measureTip3: "Pie descalzo",
-		measureTip4: "Buena iluminación",
-		measureTip1Desc: "foto tomada de arriba hacia abajo",
-		measureTip2Desc: "mostrando la pierna y el pie en el encuadre",
-		measureTip3Desc: "sin media y sin nada cubriendo el pie",
-		measureTip4Desc: "ambiente bien iluminado",
-		photoInstructionWarning: "Fotos fuera de estas instrucciones pueden generar resultados incorrectos.",
-		captureButton: "Haz clic para subir la foto del pie",
-		imageFormats: "JPG, PNG o WEBP (máx. 5MB)",
-		analyzing: "Analizando tu foto...",
-		footPhotoLabel: "Foto del pie",
-		privacyNote: "Tu foto solo se usa para estimar la talla y no se comparte.",
-	},
-	en: {
-		welcomeTitle: "{storeName}'s intelligent footwear assistant",
-		infoBody:
-			"We suggest your best size from a foot photo, and an assistant answers questions about this model.",
-		sizeButton: "Find my size at {storeName}",
-		photoInstructions: "Foot photo instructions",
-		importantBadge: "IMPORTANT",
-		measureTip1: "Top angle",
-		measureTip2: "One palm below the knee",
-		measureTip3: "Barefoot",
-		measureTip4: "Good lighting",
-		measureTip1Desc: "take the photo from above",
-		measureTip2Desc: "showing leg and foot in frame",
-		measureTip3Desc: "without socks and nothing covering the foot",
-		measureTip4Desc: "well-lit environment",
-		photoInstructionWarning: "Photos outside these instructions can lead to incorrect results.",
-		captureButton: "Click to upload foot photo",
-		imageFormats: "JPG, PNG or WEBP (max. 5MB)",
-		analyzing: "Analyzing your photo...",
-		footPhotoLabel: "Foot photo",
-		privacyNote: "Your photo is only used to estimate size and is not shared.",
 	},
 } as const;
 

@@ -155,6 +155,25 @@ function shouldHideForProduct(product: ProductDetails | null, config: Storefront
 	return categoryIds.some((categoryId) => config.excluded_collections.includes(categoryId));
 }
 
+function isFootwearCollectionHandle(handle: string) {
+	return String(handle || "").trim().toLowerCase() === "footwear";
+}
+
+function resolveWidgetBaseUrlByCollection(baseUrl: string, collectionHandle: string) {
+	try {
+		const resolved = new URL(
+			baseUrl,
+			typeof globalThis.location?.href === "string" ? globalThis.location.href : undefined,
+		);
+		resolved.pathname = isFootwearCollectionHandle(collectionHandle)
+			? "/widget-footwear.html"
+			: "/widget.html";
+		return resolved.toString();
+	} catch {
+		return baseUrl;
+	}
+}
+
 async function loadStorefrontConfig(storeId: number, storeDomain?: string) {
 	try {
 		debugLog("load_config_start", { storeId, storeDomain: storeDomain || null }, "H2");
@@ -217,6 +236,7 @@ function renderWidget(
 ) {
 	const product = getCurrentProduct(nube);
 	const page = nube.getState().location.page;
+	const collectionHandle = collectionHandleFromStorefrontUrl(resolveStorefrontPageUrl(nube));
 	const categoryIds = (product?.categories || []).map((categoryId) => String(categoryId));
 	debugLog(
 		"render_widget_start",
@@ -242,6 +262,7 @@ function renderWidget(
 			{
 				productId: product?.id || null,
 				reason,
+				collectionHandle,
 				categoryIds,
 				excludedCollections: config.excluded_collections,
 			},
@@ -252,7 +273,8 @@ function renderWidget(
 		return;
 	}
 
-	const widgetUrl = new URL(buildWidgetUrl(widgetBaseUrl, nube, config));
+	const resolvedBaseUrl = resolveWidgetBaseUrlByCollection(widgetBaseUrl, collectionHandle);
+	const widgetUrl = new URL(buildWidgetUrl(resolvedBaseUrl, nube, config));
 	if (publicId) {
 		widgetUrl.searchParams.set("public_id", publicId);
 	}
