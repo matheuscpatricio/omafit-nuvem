@@ -165,13 +165,26 @@ async function loadConfig(appBaseUrl: string, storeId: string) {
 }
 
 function collectionHandleFromPathname(): string {
+	const fromPath = (pathname: string) => {
+		try {
+			const m = pathname.match(/\/collections\/([^/]+)/i);
+			if (!m?.[1]) return "";
+			return decodeURIComponent(m[1]).trim().toLowerCase();
+		} catch {
+			return "";
+		}
+	};
+	const direct = fromPath(window.location.pathname);
+	if (direct) return direct;
 	try {
-		const m = window.location.pathname.match(/\/collections\/([^/]+)/i);
-		if (!m?.[1]) return "";
-		return decodeURIComponent(m[1]).trim().toLowerCase();
+		if (typeof document !== "undefined" && document.referrer) {
+			const ref = fromPath(new URL(document.referrer).pathname);
+			if (ref) return ref;
+		}
 	} catch {
-		return "";
+		/* ignore */
 	}
+	return "";
 }
 
 function buildWidgetUrl(
@@ -193,6 +206,27 @@ function buildWidgetUrl(
 	if (collectionHandle) {
 		widgetUrl.searchParams.set("collection_handle", collectionHandle);
 	}
+	// #region agent log
+	fetch("http://127.0.0.1:7523/ingest/ebd119e5-639e-45b4-9806-782ca57f574c", {
+		method: "POST",
+		headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "b68c2f" },
+		body: JSON.stringify({
+			sessionId: "b68c2f",
+			runId: "pre-fix",
+			location: "storefront-legacy.ts:buildWidgetUrl",
+			message: "legacy_iframe_query_collections",
+			data: {
+				pathname:
+					typeof window !== "undefined" ? window.location.pathname : "",
+				collectionHandleSet: Boolean(collectionHandle),
+				collectionHandle,
+				productHandle: product.handle,
+			},
+			timestamp: Date.now(),
+			hypothesisId: "H1",
+		}),
+	}).catch(() => {});
+	// #endregion
 	if (product.imageUrl) widgetUrl.searchParams.set("product_image", product.imageUrl);
 	if (product.imageUrls.length) {
 		widgetUrl.searchParams.set("product_images", JSON.stringify(product.imageUrls));

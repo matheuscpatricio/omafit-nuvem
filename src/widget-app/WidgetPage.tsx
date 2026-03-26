@@ -20,7 +20,6 @@ import {
 	type TryOnRecommendedSizeResult,
 } from "./tryOnRecommendedSize";
 import { useMediaPipePose } from "./useMediaPipePose";
-import { ShoeARWidget } from "./ShoeARWidget";
 import { OMAFIT_WIDGET_FONT_FALLBACK, sanitizeFontFamilyForCss } from "../shared/storeFont";
 
 type Step = "info" | "calculator" | "photo" | "confirm" | "processing" | "result";
@@ -318,7 +317,11 @@ function normalizeElasticity(value: ApiChart["collection_elasticity"]): Elastici
 }
 
 function normalizeChartHandle(value: string) {
-	return String(value || "").trim().toLowerCase();
+	return String(value || "")
+		.trim()
+		.toLowerCase()
+		.normalize("NFD")
+		.replace(/\p{M}/gu, "");
 }
 
 /** Sem match de handle, evita cair na primeira chart da lista se for calçado (ex.: camisa aberta numa URL de coleção). */
@@ -329,7 +332,33 @@ function pickChartPreferNonFootwear(candidates: ApiChart[]) {
 }
 
 function chooseChart(charts: ApiChart[], gender: "male" | "female", handleCandidates: string[]) {
-	if (!charts.length) return null;
+	const clothingCharts = charts.filter((chart) => chart.collection_type !== "footwear");
+	if (!clothingCharts.length) {
+		// #region agent log
+		fetch("http://127.0.0.1:7523/ingest/ebd119e5-639e-45b4-9806-782ca57f574c", {
+			method: "POST",
+			headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "b68c2f" },
+			body: JSON.stringify({
+				sessionId: "b68c2f",
+				runId: "pre-fix",
+				location: "WidgetPage.tsx:chooseChart",
+				message: "chart_selection",
+				data: {
+					branch: charts.length ? "only_footwear_available" : "no_charts",
+					gender,
+					chartsBrief: charts.map((c) => ({
+						h: normalizeChartHandle(c.collection_handle),
+						t: c.collection_type,
+						g: c.gender,
+					})),
+				},
+				timestamp: Date.now(),
+				hypothesisId: "H2_H3_H5",
+			}),
+		}).catch(() => {});
+		// #endregion
+		return null;
+	}
 
 	const normalizedCandidates = handleCandidates
 		.map((h) => normalizeChartHandle(h))
@@ -342,24 +371,74 @@ function chooseChart(charts: ApiChart[], gender: "male" | "female", handleCandid
 		return true;
 	});
 
+	let result: ApiChart | null = null;
+	let branch = "none";
+	let matchedHandle = "";
+
 	for (const h of uniqueHandles) {
-		const exact = charts.find(
+		const exact = clothingCharts.find(
 			(c) =>
 				normalizeChartHandle(c.collection_handle) === h &&
 				(c.gender === gender || c.gender === "unisex"),
 		);
-		if (exact) return exact;
+		if (exact) {
+			result = exact;
+			branch = "exact_handle";
+			matchedHandle = h;
+			break;
+		}
 	}
 
-	const sameGender = charts.filter((c) => c.gender === gender);
-	const fromSameGender = pickChartPreferNonFootwear(sameGender);
-	if (fromSameGender) return fromSameGender;
+	if (!result) {
+		// Mesmo critério do match exato: género da loja OU unisex. Separar "só female" e depois "só unisex"
+		// fazia escolher calçado feminino antes de uma tabela unisex de roupa.
+		const forGenderOrUnisex = clothingCharts.filter(
+			(c) => c.gender === gender || c.gender === "unisex",
+		);
+		const fromPool = pickChartPreferNonFootwear(forGenderOrUnisex);
+		if (fromPool) {
+			result = fromPool;
+			branch = "gender_unisex_pool";
+		} else {
+			result = pickChartPreferNonFootwear(clothingCharts) ?? clothingCharts[0] ?? null;
+			branch = "global_fallback";
+		}
+	}
 
-	const unisexOnly = charts.filter((c) => c.gender === "unisex");
-	const fromUnisex = pickChartPreferNonFootwear(unisexOnly);
-	if (fromUnisex) return fromUnisex;
+	// #region agent log
+	fetch("http://127.0.0.1:7523/ingest/ebd119e5-639e-45b4-9806-782ca57f574c", {
+		method: "POST",
+		headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "b68c2f" },
+			body: JSON.stringify({
+				sessionId: "b68c2f",
+				runId: "pre-fix",
+				location: "WidgetPage.tsx:chooseChart",
+				message: "chart_selection",
+				data: {
+					branch,
+					matchedHandle,
+					gender,
+					handleCandidates: uniqueHandles,
+				chartsBrief: clothingCharts.map((c) => ({
+					h: normalizeChartHandle(c.collection_handle),
+					t: c.collection_type,
+					g: c.gender,
+				})),
+				picked: result
+					? {
+							h: normalizeChartHandle(result.collection_handle),
+							t: result.collection_type,
+							g: result.gender,
+						}
+					: null,
+			},
+			timestamp: Date.now(),
+			hypothesisId: "H2_H3_H5",
+		}),
+	}).catch(() => {});
+	// #endregion
 
-	return pickChartPreferNonFootwear(charts) ?? charts[0] ?? null;
+	return result;
 }
 
 function darkenColor(hex: string, amount = 20) {
@@ -507,6 +586,30 @@ export function WidgetPage() {
 		const stack = storeFontFamily ? storeFontFamily : OMAFIT_WIDGET_FONT_FALLBACK;
 		document.documentElement.style.setProperty("--omafit-store-font", stack);
 	}, [storeFontFamily]);
+
+	useEffect(() => {
+		// #region agent log
+		fetch("http://127.0.0.1:7523/ingest/ebd119e5-639e-45b4-9806-782ca57f574c", {
+			method: "POST",
+			headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "b68c2f" },
+			body: JSON.stringify({
+				sessionId: "b68c2f",
+				runId: "pre-fix",
+				location: "WidgetPage.tsx:mount",
+				message: "widget_iframe_query",
+				data: {
+					collectionHandle: params.collectionHandle,
+					productHandle: params.productHandle,
+					hasCollectionQuery: Boolean(params.collectionHandle),
+					iframeSearch:
+						typeof window !== "undefined" ? window.location.search.slice(0, 500) : "",
+				},
+				timestamp: Date.now(),
+				hypothesisId: "H1",
+			}),
+		}).catch(() => {});
+		// #endregion
+	}, []);
 
 	const productImages = params.productImages.length
 		? params.productImages
@@ -1049,35 +1152,6 @@ export function WidgetPage() {
 					<p className="text-gray-700 text-base">{t("loadingProduct")}</p>
 				</div>
 			</div>
-		);
-	}
-
-	if (selectedChart?.collection_type === "footwear") {
-		return (
-			<ShoeARWidget
-				productImage={selectedProductImage || params.productImage || ""}
-				productName={params.productName || ""}
-				storeName={params.storeName || "Omafit"}
-				storeLogo={storeLogo || ""}
-				primaryColor={primaryColor}
-				language={language}
-				chart={
-					selectedChart
-						? {
-								measurement_refs: selectedChart.measurement_refs || [],
-								sizes: selectedChart.sizes || [],
-							}
-						: null
-				}
-				productId={params.productId || ""}
-				storeDomain={params.storeDomain || ""}
-				variantId={params.variantId || ""}
-				storeId={params.storeId || ""}
-				productHandle={params.productHandle || ""}
-				collectionElasticity={selectedChart?.collection_elasticity || "structured"}
-				publicId={publicId || ""}
-				productDescription={params.productDescription}
-			/>
 		);
 	}
 
