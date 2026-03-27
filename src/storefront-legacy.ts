@@ -1,4 +1,5 @@
 import { getStorefrontFontFamily, sanitizeFontFamilyForCss } from "./shared/storeFont";
+import { shouldUseFootwearWidget } from "./shared/widgetFootwearRouting";
 
 type LegacyStorefrontConfig = {
 	link_text: string;
@@ -12,6 +13,7 @@ type LegacyStorefrontResponse = {
 	config?: LegacyStorefrontConfig | null;
 	widgetUrl?: string | null;
 	publicId?: string | null;
+	footwear_collection_handles?: string[];
 };
 
 type LegacyStoreContext = {
@@ -137,10 +139,14 @@ async function loadConfig(appBaseUrl: string, storeId: string) {
 			},
 			"L1",
 		);
+		const footwearHandles = Array.isArray(data.footwear_collection_handles)
+			? data.footwear_collection_handles.map((h) => String(h || "").trim()).filter(Boolean)
+			: [];
 		return {
 			config,
 			widgetUrl: String(data.widgetUrl || `${appBaseUrl}/widget.html`),
 			publicId: String(data.publicId || ""),
+			footwearCollectionHandles: footwearHandles,
 		};
 	} catch (error) {
 		debugLog(
@@ -160,6 +166,7 @@ async function loadConfig(appBaseUrl: string, storeId: string) {
 			},
 			widgetUrl: `${appBaseUrl}/widget.html`,
 			publicId: "",
+			footwearCollectionHandles: [] as string[],
 		};
 	}
 }
@@ -187,14 +194,15 @@ function collectionHandleFromPathname(): string {
 	return "";
 }
 
-function isFootwearCollectionHandle(handle: string) {
-	return String(handle || "").trim().toLowerCase() === "footwear";
-}
-
-function resolveWidgetBaseUrlByCollection(baseUrl: string, collectionHandle: string) {
+function resolveWidgetBaseUrl(
+	baseUrl: string,
+	collectionHandle: string,
+	productHandle: string,
+	footwearHandles: string[],
+) {
 	try {
 		const resolved = new URL(baseUrl);
-		resolved.pathname = isFootwearCollectionHandle(collectionHandle)
+		resolved.pathname = shouldUseFootwearWidget(collectionHandle, productHandle, footwearHandles)
 			? "/widget-footwear.html"
 			: "/widget.html";
 		return resolved.toString();
@@ -511,7 +519,8 @@ function renderButton(
 	product: LegacyProductContext,
 	config: LegacyStorefrontConfig,
 	widgetBaseUrl: string,
-	publicId?: string | null,
+	publicId: string | null | undefined,
+	footwearCollectionHandles: string[],
 ) {
 	if (config.widget_enabled === false) {
 		debugLog("render_skipped_disabled", { storeId: store.id }, "L2");
@@ -523,7 +532,12 @@ function renderButton(
 		debugLog("render_missing_mount", { selector: ".js-buy-button-container" }, "L2");
 		return;
 	}
-	const resolvedBaseUrl = resolveWidgetBaseUrlByCollection(widgetBaseUrl, currentCollectionHandle);
+	const resolvedBaseUrl = resolveWidgetBaseUrl(
+		widgetBaseUrl,
+		currentCollectionHandle,
+		product.handle,
+		footwearCollectionHandles,
+	);
 	const widgetUrl = buildWidgetUrl(resolvedBaseUrl, store, product, config, publicId);
 	ensureStyles(config.primary_color || "#810707");
 	let wrapper = document.getElementById(CTA_WRAPPER_ID);
@@ -573,8 +587,11 @@ async function init() {
 	);
 	if (!store || !product) return;
 	const appBaseUrl = getAppBaseUrl();
-	const { config, widgetUrl, publicId } = await loadConfig(appBaseUrl, store.id);
-	renderButton(store, product, config, widgetUrl, publicId);
+	const { config, widgetUrl, publicId, footwearCollectionHandles } = await loadConfig(
+		appBaseUrl,
+		store.id,
+	);
+	renderButton(store, product, config, widgetUrl, publicId, footwearCollectionHandles);
 }
 
 if (document.readyState === "loading") {

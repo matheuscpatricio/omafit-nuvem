@@ -2,6 +2,7 @@
 import type { NubeSDK, ProductDetails } from "@tiendanube/nube-sdk-types";
 import { Button, Column, Iframe, Text } from "@tiendanube/nube-sdk-jsx";
 import { getStorefrontFontFamily, sanitizeFontFamilyForCss } from "./shared/storeFont";
+import { shouldUseFootwearWidget } from "./shared/widgetFootwearRouting";
 
 type StorefrontConfig = {
 	link_text: string;
@@ -155,17 +156,18 @@ function shouldHideForProduct(product: ProductDetails | null, config: Storefront
 	return categoryIds.some((categoryId) => config.excluded_collections.includes(categoryId));
 }
 
-function isFootwearCollectionHandle(handle: string) {
-	return String(handle || "").trim().toLowerCase() === "footwear";
-}
-
-function resolveWidgetBaseUrlByCollection(baseUrl: string, collectionHandle: string) {
+function resolveWidgetBaseUrl(
+	baseUrl: string,
+	collectionHandle: string,
+	productHandle: string,
+	footwearHandles: string[],
+) {
 	try {
 		const resolved = new URL(
 			baseUrl,
 			typeof globalThis.location?.href === "string" ? globalThis.location.href : undefined,
 		);
-		resolved.pathname = isFootwearCollectionHandle(collectionHandle)
+		resolved.pathname = shouldUseFootwearWidget(collectionHandle, productHandle, footwearHandles)
 			? "/widget-footwear.html"
 			: "/widget.html";
 		return resolved.toString();
@@ -196,6 +198,9 @@ async function loadStorefrontConfig(storeId: number, storeDomain?: string) {
 			},
 			"H2",
 		);
+		const footwearHandles = Array.isArray(data?.footwear_collection_handles)
+			? (data.footwear_collection_handles as unknown[]).map((h) => String(h || "").trim()).filter(Boolean)
+			: [];
 		return {
 			config: (data?.config || {
 				link_text: "Ver meu tamanho ideal",
@@ -205,6 +210,7 @@ async function loadStorefrontConfig(storeId: number, storeDomain?: string) {
 			}) as StorefrontConfig,
 			widgetUrl: String(data?.widgetUrl || "/widget.html"),
 			publicId: String(data?.publicId || ""),
+			footwearCollectionHandles: footwearHandles,
 		};
 	} catch (error) {
 		debugLog(
@@ -224,6 +230,7 @@ async function loadStorefrontConfig(storeId: number, storeDomain?: string) {
 			} as StorefrontConfig,
 			widgetUrl: "/widget.html",
 			publicId: "",
+			footwearCollectionHandles: [] as string[],
 		};
 	}
 }
@@ -232,11 +239,15 @@ function renderWidget(
 	nube: NubeSDK,
 	config: StorefrontConfig,
 	widgetBaseUrl: string,
-	publicId?: string,
+	publicId: string | undefined,
+	footwearCollectionHandles: string[],
 ) {
 	const product = getCurrentProduct(nube);
-	const page = nube.getState().location.page;
+	const state = nube.getState();
+	const page = state.location.page;
 	const collectionHandle = collectionHandleFromStorefrontUrl(resolveStorefrontPageUrl(nube));
+	const productHandle =
+		product?.handle?.[state.store.language] || product?.handle?.pt || "";
 	const categoryIds = (product?.categories || []).map((categoryId) => String(categoryId));
 	debugLog(
 		"render_widget_start",
@@ -273,7 +284,12 @@ function renderWidget(
 		return;
 	}
 
-	const resolvedBaseUrl = resolveWidgetBaseUrlByCollection(widgetBaseUrl, collectionHandle);
+	const resolvedBaseUrl = resolveWidgetBaseUrl(
+		widgetBaseUrl,
+		collectionHandle,
+		productHandle,
+		footwearCollectionHandles,
+	);
 	const widgetUrl = new URL(buildWidgetUrl(resolvedBaseUrl, nube, config));
 	if (publicId) {
 		widgetUrl.searchParams.set("public_id", publicId);
@@ -350,11 +366,11 @@ export function App(nube: NubeSDK) {
 				</Text>,
 			);
 		}
-		const { config, widgetUrl, publicId } = await loadStorefrontConfig(
+		const { config, widgetUrl, publicId, footwearCollectionHandles } = await loadStorefrontConfig(
 			state.store.id,
 			state.store.domain,
 		);
-		renderWidget(nube, config, widgetUrl, publicId);
+		renderWidget(nube, config, widgetUrl, publicId, footwearCollectionHandles);
 	};
 
 	void boot();

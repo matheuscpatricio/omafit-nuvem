@@ -1868,6 +1868,26 @@ async function getSizeCharts(storeId) {
 	}
 }
 
+/** Alinhado ao `normalizeChartHandle` do widget (match com slug da URL / handle no admin). */
+function normalizeCollectionHandleForMatch(value) {
+	return String(value || "")
+		.trim()
+		.toLowerCase()
+		.normalize("NFD")
+		.replace(/\p{M}/gu, "");
+}
+
+function listFootwearCollectionHandles(charts) {
+	if (!Array.isArray(charts)) return [];
+	const set = new Set();
+	for (const chart of charts) {
+		if (chart?.collection_type !== "footwear") continue;
+		const normalized = normalizeCollectionHandleForMatch(chart.collection_handle);
+		if (normalized) set.add(normalized);
+	}
+	return Array.from(set);
+}
+
 async function saveSizeCharts(storeId, charts) {
 	const shopKey = getCanonicalShopKey(storeId);
 	await supabaseDelete(`size_charts?shop_domain=eq.${encodeURIComponent(shopKey)}`);
@@ -2977,10 +2997,13 @@ async function handleApi(req, res, reqUrl) {
 				config: null,
 				widgetUrl: getWidgetBaseUrl(req),
 				publicId: "",
+				footwear_collection_handles: [],
 			});
 			return true;
 		}
 		const config = await getWidgetConfig(storeContext.storeId);
+		const charts = await getSizeCharts(storeContext.storeId);
+		const footwear_collection_handles = listFootwearCollectionHandles(charts);
 		const resolvedStoreUrl =
 			storeContext.storeUrl ||
 			normalizeStoreUrl(session?.store?.url || session?.store?.domain || "");
@@ -2989,6 +3012,7 @@ async function handleApi(req, res, reqUrl) {
 			config,
 			widgetUrl: getWidgetBaseUrl(req),
 			publicId,
+			footwear_collection_handles,
 		});
 		return true;
 	}
