@@ -39,6 +39,7 @@ declare global {
 				custom_url?: string;
 			};
 		};
+		OMAFIT_COLLECTION_HANDLE?: string;
 	}
 }
 
@@ -171,7 +172,13 @@ async function loadConfig(appBaseUrl: string, storeId: string) {
 	}
 }
 
-function collectionHandleFromPathname(): string {
+function collectionHandleFromPathnameOrTheme(): string {
+	const fromTheme =
+		String(window.OMAFIT_COLLECTION_HANDLE || "").trim() ||
+		String(document.body?.getAttribute("data-omafit-collection-handle") || "").trim() ||
+		String(document.documentElement?.getAttribute("data-omafit-collection-handle") || "").trim();
+	if (fromTheme) return fromTheme.toLowerCase();
+
 	const fromPath = (pathname: string) => {
 		try {
 			const m = pathname.match(/\/collections\/([^/]+)/i);
@@ -226,7 +233,7 @@ function buildWidgetUrl(
 	widgetUrl.searchParams.set("variant_id", product.variantId || "");
 	widgetUrl.searchParams.set("product_name", product.name);
 	widgetUrl.searchParams.set("product_handle", product.handle);
-	const collectionHandle = collectionHandleFromPathname();
+	const collectionHandle = collectionHandleFromPathnameOrTheme();
 	if (collectionHandle) {
 		widgetUrl.searchParams.set("collection_handle", collectionHandle);
 	}
@@ -526,7 +533,7 @@ function renderButton(
 		debugLog("render_skipped_disabled", { storeId: store.id }, "L2");
 		return;
 	}
-	const currentCollectionHandle = collectionHandleFromPathname();
+	const currentCollectionHandle = collectionHandleFromPathnameOrTheme();
 	const mountTarget = getMountTarget();
 	if (!mountTarget) {
 		debugLog("render_missing_mount", { selector: ".js-buy-button-container" }, "L2");
