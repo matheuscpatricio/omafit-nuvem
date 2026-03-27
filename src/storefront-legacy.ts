@@ -656,6 +656,23 @@ function renderButton(
 		return;
 	}
 	const currentCollectionHandle = collectionHandleFromPathnameOrTheme();
+	const isFootwearContext = shouldUseFootwearWidget(
+		currentCollectionHandle,
+		product.handle,
+		footwearCollectionHandles,
+	);
+	if (isFootwearContext) {
+		debugLog(
+			"render_skipped_footwear_context",
+			{
+				storeId: store.id,
+				productHandle: product.handle,
+				collectionHandle: currentCollectionHandle,
+			},
+			"L2",
+		);
+		return;
+	}
 	const mountTarget = getMountTarget();
 	if (!mountTarget) {
 		debugLog("render_missing_mount", { selector: ".js-buy-button-container" }, "L2");
