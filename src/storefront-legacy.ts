@@ -143,6 +143,25 @@ async function loadConfig(appBaseUrl: string, storeId: string) {
 		const footwearHandles = Array.isArray(data.footwear_collection_handles)
 			? data.footwear_collection_handles.map((h) => String(h || "").trim()).filter(Boolean)
 			: [];
+		// #region agent log
+		fetch("http://127.0.0.1:7523/ingest/ebd119e5-639e-45b4-9806-782ca57f574c", {
+			method: "POST",
+			headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "b68c2f" },
+			body: JSON.stringify({
+				sessionId: "b68c2f",
+				runId: "debug-legacy-routing",
+				hypothesisId: "H2",
+				location: "storefront-legacy.ts:loadConfig",
+				message: "legacy_config_payload",
+				data: {
+					storeId,
+					footwearHandlesCount: footwearHandles.length,
+					footwearHandlesSample: footwearHandles.slice(0, 5),
+				},
+				timestamp: Date.now(),
+			}),
+		}).catch(() => {});
+		// #endregion
 		return {
 			config,
 			widgetUrl: String(data.widgetUrl || `${appBaseUrl}/widget.html`),
@@ -173,11 +192,33 @@ async function loadConfig(appBaseUrl: string, storeId: string) {
 }
 
 function collectionHandleFromPathnameOrTheme(): string {
-	const fromTheme =
-		String(window.OMAFIT_COLLECTION_HANDLE || "").trim() ||
-		String(document.body?.getAttribute("data-omafit-collection-handle") || "").trim() ||
-		String(document.documentElement?.getAttribute("data-omafit-collection-handle") || "").trim();
-	if (fromTheme) return fromTheme.toLowerCase();
+	const fromWindow = String(window.OMAFIT_COLLECTION_HANDLE || "").trim();
+	const fromBody = String(document.body?.getAttribute("data-omafit-collection-handle") || "").trim();
+	const fromHtml = String(document.documentElement?.getAttribute("data-omafit-collection-handle") || "").trim();
+	const fromTheme = fromWindow || fromBody || fromHtml;
+	if (fromTheme) {
+		// #region agent log
+		fetch("http://127.0.0.1:7523/ingest/ebd119e5-639e-45b4-9806-782ca57f574c", {
+			method: "POST",
+			headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "b68c2f" },
+			body: JSON.stringify({
+				sessionId: "b68c2f",
+				runId: "debug-legacy-routing",
+				hypothesisId: "H1",
+				location: "storefront-legacy.ts:collectionHandleFromPathnameOrTheme",
+				message: "legacy_collection_source_theme",
+				data: {
+					fromWindow,
+					fromBody,
+					fromHtml,
+					chosen: fromTheme.toLowerCase(),
+				},
+				timestamp: Date.now(),
+			}),
+		}).catch(() => {});
+		// #endregion
+		return fromTheme.toLowerCase();
+	}
 
 	const fromPath = (pathname: string) => {
 		try {
@@ -189,15 +230,73 @@ function collectionHandleFromPathnameOrTheme(): string {
 		}
 	};
 	const direct = fromPath(window.location.pathname);
-	if (direct) return direct;
+	if (direct) {
+		// #region agent log
+		fetch("http://127.0.0.1:7523/ingest/ebd119e5-639e-45b4-9806-782ca57f574c", {
+			method: "POST",
+			headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "b68c2f" },
+			body: JSON.stringify({
+				sessionId: "b68c2f",
+				runId: "debug-legacy-routing",
+				hypothesisId: "H1",
+				location: "storefront-legacy.ts:collectionHandleFromPathnameOrTheme",
+				message: "legacy_collection_source_path",
+				data: {
+					pathname: window.location.pathname,
+					chosen: direct,
+				},
+				timestamp: Date.now(),
+			}),
+		}).catch(() => {});
+		// #endregion
+		return direct;
+	}
 	try {
 		if (typeof document !== "undefined" && document.referrer) {
 			const ref = fromPath(new URL(document.referrer).pathname);
-			if (ref) return ref;
+			if (ref) {
+				// #region agent log
+				fetch("http://127.0.0.1:7523/ingest/ebd119e5-639e-45b4-9806-782ca57f574c", {
+					method: "POST",
+					headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "b68c2f" },
+					body: JSON.stringify({
+						sessionId: "b68c2f",
+						runId: "debug-legacy-routing",
+						hypothesisId: "H1",
+						location: "storefront-legacy.ts:collectionHandleFromPathnameOrTheme",
+						message: "legacy_collection_source_referrer",
+						data: {
+							referrer: document.referrer,
+							chosen: ref,
+						},
+						timestamp: Date.now(),
+					}),
+				}).catch(() => {});
+				// #endregion
+				return ref;
+			}
 		}
 	} catch {
 		/* ignore */
 	}
+	// #region agent log
+	fetch("http://127.0.0.1:7523/ingest/ebd119e5-639e-45b4-9806-782ca57f574c", {
+		method: "POST",
+		headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "b68c2f" },
+		body: JSON.stringify({
+			sessionId: "b68c2f",
+			runId: "debug-legacy-routing",
+			hypothesisId: "H1",
+			location: "storefront-legacy.ts:collectionHandleFromPathnameOrTheme",
+			message: "legacy_collection_source_empty",
+			data: {
+				pathname: window.location.pathname,
+				referrer: document.referrer || "",
+			},
+			timestamp: Date.now(),
+		}),
+	}).catch(() => {});
+	// #endregion
 	return "";
 }
 
@@ -209,9 +308,32 @@ function resolveWidgetBaseUrl(
 ) {
 	try {
 		const resolved = new URL(baseUrl);
-		resolved.pathname = shouldUseFootwearWidget(collectionHandle, productHandle, footwearHandles)
+		const useFootwear = shouldUseFootwearWidget(collectionHandle, productHandle, footwearHandles);
+		resolved.pathname = useFootwear
 			? "/widget-footwear.html"
 			: "/widget.html";
+		// #region agent log
+		fetch("http://127.0.0.1:7523/ingest/ebd119e5-639e-45b4-9806-782ca57f574c", {
+			method: "POST",
+			headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "b68c2f" },
+			body: JSON.stringify({
+				sessionId: "b68c2f",
+				runId: "debug-legacy-routing",
+				hypothesisId: "H3",
+				location: "storefront-legacy.ts:resolveWidgetBaseUrl",
+				message: "legacy_widget_route_decision",
+				data: {
+					baseUrl,
+					collectionHandle,
+					productHandle,
+					footwearHandlesCount: footwearHandles.length,
+					useFootwear,
+					finalPathname: resolved.pathname,
+				},
+				timestamp: Date.now(),
+			}),
+		}).catch(() => {});
+		// #endregion
 		return resolved.toString();
 	} catch {
 		return baseUrl;
