@@ -167,6 +167,9 @@ async function loadStorefrontConfig(storeId: number, storeDomain?: string) {
 					: [],
 				widgetUrl: String(data?.widgetUrl || "/widget.html"),
 				publicId: String(data?.publicId || ""),
+				sizeChartsCount: Number(data?.size_charts_count ?? 0) || 0,
+				footwearRowsCount: Number(data?.footwear_rows_count ?? 0) || 0,
+				footwearRowsMissingHandle: Boolean(data?.footwear_rows_missing_handle),
 			},
 			"H2",
 		);

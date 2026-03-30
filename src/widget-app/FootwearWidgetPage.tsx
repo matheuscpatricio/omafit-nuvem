@@ -2,6 +2,7 @@ import React, { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { ShoeARWidget } from "./ShoeARWidget";
 import { detectWidgetLanguage, type WidgetLanguage } from "./translations";
 import { OMAFIT_WIDGET_FONT_FALLBACK, sanitizeFontFamilyForCss } from "../shared/storeFont";
+import { isFootwearSizeChart } from "../shared/sizeChartFootwear";
 
 type WidgetConfig = {
 	store_logo?: string | null;
@@ -111,7 +112,7 @@ function pickFootwearChart(
 	collectionHandle: string,
 	productHandle: string,
 ): ApiChart | null {
-	const footwearCharts = charts.filter((chart) => chart.collection_type === "footwear");
+	const footwearCharts = charts.filter((chart) => isFootwearSizeChart(chart));
 	if (!footwearCharts.length) return null;
 
 	const targetCollection = normalizeHandle(collectionHandle);

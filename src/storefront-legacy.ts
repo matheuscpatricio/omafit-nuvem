@@ -14,6 +14,9 @@ type LegacyStorefrontResponse = {
 	widgetUrl?: string | null;
 	publicId?: string | null;
 	footwear_collection_handles?: string[];
+	size_charts_count?: number;
+	footwear_rows_count?: number;
+	footwear_rows_missing_handle?: boolean;
 };
 
 type LegacyStoreContext = {
@@ -134,6 +137,9 @@ async function loadConfig(appBaseUrl: string, storeId: string) {
 		const footwearHandles = Array.isArray(data.footwear_collection_handles)
 			? data.footwear_collection_handles.map((h) => String(h || "").trim()).filter(Boolean)
 			: [];
+		const sizeChartsCount = Number(data.size_charts_count ?? 0) || 0;
+		const footwearRowsCount = Number(data.footwear_rows_count ?? 0) || 0;
+		const footwearRowsMissingHandle = Boolean(data.footwear_rows_missing_handle);
 		debugLog(
 			"load_config_success",
 			{
@@ -142,6 +148,15 @@ async function loadConfig(appBaseUrl: string, storeId: string) {
 				widgetUrl: String(data.widgetUrl || `${appBaseUrl}/widget.html`),
 				footwearHandlesCount: footwearHandles.length,
 				footwearHandlesSample: footwearHandles.slice(0, 12),
+				sizeChartsCount,
+				footwearRowsCount,
+				footwearRowsMissingHandle,
+				...(footwearRowsMissingHandle
+					? {
+							hint:
+								"No admin Omafit, abra a tabela de calçados e preencha o handle da coleção com o mesmo slug da URL na Nuvemshop (ex.: tenis-classico).",
+						}
+					: {}),
 			},
 			"L1",
 		);

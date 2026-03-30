@@ -1877,11 +1877,33 @@ function normalizeCollectionHandleForMatch(value) {
 		.replace(/\p{M}/gu, "");
 }
 
+/**
+ * Alinhar com `isFootwearSizeChart` em `src/shared/sizeChartFootwear.ts`.
+ * Cobre tipo `footwear` e legado (só medida `tamanho_pe` sem tipo explícito).
+ */
+function isFootwearSizeChartRow(chart) {
+	if (!chart || typeof chart !== "object") return false;
+	const t = String(chart.collection_type || "")
+		.toLowerCase()
+		.trim();
+	if (t === "footwear") return true;
+	const refs = Array.isArray(chart.measurement_refs)
+		? chart.measurement_refs.map((r) => String(r || "").trim())
+		: [];
+	if (refs.length === 1 && refs[0] === "tamanho_pe") return true;
+	return false;
+}
+
+function countFootwearSizeChartRows(charts) {
+	if (!Array.isArray(charts)) return 0;
+	return charts.reduce((n, c) => n + (isFootwearSizeChartRow(c) ? 1 : 0), 0);
+}
+
 function listFootwearCollectionHandles(charts) {
 	if (!Array.isArray(charts)) return [];
 	const set = new Set();
 	for (const chart of charts) {
-		if (chart?.collection_type !== "footwear") continue;
+		if (!isFootwearSizeChartRow(chart)) continue;
 		const normalized = normalizeCollectionHandleForMatch(chart.collection_handle);
 		if (normalized) set.add(normalized);
 	}
@@ -2998,12 +3020,19 @@ async function handleApi(req, res, reqUrl) {
 				widgetUrl: getWidgetBaseUrl(req),
 				publicId: "",
 				footwear_collection_handles: [],
+				size_charts_count: 0,
+				footwear_rows_count: 0,
+				footwear_rows_missing_handle: false,
 			});
 			return true;
 		}
 		const config = await getWidgetConfig(storeContext.storeId);
 		const charts = await getSizeCharts(storeContext.storeId);
 		const footwear_collection_handles = listFootwearCollectionHandles(charts);
+		const size_charts_count = Array.isArray(charts) ? charts.length : 0;
+		const footwear_rows_count = countFootwearSizeChartRows(charts);
+		const footwear_rows_missing_handle =
+			footwear_rows_count > 0 && footwear_collection_handles.length === 0;
 		const resolvedStoreUrl =
 			storeContext.storeUrl ||
 			normalizeStoreUrl(session?.store?.url || session?.store?.domain || "");
@@ -3013,6 +3042,9 @@ async function handleApi(req, res, reqUrl) {
 			widgetUrl: getWidgetBaseUrl(req),
 			publicId,
 			footwear_collection_handles,
+			size_charts_count,
+			footwear_rows_count,
+			footwear_rows_missing_handle,
 		});
 		return true;
 	}

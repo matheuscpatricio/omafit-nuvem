@@ -21,6 +21,7 @@ import {
 } from "./tryOnRecommendedSize";
 import { useMediaPipePose } from "./useMediaPipePose";
 import { OMAFIT_WIDGET_FONT_FALLBACK, sanitizeFontFamilyForCss } from "../shared/storeFont";
+import { isFootwearSizeChart } from "../shared/sizeChartFootwear";
 
 type Step = "info" | "calculator" | "photo" | "confirm" | "processing" | "result";
 
@@ -327,12 +328,12 @@ function normalizeChartHandle(value: string) {
 /** Sem match de handle, evita cair na primeira chart da lista se for calçado (ex.: camisa aberta numa URL de coleção). */
 function pickChartPreferNonFootwear(candidates: ApiChart[]) {
 	if (!candidates.length) return null;
-	const nonFoot = candidates.find((c) => c.collection_type !== "footwear");
+	const nonFoot = candidates.find((c) => !isFootwearSizeChart(c));
 	return nonFoot ?? candidates[0] ?? null;
 }
 
 function chooseChart(charts: ApiChart[], gender: "male" | "female", handleCandidates: string[]) {
-	const clothingCharts = charts.filter((chart) => chart.collection_type !== "footwear");
+	const clothingCharts = charts.filter((chart) => !isFootwearSizeChart(chart));
 	if (!clothingCharts.length) {
 		return null;
 	}
