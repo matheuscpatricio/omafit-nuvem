@@ -1,5 +1,5 @@
 import { getStorefrontFontFamily, sanitizeFontFamilyForCss } from "./shared/storeFont";
-import { shouldUseFootwearWidget } from "./shared/widgetFootwearRouting";
+import { resolveCollectionHandleForStorefront, shouldUseFootwearWidget } from "./shared/widgetFootwearRouting";
 
 type LegacyStorefrontConfig = {
 	link_text: string;
@@ -191,115 +191,6 @@ async function loadConfig(appBaseUrl: string, storeId: string) {
 	}
 }
 
-function collectionHandleFromPathnameOrTheme(): string {
-	const fromWindow = String(window.OMAFIT_COLLECTION_HANDLE || "").trim();
-	const fromBody = String(document.body?.getAttribute("data-omafit-collection-handle") || "").trim();
-	const fromHtml = String(document.documentElement?.getAttribute("data-omafit-collection-handle") || "").trim();
-	const fromTheme = fromWindow || fromBody || fromHtml;
-	if (fromTheme) {
-		// #region agent log
-		fetch("http://127.0.0.1:7523/ingest/ebd119e5-639e-45b4-9806-782ca57f574c", {
-			method: "POST",
-			headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "b68c2f" },
-			body: JSON.stringify({
-				sessionId: "b68c2f",
-				runId: "debug-legacy-routing",
-				hypothesisId: "H1",
-				location: "storefront-legacy.ts:collectionHandleFromPathnameOrTheme",
-				message: "legacy_collection_source_theme",
-				data: {
-					fromWindow,
-					fromBody,
-					fromHtml,
-					chosen: fromTheme.toLowerCase(),
-				},
-				timestamp: Date.now(),
-			}),
-		}).catch(() => {});
-		// #endregion
-		return fromTheme.toLowerCase();
-	}
-
-	const fromPath = (pathname: string) => {
-		try {
-			const m = pathname.match(/\/collections\/([^/]+)/i);
-			if (!m?.[1]) return "";
-			return decodeURIComponent(m[1]).trim().toLowerCase();
-		} catch {
-			return "";
-		}
-	};
-	const direct = fromPath(window.location.pathname);
-	if (direct) {
-		// #region agent log
-		fetch("http://127.0.0.1:7523/ingest/ebd119e5-639e-45b4-9806-782ca57f574c", {
-			method: "POST",
-			headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "b68c2f" },
-			body: JSON.stringify({
-				sessionId: "b68c2f",
-				runId: "debug-legacy-routing",
-				hypothesisId: "H1",
-				location: "storefront-legacy.ts:collectionHandleFromPathnameOrTheme",
-				message: "legacy_collection_source_path",
-				data: {
-					pathname: window.location.pathname,
-					chosen: direct,
-				},
-				timestamp: Date.now(),
-			}),
-		}).catch(() => {});
-		// #endregion
-		return direct;
-	}
-	try {
-		if (typeof document !== "undefined" && document.referrer) {
-			const ref = fromPath(new URL(document.referrer).pathname);
-			if (ref) {
-				// #region agent log
-				fetch("http://127.0.0.1:7523/ingest/ebd119e5-639e-45b4-9806-782ca57f574c", {
-					method: "POST",
-					headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "b68c2f" },
-					body: JSON.stringify({
-						sessionId: "b68c2f",
-						runId: "debug-legacy-routing",
-						hypothesisId: "H1",
-						location: "storefront-legacy.ts:collectionHandleFromPathnameOrTheme",
-						message: "legacy_collection_source_referrer",
-						data: {
-							referrer: document.referrer,
-							chosen: ref,
-						},
-						timestamp: Date.now(),
-					}),
-				}).catch(() => {});
-				// #endregion
-				return ref;
-			}
-		}
-	} catch {
-		/* ignore */
-	}
-	// #region agent log
-	fetch("http://127.0.0.1:7523/ingest/ebd119e5-639e-45b4-9806-782ca57f574c", {
-		method: "POST",
-		headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "b68c2f" },
-		body: JSON.stringify({
-			sessionId: "b68c2f",
-			runId: "debug-legacy-routing",
-			hypothesisId: "H1",
-			location: "storefront-legacy.ts:collectionHandleFromPathnameOrTheme",
-			message: "legacy_collection_source_empty",
-			data: {
-				pathname: window.location.pathname,
-				referrer: document.referrer || "",
-			},
-			timestamp: Date.now(),
-		}),
-	}).catch(() => {});
-	// #endregion
-	return "";
-}
-
 function resolveWidgetBaseUrl(
 	baseUrl: string,
 	collectionHandle: string,
@@ -345,7 +236,8 @@ function buildWidgetUrl(
 	store: LegacyStoreContext,
 	product: LegacyProductContext,
 	config: LegacyStorefrontConfig,
-	publicId?: string | null,
+	publicId: string | null | undefined,
+	collectionHandle: string,
 ) {
 	const widgetUrl = new URL(baseUrl);
 	widgetUrl.searchParams.set("platform", "nuvemshop");
@@ -355,7 +247,6 @@ function buildWidgetUrl(
 	widgetUrl.searchParams.set("variant_id", product.variantId || "");
 	widgetUrl.searchParams.set("product_name", product.name);
 	widgetUrl.searchParams.set("product_handle", product.handle);
-	const collectionHandle = collectionHandleFromPathnameOrTheme();
 	if (collectionHandle) {
 		widgetUrl.searchParams.set("collection_handle", collectionHandle);
 	}
@@ -655,7 +546,7 @@ function renderButton(
 		debugLog("render_skipped_disabled", { storeId: store.id }, "L2");
 		return;
 	}
-	const currentCollectionHandle = collectionHandleFromPathnameOrTheme();
+	const currentCollectionHandle = resolveCollectionHandleForStorefront(footwearCollectionHandles);
 	const isFootwearContext = shouldUseFootwearWidget(
 		currentCollectionHandle,
 		product.handle,
@@ -684,7 +575,7 @@ function renderButton(
 		product.handle,
 		footwearCollectionHandles,
 	);
-	const widgetUrl = buildWidgetUrl(resolvedBaseUrl, store, product, config, publicId);
+	const widgetUrl = buildWidgetUrl(resolvedBaseUrl, store, product, config, publicId, currentCollectionHandle);
 	ensureStyles(config.primary_color || "#810707");
 	let wrapper = document.getElementById(CTA_WRAPPER_ID);
 	if (!wrapper) {

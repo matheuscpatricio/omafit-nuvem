@@ -2,7 +2,7 @@
 import type { NubeSDK, ProductDetails } from "@tiendanube/nube-sdk-types";
 import { Button, Column, Iframe, Text } from "@tiendanube/nube-sdk-jsx";
 import { getStorefrontFontFamily, sanitizeFontFamilyForCss } from "./shared/storeFont";
-import { shouldUseFootwearWidget } from "./shared/widgetFootwearRouting";
+import { resolveCollectionHandleForStorefront, shouldUseFootwearWidget } from "./shared/widgetFootwearRouting";
 
 type StorefrontConfig = {
 	link_text: string;
@@ -58,7 +58,7 @@ function resolveStorefrontPageUrl(nube: NubeSDK): string {
 	return tryHasCollections(fromState) || tryHasCollections(fromWindow) || fromState || fromWindow;
 }
 
-function buildWidgetUrl(baseUrl: string, nube: NubeSDK, config: StorefrontConfig) {
+function buildWidgetUrl(baseUrl: string, nube: NubeSDK, config: StorefrontConfig, collectionHandle: string) {
 	const state = nube.getState();
 	const product = getCurrentProduct(nube);
 	if (!product) return baseUrl;
@@ -96,7 +96,6 @@ function buildWidgetUrl(baseUrl: string, nube: NubeSDK, config: StorefrontConfig
 	widgetUrl.searchParams.set("product_name", product.name?.[state.store.language] || product.name?.pt || "");
 	widgetUrl.searchParams.set("product_handle", product.handle?.[state.store.language] || product.handle?.pt || "");
 	const resolvedPageUrl = resolveStorefrontPageUrl(nube);
-	const collectionHandle = collectionHandleFromStorefrontUrl(resolvedPageUrl);
 	if (collectionHandle) {
 		widgetUrl.searchParams.set("collection_handle", collectionHandle);
 	}
@@ -245,7 +244,9 @@ function renderWidget(
 	const product = getCurrentProduct(nube);
 	const state = nube.getState();
 	const page = state.location.page;
-	const collectionHandle = collectionHandleFromStorefrontUrl(resolveStorefrontPageUrl(nube));
+	const collectionHandle =
+		collectionHandleFromStorefrontUrl(resolveStorefrontPageUrl(nube)) ||
+		resolveCollectionHandleForStorefront(footwearCollectionHandles);
 	const productHandle =
 		product?.handle?.[state.store.language] || product?.handle?.pt || "";
 	const categoryIds = (product?.categories || []).map((categoryId) => String(categoryId));
@@ -284,13 +285,23 @@ function renderWidget(
 		return;
 	}
 
+	if (shouldUseFootwearWidget(collectionHandle, productHandle, footwearCollectionHandles)) {
+		debugLog(
+			"render_widget_hidden_footwear",
+			{ productId: product?.id || null, collectionHandle },
+			"H4",
+		);
+		nube.clearSlot("after_product_detail_add_to_cart");
+		return;
+	}
+
 	const resolvedBaseUrl = resolveWidgetBaseUrl(
 		widgetBaseUrl,
 		collectionHandle,
 		productHandle,
 		footwearCollectionHandles,
 	);
-	const widgetUrl = new URL(buildWidgetUrl(resolvedBaseUrl, nube, config));
+	const widgetUrl = new URL(buildWidgetUrl(resolvedBaseUrl, nube, config, collectionHandle));
 	if (publicId) {
 		widgetUrl.searchParams.set("public_id", publicId);
 	}

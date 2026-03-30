@@ -1,4 +1,5 @@
 import { getStorefrontFontFamily, sanitizeFontFamilyForCss } from "./shared/storeFont";
+import { resolveCollectionHandleForStorefront, shouldUseFootwearWidget } from "./shared/widgetFootwearRouting";
 
 type LegacyStorefrontConfig = {
 	link_text: string;
@@ -11,6 +12,7 @@ type LegacyStorefrontResponse = {
 	config?: LegacyStorefrontConfig | null;
 	widgetUrl?: string | null;
 	publicId?: string | null;
+	footwear_collection_handles?: string[];
 };
 
 type LegacyStoreContext = {
@@ -105,17 +107,6 @@ function getProductContext(): LegacyProductContext | null {
 	};
 }
 
-function collectionHandleFromThemeOrPath(): string {
-	const theme =
-		String(window.OMAFIT_COLLECTION_HANDLE || "").trim() ||
-		String(document.body?.getAttribute("data-omafit-collection-handle") || "").trim() ||
-		String(document.documentElement?.getAttribute("data-omafit-collection-handle") || "").trim();
-	if (theme) return theme.toLowerCase();
-	const direct = window.location.pathname.match(/\/collections\/([^/]+)/i)?.[1];
-	if (direct) return decodeURIComponent(direct).trim().toLowerCase();
-	return "";
-}
-
 async function loadConfig(appBaseUrl: string, storeId: string) {
 	const store = getStoreContext();
 	const endpoint = `${appBaseUrl}/api/storefront/widget-config?store_id=${encodeURIComponent(storeId)}&store_domain=${encodeURIComponent(store?.domain || "")}`;
@@ -128,10 +119,14 @@ async function loadConfig(appBaseUrl: string, storeId: string) {
 			widget_enabled: true,
 			primary_color: "#810707",
 		};
+		const footwearHandles = Array.isArray(data.footwear_collection_handles)
+			? data.footwear_collection_handles.map((h) => String(h || "").trim()).filter(Boolean)
+			: [];
 		return {
 			config,
 			widgetUrl: String(data.widgetUrl || `${appBaseUrl}/widget.html`),
 			publicId: String(data.publicId || ""),
+			footwearCollectionHandles: footwearHandles,
 		};
 	} catch {
 		return {
@@ -142,6 +137,7 @@ async function loadConfig(appBaseUrl: string, storeId: string) {
 			},
 			widgetUrl: `${appBaseUrl}/widget.html`,
 			publicId: "",
+			footwearCollectionHandles: [] as string[],
 		};
 	}
 }
@@ -161,7 +157,8 @@ function buildWidgetUrl(
 	store: LegacyStoreContext,
 	product: LegacyProductContext,
 	config: LegacyStorefrontConfig,
-	publicId?: string | null,
+	publicId: string | null | undefined,
+	collectionHandle: string,
 ) {
 	const widgetUrl = new URL(buildFootwearBaseUrl(baseUrl));
 	widgetUrl.searchParams.set("platform", "nuvemshop");
@@ -171,7 +168,6 @@ function buildWidgetUrl(
 	widgetUrl.searchParams.set("variant_id", product.variantId || "");
 	widgetUrl.searchParams.set("product_name", product.name);
 	widgetUrl.searchParams.set("product_handle", product.handle);
-	const collectionHandle = collectionHandleFromThemeOrPath();
 	if (collectionHandle) widgetUrl.searchParams.set("collection_handle", collectionHandle);
 	if (product.imageUrl) widgetUrl.searchParams.set("product_image", product.imageUrl);
 	if (product.imageUrls.length) {
@@ -320,12 +316,15 @@ function renderButton(
 	product: LegacyProductContext,
 	config: LegacyStorefrontConfig,
 	widgetBaseUrl: string,
-	publicId?: string | null,
+	publicId: string | null | undefined,
+	footwearCollectionHandles: string[],
 ) {
 	if (config.widget_enabled === false) return;
+	const collectionHandle = resolveCollectionHandleForStorefront(footwearCollectionHandles);
+	if (!shouldUseFootwearWidget(collectionHandle, product.handle, footwearCollectionHandles)) return;
 	const mountTarget = getMountTarget();
 	if (!mountTarget) return;
-	const widgetUrl = buildWidgetUrl(widgetBaseUrl, store, product, config, publicId);
+	const widgetUrl = buildWidgetUrl(widgetBaseUrl, store, product, config, publicId, collectionHandle);
 	ensureStyles(config.primary_color || "#810707");
 	let wrapper = document.getElementById(CTA_WRAPPER_ID);
 	if (!wrapper) {
@@ -352,8 +351,8 @@ async function init() {
 	attachMessageBridge();
 	if (!store || !product) return;
 	const appBaseUrl = getAppBaseUrl();
-	const { config, widgetUrl, publicId } = await loadConfig(appBaseUrl, store.id);
-	renderButton(store, product, config, widgetUrl, publicId);
+	const { config, widgetUrl, publicId, footwearCollectionHandles } = await loadConfig(appBaseUrl, store.id);
+	renderButton(store, product, config, widgetUrl, publicId, footwearCollectionHandles);
 }
 
 if (document.readyState === "loading") {
