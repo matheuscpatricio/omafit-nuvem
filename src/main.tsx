@@ -99,33 +99,6 @@ function buildWidgetUrl(baseUrl: string, nube: NubeSDK, config: StorefrontConfig
 	if (collectionHandle) {
 		widgetUrl.searchParams.set("collection_handle", collectionHandle);
 	}
-	// #region agent log
-	const ph =
-		product.handle?.[state.store.language] || product.handle?.pt || "";
-	fetch("http://127.0.0.1:7523/ingest/ebd119e5-639e-45b4-9806-782ca57f574c", {
-		method: "POST",
-		headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "b68c2f" },
-		body: JSON.stringify({
-			sessionId: "b68c2f",
-			runId: "pre-fix",
-			location: "main.tsx:buildWidgetUrl",
-			message: "iframe_query_collections",
-			data: {
-				resolvedPageUrl,
-				fromStateUrl: state.location?.url,
-				windowHref:
-					typeof globalThis.location?.href === "string"
-						? globalThis.location.href
-						: "",
-				collectionHandleSet: Boolean(collectionHandle),
-				collectionHandle,
-				productHandle: ph,
-			},
-			timestamp: Date.now(),
-			hypothesisId: "H1",
-		}),
-	}).catch(() => {});
-	// #endregion
 	widgetUrl.searchParams.set("currency", state.store.currency);
 	if (selectedVariant?.id) {
 		widgetUrl.searchParams.set("variant_id", String(selectedVariant.id));

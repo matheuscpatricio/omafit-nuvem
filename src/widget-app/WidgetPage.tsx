@@ -334,29 +334,6 @@ function pickChartPreferNonFootwear(candidates: ApiChart[]) {
 function chooseChart(charts: ApiChart[], gender: "male" | "female", handleCandidates: string[]) {
 	const clothingCharts = charts.filter((chart) => chart.collection_type !== "footwear");
 	if (!clothingCharts.length) {
-		// #region agent log
-		fetch("http://127.0.0.1:7523/ingest/ebd119e5-639e-45b4-9806-782ca57f574c", {
-			method: "POST",
-			headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "b68c2f" },
-			body: JSON.stringify({
-				sessionId: "b68c2f",
-				runId: "pre-fix",
-				location: "WidgetPage.tsx:chooseChart",
-				message: "chart_selection",
-				data: {
-					branch: charts.length ? "only_footwear_available" : "no_charts",
-					gender,
-					chartsBrief: charts.map((c) => ({
-						h: normalizeChartHandle(c.collection_handle),
-						t: c.collection_type,
-						g: c.gender,
-					})),
-				},
-				timestamp: Date.now(),
-				hypothesisId: "H2_H3_H5",
-			}),
-		}).catch(() => {});
-		// #endregion
 		return null;
 	}
 
@@ -404,39 +381,6 @@ function chooseChart(charts: ApiChart[], gender: "male" | "female", handleCandid
 			branch = "global_fallback";
 		}
 	}
-
-	// #region agent log
-	fetch("http://127.0.0.1:7523/ingest/ebd119e5-639e-45b4-9806-782ca57f574c", {
-		method: "POST",
-		headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "b68c2f" },
-			body: JSON.stringify({
-				sessionId: "b68c2f",
-				runId: "pre-fix",
-				location: "WidgetPage.tsx:chooseChart",
-				message: "chart_selection",
-				data: {
-					branch,
-					matchedHandle,
-					gender,
-					handleCandidates: uniqueHandles,
-				chartsBrief: clothingCharts.map((c) => ({
-					h: normalizeChartHandle(c.collection_handle),
-					t: c.collection_type,
-					g: c.gender,
-				})),
-				picked: result
-					? {
-							h: normalizeChartHandle(result.collection_handle),
-							t: result.collection_type,
-							g: result.gender,
-						}
-					: null,
-			},
-			timestamp: Date.now(),
-			hypothesisId: "H2_H3_H5",
-		}),
-	}).catch(() => {});
-	// #endregion
 
 	return result;
 }
@@ -586,30 +530,6 @@ export function WidgetPage() {
 		const stack = storeFontFamily ? storeFontFamily : OMAFIT_WIDGET_FONT_FALLBACK;
 		document.documentElement.style.setProperty("--omafit-store-font", stack);
 	}, [storeFontFamily]);
-
-	useEffect(() => {
-		// #region agent log
-		fetch("http://127.0.0.1:7523/ingest/ebd119e5-639e-45b4-9806-782ca57f574c", {
-			method: "POST",
-			headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "b68c2f" },
-			body: JSON.stringify({
-				sessionId: "b68c2f",
-				runId: "pre-fix",
-				location: "WidgetPage.tsx:mount",
-				message: "widget_iframe_query",
-				data: {
-					collectionHandle: params.collectionHandle,
-					productHandle: params.productHandle,
-					hasCollectionQuery: Boolean(params.collectionHandle),
-					iframeSearch:
-						typeof window !== "undefined" ? window.location.search.slice(0, 500) : "",
-				},
-				timestamp: Date.now(),
-				hypothesisId: "H1",
-			}),
-		}).catch(() => {});
-		// #endregion
-	}, []);
 
 	const productImages = params.productImages.length
 		? params.productImages
