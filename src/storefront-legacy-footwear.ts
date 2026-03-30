@@ -48,6 +48,10 @@ const CTA_BUTTON_ID = "omafit-legacy-footwear-button";
 const MODAL_ID = "omafit-legacy-footwear-modal";
 const STYLE_ID = "omafit-legacy-footwear-style";
 
+function debugLog(message: string, data: Record<string, unknown>, hypothesisId: string) {
+	console.info("[Omafit Legacy Footwear Debug]", hypothesisId, message, data);
+}
+
 function getAppBaseUrl(): string {
 	const currentScript = document.currentScript as HTMLScriptElement | null;
 	if (currentScript?.src) return new URL(currentScript.src).origin;
@@ -111,6 +115,7 @@ async function loadConfig(appBaseUrl: string, storeId: string) {
 	const store = getStoreContext();
 	const endpoint = `${appBaseUrl}/api/storefront/widget-config?store_id=${encodeURIComponent(storeId)}&store_domain=${encodeURIComponent(store?.domain || "")}`;
 	try {
+		debugLog("load_config_start", { endpoint, storeId }, "F1");
 		const response = await fetch(endpoint, { mode: "cors" });
 		if (!response.ok) throw new Error(`request failed: ${response.status}`);
 		const data = (await response.json()) as LegacyStorefrontResponse;
@@ -122,13 +127,32 @@ async function loadConfig(appBaseUrl: string, storeId: string) {
 		const footwearHandles = Array.isArray(data.footwear_collection_handles)
 			? data.footwear_collection_handles.map((h) => String(h || "").trim()).filter(Boolean)
 			: [];
+		debugLog(
+			"load_config_success",
+			{
+				storeId,
+				widgetEnabled: config.widget_enabled,
+				widgetUrl: String(data.widgetUrl || `${appBaseUrl}/widget.html`),
+				footwearHandlesCount: footwearHandles.length,
+				footwearHandlesSample: footwearHandles.slice(0, 8),
+			},
+			"F1",
+		);
 		return {
 			config,
 			widgetUrl: String(data.widgetUrl || `${appBaseUrl}/widget.html`),
 			publicId: String(data.publicId || ""),
 			footwearCollectionHandles: footwearHandles,
 		};
-	} catch {
+	} catch (error) {
+		debugLog(
+			"load_config_error",
+			{
+				storeId,
+				error: error instanceof Error ? error.message : String(error),
+			},
+			"F1",
+		);
 		return {
 			config: {
 				link_text: "Ver meu tamanho ideal (calçados)",
@@ -319,11 +343,45 @@ function renderButton(
 	publicId: string | null | undefined,
 	footwearCollectionHandles: string[],
 ) {
-	if (config.widget_enabled === false) return;
+	if (config.widget_enabled === false) {
+		debugLog("render_skipped_disabled", { storeId: store.id }, "F2");
+		return;
+	}
 	const collectionHandle = resolveCollectionHandleForStorefront(footwearCollectionHandles, product.handle);
-	if (!shouldUseFootwearWidget(collectionHandle, product.handle, footwearCollectionHandles)) return;
+	const isFootwearContext = shouldUseFootwearWidget(
+		collectionHandle,
+		product.handle,
+		footwearCollectionHandles,
+	);
+	debugLog(
+		"render_decision_context",
+		{
+			storeId: store.id,
+			productHandle: product.handle,
+			collectionHandle,
+			footwearHandlesCount: footwearCollectionHandles.length,
+			footwearHandlesSample: footwearCollectionHandles.slice(0, 8),
+			isFootwearContext,
+		},
+		"F2",
+	);
+	if (!isFootwearContext) {
+		debugLog(
+			"render_skipped_non_footwear_context",
+			{
+				storeId: store.id,
+				productHandle: product.handle,
+				collectionHandle,
+			},
+			"F2",
+		);
+		return;
+	}
 	const mountTarget = getMountTarget();
-	if (!mountTarget) return;
+	if (!mountTarget) {
+		debugLog("render_missing_mount", { selector: ".js-buy-button-container" }, "F2");
+		return;
+	}
 	const widgetUrl = buildWidgetUrl(widgetBaseUrl, store, product, config, publicId, collectionHandle);
 	ensureStyles(config.primary_color || "#810707");
 	let wrapper = document.getElementById(CTA_WRAPPER_ID);
@@ -343,13 +401,38 @@ function renderButton(
 		const modal = ensureModal(widgetUrl);
 		modal.hidden = false;
 	};
+	debugLog(
+		"render_button_complete",
+		{
+			storeId: store.id,
+			productHandle: product.handle,
+			collectionHandle,
+			widgetUrl,
+		},
+		"F2",
+	);
 }
 
 async function init() {
 	const store = getStoreContext();
 	const product = getProductContext();
 	attachMessageBridge();
-	if (!store || !product) return;
+	debugLog(
+		"legacy_footwear_init",
+		{
+			href: window.location.href,
+			storeId: store?.id || null,
+			storeDomain: store?.domain || null,
+			productHandle: product?.handle || null,
+			hasProductForm: Boolean(document.querySelector(".js-product-form")),
+			hasBuyContainer: Boolean(document.querySelector(".js-buy-button-container")),
+		},
+		"F0",
+	);
+	if (!store || !product) {
+		debugLog("legacy_footwear_missing_context", { hasStore: Boolean(store), hasProduct: Boolean(product) }, "F0");
+		return;
+	}
 	const appBaseUrl = getAppBaseUrl();
 	const { config, widgetUrl, publicId, footwearCollectionHandles } = await loadConfig(appBaseUrl, store.id);
 	renderButton(store, product, config, widgetUrl, publicId, footwearCollectionHandles);

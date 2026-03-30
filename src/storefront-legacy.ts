@@ -555,6 +555,18 @@ function renderButton(
 		product.handle,
 		footwearCollectionHandles,
 	);
+	debugLog(
+		"render_decision_context",
+		{
+			storeId: store.id,
+			productHandle: product.handle,
+			currentCollectionHandle,
+			footwearHandlesCount: footwearCollectionHandles.length,
+			footwearHandlesSample: footwearCollectionHandles.slice(0, 8),
+			isFootwearContext,
+		},
+		"L2",
+	);
 	if (isFootwearContext) {
 		debugLog(
 			"render_skipped_footwear_context",
