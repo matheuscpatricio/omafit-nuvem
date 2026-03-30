@@ -433,6 +433,44 @@ function renderButton(
 	);
 }
 
+function renderButtonWithRetries(
+	store: LegacyStoreContext,
+	product: LegacyProductContext,
+	config: LegacyStorefrontConfig,
+	widgetBaseUrl: string,
+	publicId: string | null | undefined,
+	footwearCollectionHandles: string[],
+) {
+	const maxAttempts = 8;
+	const baseDelayMs = 450;
+	let attempt = 0;
+
+	const tryRender = () => {
+		attempt += 1;
+		const before = Boolean(document.getElementById(CTA_BUTTON_ID));
+		renderButton(
+			store,
+			product,
+			config,
+			widgetBaseUrl,
+			publicId,
+			footwearCollectionHandles,
+		);
+		const after = Boolean(document.getElementById(CTA_BUTTON_ID));
+		if (after || attempt >= maxAttempts) {
+			debugLog(
+				"render_retry_complete",
+				{ attempt, rendered: after, alreadyExisted: before, maxAttempts },
+				"F3",
+			);
+			return;
+		}
+		window.setTimeout(tryRender, baseDelayMs * attempt);
+	};
+
+	tryRender();
+}
+
 async function init() {
 	const store = getStoreContext();
 	const product = getProductContext();
@@ -455,7 +493,7 @@ async function init() {
 	}
 	const appBaseUrl = getAppBaseUrl();
 	const { config, widgetUrl, publicId, footwearCollectionHandles } = await loadConfig(appBaseUrl, store.id);
-	renderButton(store, product, config, widgetUrl, publicId, footwearCollectionHandles);
+	renderButtonWithRetries(store, product, config, widgetUrl, publicId, footwearCollectionHandles);
 }
 
 if (document.readyState === "loading") {
