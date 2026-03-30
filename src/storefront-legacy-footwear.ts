@@ -368,6 +368,8 @@ function renderButton(
 		product.handle,
 		footwearCollectionHandles,
 	);
+	const hasFootwearRules = footwearCollectionHandles.length > 0;
+	const shouldRenderFootwearButton = !hasFootwearRules || isFootwearContext;
 	debugLog(
 		"render_decision_context",
 		{
@@ -377,16 +379,19 @@ function renderButton(
 			footwearHandlesCount: footwearCollectionHandles.length,
 			footwearHandlesSample: footwearCollectionHandles.slice(0, 8),
 			isFootwearContext,
+			hasFootwearRules,
+			shouldRenderFootwearButton,
 		},
 		"F2",
 	);
-	if (!isFootwearContext) {
+	if (!shouldRenderFootwearButton) {
 		debugLog(
 			"render_skipped_non_footwear_context",
 			{
 				storeId: store.id,
 				productHandle: product.handle,
 				collectionHandle,
+				hasFootwearRules,
 			},
 			"F2",
 		);
