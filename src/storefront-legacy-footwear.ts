@@ -320,7 +320,7 @@ function renderButton(
 	footwearCollectionHandles: string[],
 ) {
 	if (config.widget_enabled === false) return;
-	const collectionHandle = resolveCollectionHandleForStorefront(footwearCollectionHandles);
+	const collectionHandle = resolveCollectionHandleForStorefront(footwearCollectionHandles, product.handle);
 	if (!shouldUseFootwearWidget(collectionHandle, product.handle, footwearCollectionHandles)) return;
 	const mountTarget = getMountTarget();
 	if (!mountTarget) return;

@@ -244,11 +244,11 @@ function renderWidget(
 	const product = getCurrentProduct(nube);
 	const state = nube.getState();
 	const page = state.location.page;
-	const collectionHandle =
-		collectionHandleFromStorefrontUrl(resolveStorefrontPageUrl(nube)) ||
-		resolveCollectionHandleForStorefront(footwearCollectionHandles);
 	const productHandle =
 		product?.handle?.[state.store.language] || product?.handle?.pt || "";
+	const collectionHandle =
+		collectionHandleFromStorefrontUrl(resolveStorefrontPageUrl(nube)) ||
+		resolveCollectionHandleForStorefront(footwearCollectionHandles, productHandle);
 	const categoryIds = (product?.categories || []).map((categoryId) => String(categoryId));
 	debugLog(
 		"render_widget_start",

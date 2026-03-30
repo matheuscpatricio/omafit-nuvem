@@ -546,7 +546,10 @@ function renderButton(
 		debugLog("render_skipped_disabled", { storeId: store.id }, "L2");
 		return;
 	}
-	const currentCollectionHandle = resolveCollectionHandleForStorefront(footwearCollectionHandles);
+	const currentCollectionHandle = resolveCollectionHandleForStorefront(
+		footwearCollectionHandles,
+		product.handle,
+	);
 	const isFootwearContext = shouldUseFootwearWidget(
 		currentCollectionHandle,
 		product.handle,
