@@ -522,18 +522,6 @@ function renderButton(
 		},
 		"L2",
 	);
-	if (isFootwearContext) {
-		debugLog(
-			"render_skipped_footwear_context",
-			{
-				storeId: store.id,
-				productHandle: product.handle,
-				collectionHandle: currentCollectionHandle,
-			},
-			"L2",
-		);
-		return;
-	}
 	const mountTarget = getMountTarget();
 	if (!mountTarget) {
 		debugLog("render_missing_mount", { selector: ".js-buy-button-container" }, "L2");
@@ -544,6 +532,23 @@ function renderButton(
 		currentCollectionHandle,
 		product.handle,
 		footwearCollectionHandles,
+	);
+	debugLog(
+		"render_route_selected",
+		{
+			storeId: store.id,
+			productHandle: product.handle,
+			collectionHandle: currentCollectionHandle,
+			isFootwearContext,
+			pathname: (() => {
+				try {
+					return new URL(resolvedBaseUrl).pathname;
+				} catch {
+					return "";
+				}
+			})(),
+		},
+		"L2",
 	);
 	const widgetUrl = buildWidgetUrl(resolvedBaseUrl, store, product, config, publicId, currentCollectionHandle);
 	ensureStyles(config.primary_color || "#810707");
