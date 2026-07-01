@@ -6,10 +6,17 @@ type Dictionary = Record<string, string>;
 
 const translations: Record<LocaleKey, Dictionary> = {
 	"pt-BR": {
+		"brand.tagline": "Menos devoluções. Mais conversão.",
+		"brand.subtitle":
+			"Provador virtual, AR e tabelas de medidas para a sua loja Nuvemshop.",
+		"brand.pillTryOn": "Try-on IA",
+		"brand.pillReturns": "Menos devoluções",
+		"brand.pillConversion": "Mais conversão",
 		"nav.dashboard": "Dashboard",
 		"nav.billing": "Plano",
 		"nav.widget": "Widget",
 		"nav.sizeCharts": "Tabelas",
+		"nav.sizeChartMapping": "Mapeamento",
 		"nav.analytics": "Analytics",
 		"nav.reconnect": "Reconectar com a Nuvemshop",
 		"common.loading": "Carregando...",
@@ -82,6 +89,11 @@ const translations: Record<LocaleKey, Dictionary> = {
 		"sizeCharts.sizeRows": "Linhas de tamanhos",
 		"sizeCharts.addRow": "Adicionar linha",
 		"sizeCharts.saved": "Tabelas salvas com sucesso.",
+		"sizeChartMapping.title": "Mapeamento produto → tabela",
+		"sizeChartMapping.subtitle":
+			"Visualize qual tabela de medidas será usada para cada produto (produto, categoria ou global).",
+		"billing.inactiveBanner":
+			"O plano está inativo. Ative um plano na seção Plano para liberar todas as funcionalidades do admin.",
 		"analytics.title": "Analytics Omafit",
 		"analytics.subtitle":
 			"Indicadores operacionais de uso, recomendações e impacto na sua loja.",
@@ -101,6 +113,11 @@ const translations: Record<LocaleKey, Dictionary> = {
 		"feedback.error": "Não foi possível concluir a operação.",
 	},
 	en: {
+		"brand.tagline": "Fewer returns. More conversion.",
+		"brand.subtitle": "Virtual try-on, AR, and size charts for your Nuvemshop store.",
+		"brand.pillTryOn": "AI try-on",
+		"brand.pillReturns": "Fewer returns",
+		"brand.pillConversion": "More conversion",
 		"nav.dashboard": "Dashboard",
 		"nav.billing": "Plan",
 		"nav.widget": "Widget",
@@ -189,6 +206,12 @@ const translations: Record<LocaleKey, Dictionary> = {
 		"feedback.error": "Could not complete the operation.",
 	},
 	es: {
+		"brand.tagline": "Menos devoluciones. Más conversión.",
+		"brand.subtitle":
+			"Probador virtual, AR y tablas de medidas para tu tienda Nuvemshop.",
+		"brand.pillTryOn": "Try-on IA",
+		"brand.pillReturns": "Menos devoluciones",
+		"brand.pillConversion": "Más conversión",
 		"nav.dashboard": "Dashboard",
 		"nav.billing": "Plan",
 		"nav.widget": "Widget",

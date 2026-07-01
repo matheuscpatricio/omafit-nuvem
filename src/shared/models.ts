@@ -1,4 +1,4 @@
-export type OmafitPlanId = "ondemand" | "pro";
+export type OmafitPlanId = "ondemand" | "growth" | "pro";
 
 export type OmafitPlanDefinition = {
 	id: OmafitPlanId;
@@ -53,6 +53,15 @@ export type OmafitWidgetConfig = {
 	widget_enabled: boolean;
 	excluded_collections: string[];
 	admin_locale: string;
+	tryon_layout?: "default" | "sidebar" | "hero";
+	tryon_enabled?: boolean;
+};
+
+export type OmafitProduct = {
+	id: string;
+	handle: string;
+	title: string;
+	collections: OmafitCollection[];
 };
 
 export type OmafitCollection = {
@@ -69,6 +78,8 @@ export type OmafitSizeRow = {
 
 export type OmafitSizeChart = {
 	collection_handle: string;
+	product_handle?: string;
+	gender_scope?: "both" | "male" | "female";
 	gender: "male" | "female" | "unisex";
 	collection_type: "upper" | "lower" | "full" | "footwear";
 	collection_elasticity: "structured" | "light_flex" | "flexible" | "high_elasticity" | "";

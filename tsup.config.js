@@ -5,6 +5,7 @@ const shared = {
   target: "esnext",
   minify: true,
   bundle: true,
+  injectStyle: true,
   noExternal: [/.*/],
   sourcemap: false,
   splitting: false,
@@ -12,6 +13,10 @@ const shared = {
   esbuildOptions(options) {
     options.alias = {
       "@tiendanube/nube-sdk-jsx/dist/jsx-runtime": "@tiendanube/nube-sdk-jsx/jsx-runtime",
+    };
+    options.loader = {
+      ...options.loader,
+      ".css": "css",
     };
     options.packages = "bundle";
   },

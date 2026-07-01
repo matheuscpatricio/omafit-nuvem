@@ -5,3 +5,6 @@ dist/
 .env.local
 .vite/
 coverage/
+
+# Local Netlify folder
+.netlify

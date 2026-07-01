@@ -11,6 +11,30 @@ import { createHash, createHmac, randomUUID } from "crypto";
 import { extname, join } from "path";
 import { dirname } from "path";
 import { fileURLToPath } from "url";
+import {
+	hasGrowthPlusPlan,
+	hasStylistConsultantAccess,
+	isBillingActive,
+} from "./lib/billing-growth-plus.js";
+import { reactivateWidgetKeyForShop } from "./lib/widget-keys.js";
+import { listStoreProducts, getProductByHandle } from "./lib/nuvemshop-products.js";
+import {
+	verifyCatalogSearchSignature,
+	verifyProductByHandleSignature,
+	verifySuggestionEventSignature,
+} from "./lib/widget-catalog-auth.js";
+import {
+	searchCatalogCandidates,
+	getCatalogProductByHandle,
+	recordSuggestionEvent,
+} from "./lib/widget-catalog-search.js";
+import { upsertOmafitOrderAnalytics } from "./lib/order-analytics.js";
+import {
+	handleStoreRedact,
+	handleCustomerRedact,
+	handleCustomerDataRequest,
+} from "./lib/compliance.js";
+import { fetchOrderMetricsFromNuvemshop } from "./lib/analytics-orders.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -759,10 +783,9 @@ function convertUsdToBrl(value, rate = usdBrlRateCache.value) {
 function normalizePlanId(planId) {
 	const normalized = String(planId || "ondemand").toLowerCase();
 	if (normalized.includes("ondemand") || normalized.includes("on-demand")) return "ondemand";
-	if (normalized.includes("professional") || normalized.includes("growth") || normalized.includes("pro")) {
-		return "pro";
-	}
-	if (["growth", "professional"].includes(normalized)) return "pro";
+	if (normalized.includes("enterprise")) return "enterprise";
+	if (normalized.includes("professional") || normalized === "pro") return "pro";
+	if (normalized.includes("growth")) return "growth";
 	if (["basic", "starter", "free"].includes(normalized)) return "ondemand";
 	return normalized;
 }
@@ -781,6 +804,18 @@ function getPlanCatalog() {
 			currency: "BRL",
 			usdPricePerExtraImage: 0.18,
 			monthlyPriceUsd: 0,
+		},
+		{
+			id: "growth",
+			name: "Growth",
+			description:
+				"Mensalidade intermediaria com 700 sessoes incluidas, consultor stylist e layout hero no provador.",
+			monthlyPrice: convertUsdToBrl(89, rate),
+			imagesIncluded: 700,
+			pricePerExtraImage: convertUsdToBrl(0.12, rate),
+			currency: "BRL",
+			usdPricePerExtraImage: 0.12,
+			monthlyPriceUsd: 89,
 		},
 		{
 			id: "pro",
@@ -1573,7 +1608,7 @@ async function resolveWidgetPublicId(storeId, storeUrl = "") {
 	const directCandidates = [normalizedDomain, shopKey].filter(Boolean);
 	for (const candidate of directCandidates) {
 		const widgetKey = await findWidgetKeyByShopDomain(candidate);
-		if (widgetKey?.public_id) {
+		if (widgetKey?.public_id && widgetKey?.is_active !== false) {
 			return String(widgetKey.public_id);
 		}
 	}
@@ -1619,6 +1654,32 @@ async function resolveWidgetPublicId(storeId, storeUrl = "") {
 	}
 
 	return "";
+}
+
+async function reactivateWidgetKeysForStore(storeId, storeUrl = "") {
+	const shopKey = getCanonicalShopKey(storeId);
+	const normalizedDomain = normalizeStoreUrl(storeUrl);
+	const candidates = Array.from(new Set([normalizedDomain, shopKey].filter(Boolean)));
+	const results = [];
+	for (const candidate of candidates) {
+		const result = await reactivateWidgetKeyForShop({
+			shopDomain: candidate,
+			supabaseSelectFirst,
+			supabaseRequest,
+			generateWidgetPublicId,
+		});
+		results.push({ shopDomain: candidate, ...result });
+	}
+	return results;
+}
+
+async function ensureAdminBillingActive(storeId, storeUrl, res) {
+	if (!storeId) return true;
+	const shopRecord = await loadLegacyShopRecord(storeId, storeUrl).catch(() => null);
+	if (!shopRecord) return true;
+	if (isBillingActive(shopRecord)) return true;
+	sendJson(res, 402, { error: "billing_inactive" });
+	return false;
 }
 
 async function enrichTryonRequestBody(rawBody, contentType) {
@@ -1917,7 +1978,9 @@ async function saveSizeCharts(storeId, charts) {
 	const payload = charts.map((chart) => ({
 		shop_domain: shopKey,
 		collection_handle: chart.collection_handle || "",
+		product_handle: chart.product_handle || "",
 		gender: chart.gender,
+		gender_scope: chart.gender_scope || "both",
 		collection_type: chart.collection_type || "upper",
 		collection_elasticity: chart.collection_elasticity || "structured",
 		measurement_refs: Array.isArray(chart.measurement_refs)
@@ -2476,10 +2539,16 @@ async function getAnalyticsSummary(storeId, storeUrl = "", days = 30) {
 	since.setDate(since.getDate() - periodDays);
 
 	let shopRecord = null;
+	let session = null;
 	try {
 		shopRecord = await loadLegacyShopRecord(storeId, storeUrl);
 	} catch (_error) {
 		shopRecord = null;
+	}
+	try {
+		session = await resolveSession(storeId, storeUrl);
+	} catch (_error) {
+		session = null;
 	}
 	const sessions = await loadSessionAnalytics(
 		shopKey,
@@ -2707,6 +2776,30 @@ async function getAnalyticsSummary(storeId, storeUrl = "", days = 30) {
 		// keep default values
 	}
 
+	if (session && shopRecord?.created_at) {
+		try {
+			const nuvemMetrics = await fetchOrderMetricsFromNuvemshop({
+				session,
+				nuvemshopApi,
+				installDate: shopRecord.created_at,
+				periodDays,
+			});
+			orderMetrics = {
+				...orderMetrics,
+				...nuvemMetrics,
+				omafitOrdersAfter: orderMetrics.omafitOrdersAfter,
+				omafitRevenueAfter: orderMetrics.omafitRevenueAfter,
+			};
+			orderMetrics.conversionAfter =
+				orderMetrics.ordersAfter > 0
+					? ((orderMetrics.ordersAfter - orderMetrics.returnsAfter) / orderMetrics.ordersAfter) *
+						100
+					: orderMetrics.conversionAfter;
+		} catch (_error) {
+			// keep supabase-only metrics
+		}
+	}
+
 	const avgSessionSeconds = average(sessionDurations);
 	const recommendationCoveragePercent =
 		totalSessions > 0 ? (sessionsWithRecommendation / totalSessions) * 100 : null;
@@ -2891,12 +2984,169 @@ async function handleApi(req, res, reqUrl) {
 			lastSyncAt: new Date().toISOString(),
 		});
 		await saveNuvemshopCredential(normalizedSession, storeData);
-		const row = await upsertStoreRecord(normalizedSession, storeData);
+		const row = 		await upsertStoreRecord(normalizedSession, storeData);
+		await reactivateWidgetKeysForStore(
+			normalizedSession.storeId,
+			normalizedSession.store?.url || "",
+		).catch(() => null);
 		sendJson(res, 200, {
 			ok: true,
 			session: normalizedSession,
 			store: row || storeData,
 		});
+		return true;
+	}
+
+	if (pathname === "/api/products") {
+		if (!session) {
+			sendJson(res, 200, { products: [] });
+			return true;
+		}
+		if (!(await ensureAdminBillingActive(storeContext.storeId, storeContext.storeUrl, res))) {
+			return true;
+		}
+		try {
+			const products = await listStoreProducts(session, nuvemshopApi);
+			sendJson(res, 200, { products });
+		} catch (error) {
+			sendJson(res, 500, { error: error.message || "Nao foi possivel carregar produtos." });
+		}
+		return true;
+	}
+
+	if (pathname === "/api/widget-keys/reactivate" && method === "POST") {
+		if (!storeContext.storeId) {
+			sendJson(res, 400, { error: "store_id is required" });
+			return true;
+		}
+		const results = await reactivateWidgetKeysForStore(
+			storeContext.storeId,
+			storeContext.storeUrl,
+		);
+		sendJson(res, 200, { ok: true, results });
+		return true;
+	}
+
+	if (pathname === "/api/widget/catalog-search" && method === "POST") {
+		try {
+			const payload = await readJsonBody(req);
+			const shopDomain = String(payload.shop_domain || storeContext.shopKey || "").trim();
+			const publicId = String(payload.public_id || "").trim();
+			const auth = verifyCatalogSearchSignature(payload, {
+				shopDomain,
+				publicId,
+				timestamp: payload.timestamp,
+				signature: payload.signature,
+			});
+			if (!auth.ok) {
+				sendJson(res, 401, { error: "unauthorized", candidates: [], reason: auth.reason });
+				return true;
+			}
+			const widgetSession = await resolveSession(storeContext.storeId, storeContext.storeUrl);
+			if (!widgetSession) {
+				sendJson(res, 400, { error: "no_session", candidates: [] });
+				return true;
+			}
+			const shopRecord = await loadLegacyShopRecord(
+				storeContext.storeId,
+				storeContext.storeUrl,
+			).catch(() => null);
+			const plan = normalizePlanId(shopRecord?.plan || "ondemand");
+			if (!hasStylistConsultantAccess(plan)) {
+				sendJson(res, 403, { error: "plan_required", candidates: [] });
+				return true;
+			}
+			const candidates = await searchCatalogCandidates(widgetSession, nuvemshopApi, payload);
+			sendJson(res, 200, { candidates, error: null });
+		} catch (error) {
+			sendJson(res, 500, { error: error.message || "catalog_search_failed", candidates: [] });
+		}
+		return true;
+	}
+
+	if (pathname === "/api/widget/product-by-handle" && method === "GET") {
+		try {
+			const shopDomain = String(
+				reqUrl.searchParams.get("shop_domain") || storeContext.shopKey || "",
+			).trim();
+			const publicId = String(reqUrl.searchParams.get("public_id") || "").trim();
+			const handle = String(reqUrl.searchParams.get("handle") || "").trim();
+			const auth = verifyProductByHandleSignature({
+				shopDomain,
+				publicId,
+				handle,
+				timestamp: reqUrl.searchParams.get("timestamp"),
+				signature: reqUrl.searchParams.get("signature"),
+			});
+			if (!auth.ok) {
+				sendJson(res, 401, { error: "unauthorized", product: null, reason: auth.reason });
+				return true;
+			}
+			const widgetSession = await resolveSession(storeContext.storeId, storeContext.storeUrl);
+			if (!widgetSession) {
+				sendJson(res, 400, { error: "no_session", product: null });
+				return true;
+			}
+			const result = await getCatalogProductByHandle(widgetSession, nuvemshopApi, handle);
+			sendJson(res, 200, {
+				product: result?.product || null,
+				error: result?.product ? null : "not_found",
+			});
+		} catch (error) {
+			sendJson(res, 500, { error: error.message || "product_lookup_failed", product: null });
+		}
+		return true;
+	}
+
+	if (pathname === "/api/widget/suggestion-events" && method === "POST") {
+		try {
+			const payload = await readJsonBody(req);
+			const shopDomain = String(payload.shop_domain || storeContext.shopKey || "").trim();
+			const publicId = String(payload.public_id || "").trim();
+			const auth = verifySuggestionEventSignature(payload, {
+				shopDomain,
+				publicId,
+				timestamp: payload.timestamp,
+				signature: payload.signature,
+			});
+			if (!auth.ok) {
+				sendJson(res, 401, { ok: false, error: "unauthorized", reason: auth.reason });
+				return true;
+			}
+			const result = await recordSuggestionEvent(supabaseUpsert, shopDomain, payload);
+			sendJson(res, 200, result);
+		} catch (error) {
+			sendJson(res, 500, { ok: false, error: error.message || "suggestion_event_failed" });
+		}
+		return true;
+	}
+
+	if (pathname === "/api/analytics/orders") {
+		if (!session || !storeContext.storeId) {
+			sendJson(res, 200, {
+				ordersBefore: null,
+				ordersAfter: 0,
+				returnsBefore: null,
+				returnsAfter: 0,
+				conversionBefore: null,
+				conversionAfter: null,
+				omafitOrdersAfter: 0,
+				omafitRevenueAfter: 0,
+			});
+			return true;
+		}
+		try {
+			const shopRecord = await loadLegacyShopRecord(storeContext.storeId, storeContext.storeUrl);
+			const metrics = await fetchOrderMetricsFromNuvemshop({
+				session,
+				nuvemshopApi,
+				installDate: shopRecord?.created_at,
+				periodDays: reqUrl.searchParams.get("period") || 30,
+			});
+			sendJson(res, 200, metrics);
+		} catch (error) {
+			sendJson(res, 500, { error: error.message || "analytics_orders_failed" });
+		}
 		return true;
 	}
 
@@ -3036,11 +3286,29 @@ async function handleApi(req, res, reqUrl) {
 		const resolvedStoreUrl =
 			storeContext.storeUrl ||
 			normalizeStoreUrl(session?.store?.url || session?.store?.domain || "");
-		const publicId = await resolveWidgetPublicId(storeContext.storeId, resolvedStoreUrl);
+		const shopRecord = await loadLegacyShopRecord(storeContext.storeId, resolvedStoreUrl).catch(
+			() => null,
+		);
+		const billingPlan = normalizePlanId(shopRecord?.plan || "ondemand");
+		const widgetKey = await findWidgetKeyByShopDomain(
+			getCanonicalShopKey(storeContext.storeId),
+		).catch(() => null);
+		const widgetActive = widgetKey?.is_active !== false;
+		const publicId = widgetActive
+			? await resolveWidgetPublicId(storeContext.storeId, resolvedStoreUrl)
+			: "";
 		sendJson(res, 200, {
-			config,
+			config: {
+				...(config || {}),
+				widget_enabled: widgetActive && config?.widget_enabled !== false,
+				tryon_layout: config?.tryon_layout || "default",
+				tryon_enabled: config?.tryon_enabled !== false,
+			},
 			widgetUrl: getWidgetBaseUrl(req),
 			publicId,
+			billing_plan: billingPlan,
+			stylist_mode_enabled: hasStylistConsultantAccess(billingPlan),
+			hero_layout_enabled: hasGrowthPlusPlan(billingPlan),
 			footwear_collection_handles,
 			size_charts_count,
 			footwear_rows_count,
@@ -3060,6 +3328,9 @@ async function handleApi(req, res, reqUrl) {
 			return true;
 		}
 		if (method === "POST") {
+			if (!(await ensureAdminBillingActive(storeContext.storeId, storeContext.storeUrl, res))) {
+				return true;
+			}
 			try {
 				const payload = await readJsonBody(req);
 				const charts = await saveSizeCharts(storeContext.storeId, payload.charts || []);
@@ -3391,6 +3662,71 @@ async function handleApi(req, res, reqUrl) {
 				});
 			}
 		}
+		if (payload.event === "order/paid" && storeId) {
+			try {
+				const orderSession = await resolveSession(storeId);
+				if (orderSession?.accessToken) {
+					const orderId = String(payload.id || payload.order_id || "").trim();
+					if (orderId) {
+						const orderResponse = await nuvemshopApi(orderSession, `/orders/${orderId}`, {
+							method: "GET",
+						});
+						if (orderResponse.ok) {
+							const order = await orderResponse.json().catch(() => null);
+							if (order) {
+								const shopKey = getCanonicalShopKey(storeId);
+								const storeUrl = normalizeStoreUrl(orderSession.store?.url || "");
+								await upsertOmafitOrderAnalytics({
+									shopDomain: shopKey,
+									order,
+									supabaseRequest,
+									supabaseDelete,
+								});
+								if (storeUrl && storeUrl !== shopKey) {
+									await upsertOmafitOrderAnalytics({
+										shopDomain: storeUrl,
+										order,
+										supabaseRequest,
+										supabaseDelete,
+									});
+								}
+							}
+						}
+					}
+				}
+			} catch (_error) {
+				// best effort order analytics
+			}
+		}
+		const complianceEvent = String(payload.event || "").toLowerCase();
+		if (complianceEvent.includes("redact") || complianceEvent.includes("data_request")) {
+			const shopKey = getCanonicalShopKey(storeId);
+			const storeUrl = normalizeStoreUrl(getSession(storeId)?.store?.url || "");
+			if (complianceEvent.includes("store") && complianceEvent.includes("redact")) {
+				await handleStoreRedact({
+					storeId,
+					shopKey,
+					storeUrl,
+					supabaseDelete,
+					deleteSession,
+					deleteNuvemshopCredential,
+				});
+			}
+			if (complianceEvent.includes("customer") && complianceEvent.includes("redact")) {
+				await handleCustomerRedact({
+					shopKey,
+					customerId: payload.customer?.id || payload.customer_id,
+					supabaseDelete,
+				});
+			}
+			if (complianceEvent.includes("data_request")) {
+				await handleCustomerDataRequest({
+					shopKey,
+					customerId: payload.customer?.id || payload.customer_id,
+					supabaseSelectAll,
+				});
+			}
+		}
 		sendJson(res, 200, { ok: true });
 		return true;
 	}
@@ -3465,6 +3801,10 @@ async function handleAuth(req, res, reqUrl) {
 			await saveNuvemshopCredential(session, storeData);
 			await upsertStoreRecord(session, storeData);
 			await ensureWebhooks(session, req);
+			await reactivateWidgetKeysForStore(
+				session.storeId,
+				normalizeStoreUrl(storeData.original_domain || storeData.domains?.[0] || ""),
+			).catch(() => null);
 			const storeDomain = normalizeStoreUrl(
 				storeData.original_domain || storeData.domains?.[0] || session.store?.url || "",
 			);

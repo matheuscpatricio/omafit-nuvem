@@ -6,15 +6,17 @@ import {
 } from "../lib/nexo";
 import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { I18nProvider, useI18n } from "./i18n";
+import { OmafitBrandBanner } from "./OmafitBrandBanner";
 import type {
 	OmafitAdminContext,
 	OmafitAnalyticsSummary,
 	OmafitCollection,
+	OmafitProduct,
 	OmafitSizeChart,
 	OmafitWidgetConfig,
 } from "../shared/models";
 
-type SectionId = "dashboard" | "billing" | "widget" | "size-charts" | "analytics";
+type SectionId = "dashboard" | "billing" | "widget" | "size-charts" | "size-chart-mapping" | "analytics";
 
 type StoreBootstrap = {
 	id: string;
@@ -101,6 +103,7 @@ function getInitialSection(): SectionId {
 	if (section === "billing") return "billing";
 	if (section === "widget") return "widget";
 	if (section === "size-charts") return "size-charts";
+	if (section === "size-chart-mapping") return "size-chart-mapping";
 	if (section === "analytics") return "analytics";
 	return "dashboard";
 }
@@ -259,6 +262,7 @@ function AppContent({ nexo, store }: AdminAppProps) {
 	);
 	const [collections, setCollections] = useState<OmafitCollection[]>([]);
 	const [sizeCharts, setSizeCharts] = useState<OmafitSizeChart[]>([defaultChart()]);
+	const [products, setProducts] = useState<OmafitProduct[]>([]);
 	const [analytics, setAnalytics] = useState<OmafitAnalyticsSummary | null>(null);
 	const [days, setDays] = useState("30");
 	const [busyAction, setBusyAction] = useState<string | null>(null);
@@ -282,7 +286,17 @@ function AppContent({ nexo, store }: AdminAppProps) {
 			url.searchParams.set("section", nextSection);
 			window.history.replaceState({}, "", url.toString());
 			syncPathname(nexo, `/${nextSection}`);
-			navigateHeader(nexo, { text: `Omafit · ${t(`nav.${nextSection === "size-charts" ? "sizeCharts" : nextSection}`)}` });
+			navigateHeader(nexo, {
+				text: `Omafit · ${t(
+					`nav.${
+						nextSection === "size-charts"
+							? "sizeCharts"
+							: nextSection === "size-chart-mapping"
+								? "sizeChartMapping"
+								: nextSection
+					}`,
+				)}`,
+			});
 		},
 		[nexo, t],
 	);
@@ -339,6 +353,15 @@ function AppContent({ nexo, store }: AdminAppProps) {
 		}
 	}, [withStoreQuery]);
 
+	const loadProducts = useCallback(async () => {
+		try {
+			const data = await fetchJson<{ products: OmafitProduct[] }>(withStoreQuery("/api/products"));
+			setProducts(data.products || []);
+		} catch (_error) {
+			setProducts([]);
+		}
+	}, [withStoreQuery]);
+
 	const loadAnalytics = useCallback(async () => {
 		setBusyAction("analytics");
 		try {
@@ -380,7 +403,11 @@ function AppContent({ nexo, store }: AdminAppProps) {
 		if (section === "analytics") {
 			loadAnalytics();
 		}
-	}, [days, loadAnalytics, section]);
+		if (section === "size-chart-mapping") {
+			void loadProducts();
+			void loadSizeCharts();
+		}
+	}, [days, loadAnalytics, loadProducts, loadSizeCharts, section]);
 
 	const saveWidget = useCallback(async () => {
 		setBusyAction("widget");
@@ -523,22 +550,15 @@ function AppContent({ nexo, store }: AdminAppProps) {
 	}
 
 	return (
-		<div style={pageStyle}>
-			<div style={shellStyle}>
-				<header
-					style={{
-						...cardStyle,
-						display: "grid",
-						gap: 12,
-						background:
-							"linear-gradient(135deg, rgba(17,24,39,1) 0%, rgba(52,73,94,1) 100%)",
-						color: "#ffffff",
-					}}
-				>
+		<div style={pageStyle} className="omafit-brand-shell">
+			<div style={shellStyle} className="omafit-brand-shell__content">
+				<OmafitBrandBanner variant={section === "dashboard" ? "hero" : "compact"} />
+
+				<header style={{ ...cardStyle, display: "grid", gap: 12 }}>
 					<div style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
 						<div style={{ display: "grid", gap: 8 }}>
-							<strong style={{ fontSize: 28 }}>{context?.appName || "Omafit"}</strong>
-							<span style={{ color: "rgba(255,255,255,0.82)" }}>{t("dashboard.subtitle")}</span>
+							<strong style={{ fontSize: 18 }}>{context?.appName || "Omafit"}</strong>
+							<span style={subtleTextStyle}>{t("dashboard.subtitle")}</span>
 						</div>
 						<div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "start" }}>
 							<a href={context?.supportUrl} style={{ ...buttonBaseStyle, textDecoration: "none", color: "#111827" }}>
@@ -583,6 +603,7 @@ function AppContent({ nexo, store }: AdminAppProps) {
 							["billing", t("nav.billing")],
 							["widget", t("nav.widget")],
 							["size-charts", t("nav.sizeCharts")],
+							["size-chart-mapping", t("nav.sizeChartMapping")],
 							["analytics", t("nav.analytics")],
 						] as Array<[SectionId, string]>
 					).map(([id, label]) => (
@@ -625,6 +646,19 @@ function AppContent({ nexo, store }: AdminAppProps) {
 						}}
 					>
 						{error}
+					</div>
+				) : null}
+
+				{context?.billing.status && context.billing.status !== "active" ? (
+					<div
+						style={{
+							...cardStyle,
+							borderColor: "#fde68a",
+							background: "#fffbeb",
+							color: "#92400e",
+						}}
+					>
+						{t("billing.inactiveBanner")}
 					</div>
 				) : null}
 
@@ -679,6 +713,10 @@ function AppContent({ nexo, store }: AdminAppProps) {
 						onSave={saveCharts}
 						busy={busyAction === "charts"}
 					/>
+				) : null}
+
+				{section === "size-chart-mapping" ? (
+					<SizeChartMappingSection products={products} charts={sizeCharts} />
 				) : null}
 
 				{section === "analytics" ? (
@@ -1096,6 +1134,31 @@ function SizeChartEditor({
 				</label>
 
 				<label style={labelStyle}>
+					<span>Produto (handle)</span>
+					<input
+						style={inputStyle}
+						value={chart.product_handle || ""}
+						onChange={(event) => update({ product_handle: event.target.value })}
+						placeholder="opcional — escopo por produto"
+					/>
+				</label>
+
+				<label style={labelStyle}>
+					<span>Escopo de gênero</span>
+					<select
+						style={inputStyle}
+						value={chart.gender_scope || "both"}
+						onChange={(event) =>
+							update({ gender_scope: event.target.value as OmafitSizeChart["gender_scope"] })
+						}
+					>
+						<option value="both">Ambos</option>
+						<option value="male">Masculino</option>
+						<option value="female">Feminino</option>
+					</select>
+				</label>
+
+				<label style={labelStyle}>
 					<span>{t("sizeCharts.gender")}</span>
 					<select
 						style={inputStyle}
@@ -1306,6 +1369,35 @@ function AnalyticsSection({
 						<StatCard label={t("analytics.returns")} value={String(data.orderMetrics.returnsAfter)} />
 					</div>
 
+					<div
+						style={{
+							display: "grid",
+							gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+							gap: 16,
+						}}
+					>
+						<StatCard
+							label="Pedidos antes do Omafit"
+							value={data.orderMetrics.ordersBefore != null ? String(data.orderMetrics.ordersBefore) : "—"}
+						/>
+						<StatCard
+							label="Pedidos depois do Omafit"
+							value={String(data.orderMetrics.ordersAfter ?? 0)}
+						/>
+						<StatCard
+							label="Devoluções antes"
+							value={data.orderMetrics.returnsBefore != null ? String(data.orderMetrics.returnsBefore) : "—"}
+						/>
+						<StatCard
+							label="Conversão depois"
+							value={
+								data.orderMetrics.conversionAfter != null
+									? `${data.orderMetrics.conversionAfter.toFixed(1)}%`
+									: "—"
+							}
+						/>
+					</div>
+
 					<div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
 						<div style={{ ...cardStyle, display: "grid", gap: 8 }}>
 							<strong>{t("analytics.avgMale")}</strong>
@@ -1411,6 +1503,86 @@ function AnalyticsSection({
 				</>
 			) : (
 				<div style={cardStyle}>{t("common.noData")}</div>
+			)}
+		</div>
+	);
+}
+
+function pickPreferredCollectionHandle(handles: string[]) {
+	const unique = Array.from(new Set(handles.map((h) => String(h || "").trim()).filter(Boolean)));
+	const lower = (s: string) => s.toLowerCase();
+	const isRefinementOf = (maybeRefined: string, base: string) => {
+		const x = lower(maybeRefined);
+		const b = lower(base);
+		if (!b.length || b === x) return false;
+		return x.startsWith(`${b}-`) || x.startsWith(`${b}_`);
+	};
+	const filtered = unique.filter((h) => !unique.some((other) => other !== h && isRefinementOf(other, h)));
+	const candidates = filtered.length > 0 ? filtered : unique;
+	return candidates.sort((a, b) => b.split(/[-_]/).length - a.split(/[-_]/).length)[0] || "";
+}
+
+function resolveChartForProduct(product: OmafitProduct, charts: OmafitSizeChart[]) {
+	const productHandle = String(product.handle || "").toLowerCase();
+	const collectionHandles = (product.collections || []).map((c) => String(c.handle || "").toLowerCase());
+	const preferredCollection = pickPreferredCollectionHandle(collectionHandles);
+	const byProduct = charts.find((c) => String(c.product_handle || "").toLowerCase() === productHandle);
+	if (byProduct) return byProduct;
+	const byCollection = charts.find(
+		(c) => String(c.collection_handle || "").toLowerCase() === preferredCollection,
+	);
+	if (byCollection) return byCollection;
+	return charts.find((c) => !c.collection_handle && !c.product_handle) || null;
+}
+
+function SizeChartMappingSection({
+	products,
+	charts,
+}: {
+	products: OmafitProduct[];
+	charts: OmafitSizeChart[];
+}) {
+	const { t } = useI18n();
+	const rows = products.slice(0, 200).map((product) => {
+		const resolved = resolveChartForProduct(product, charts);
+		return {
+			product,
+			resolvedLabel: resolved
+				? resolved.product_handle
+					? `Produto: ${resolved.product_handle}`
+					: resolved.collection_handle
+						? `Categoria: ${resolved.collection_handle}`
+						: "Global"
+				: "Sem tabela",
+		};
+	});
+	return (
+		<div style={{ ...cardStyle, display: "grid", gap: 12 }}>
+			<strong style={{ fontSize: 18 }}>{t("sizeChartMapping.title")}</strong>
+			<span style={subtleTextStyle}>{t("sizeChartMapping.subtitle")}</span>
+			{rows.length === 0 ? (
+				<span style={subtleTextStyle}>{t("common.noData")}</span>
+			) : (
+				<div style={{ overflowX: "auto" }}>
+					<table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
+						<thead>
+							<tr>
+								<th style={{ textAlign: "left", padding: 8 }}>Produto</th>
+								<th style={{ textAlign: "left", padding: 8 }}>Handle</th>
+								<th style={{ textAlign: "left", padding: 8 }}>Tabela resolvida</th>
+							</tr>
+						</thead>
+						<tbody>
+							{rows.map(({ product, resolvedLabel }) => (
+								<tr key={product.id}>
+									<td style={{ padding: 8, borderTop: "1px solid #e5e7eb" }}>{product.title}</td>
+									<td style={{ padding: 8, borderTop: "1px solid #e5e7eb" }}>{product.handle}</td>
+									<td style={{ padding: 8, borderTop: "1px solid #e5e7eb" }}>{resolvedLabel}</td>
+								</tr>
+							))}
+						</tbody>
+					</table>
+				</div>
 			)}
 		</div>
 	);

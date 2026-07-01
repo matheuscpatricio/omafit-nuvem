@@ -49,3 +49,14 @@ Este documento registra o que foi reaproveitado do app Shopify como referencia p
 - Manter o projeto Shopify intacto.
 - Concentrar a migracao inteira em `omafit-nuvemshop`.
 - Preservar o maximo possivel da regra de negocio e da modelagem de dados do Omafit.
+
+## Atualizacoes recentes (sync Shopify, sem AR)
+
+- `GET /api/products`, `POST /api/widget-keys/reactivate`
+- Webhooks `order/paid` e compliance (store/customer redact, data request)
+- APIs stylist: `catalog-search`, `product-by-handle`, `suggestion-events`
+- Plano Growth, billing gate admin, flags `stylist_mode_enabled` / `tryon_layout`
+- Secao admin `size-chart-mapping` com `product_handle` e `gender_scope`
+- Widget try-on: `TryOnWidget.tsx` portado do `omafit-widget` com bootstrap em `WidgetPage.tsx`
+- Analytics: pedidos antes/depois via API Nuvemshop + ROI no admin
+- SQL: `supabase_nuvemshop_widget_extensions.sql`

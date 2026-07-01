@@ -330,7 +330,17 @@ function attachMessageBridge() {
 			form?.querySelector<HTMLElement>('input[type="submit"]');
 		const beforeVariantId = getCurrentVariantId();
 
-		window.setTimeout(() => {
+	window.setTimeout(() => {
+			const noteField =
+				form?.querySelector<HTMLTextAreaElement>('textarea[name="note"]') ||
+				form?.querySelector<HTMLInputElement>('input[name="note"]');
+			if (noteField) {
+				const marker = "_source=omafit_tryon";
+				const current = String(noteField.value || "").trim();
+				if (!current.includes(marker)) {
+					noteField.value = current ? `${current} | ${marker}` : marker;
+				}
+			}
 			if (submitButton) {
 				submitButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 				postCartResult(
