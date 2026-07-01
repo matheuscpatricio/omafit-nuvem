@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useState, type CSSProperties, type Rea
 import { I18nProvider, useI18n } from "./i18n";
 import { OmafitBrandBanner } from "./OmafitBrandBanner";
 import { SizeChartsSection } from "./SizeChartsSection";
+import { WidgetSection } from "./WidgetSection";
 import type {
 	OmafitAdminContext,
 	OmafitAnalyticsSummary,
@@ -167,6 +168,11 @@ function defaultWidgetConfig(locale: string): OmafitWidgetConfig {
 		widget_enabled: true,
 		excluded_collections: [],
 		admin_locale: locale || "pt-BR",
+		embed_position: "below_buy_buttons",
+		cta_type: "link",
+		cta_button_border_radius: 40,
+		tryon_layout: "default",
+		tryon_layout_background_image: "",
 	};
 }
 
@@ -184,6 +190,7 @@ function AppContent({ nexo, store }: AdminAppProps) {
 	const [analytics, setAnalytics] = useState<OmafitAnalyticsSummary | null>(null);
 	const [days, setDays] = useState("30");
 	const [busyAction, setBusyAction] = useState<string | null>(null);
+	const [heroUploading, setHeroUploading] = useState(false);
 
 	const storeQuery = useMemo(() => {
 		const params = new URLSearchParams();
@@ -348,6 +355,42 @@ function AppContent({ nexo, store }: AdminAppProps) {
 				setError(requestError instanceof Error ? requestError.message : t("feedback.error"));
 			} finally {
 				setBusyAction(null);
+			}
+		},
+		[t, widgetConfig, withStoreQuery],
+	);
+
+	const uploadHeroBackground = useCallback(
+		async (file: File) => {
+			setHeroUploading(true);
+			setError(null);
+			try {
+				const formData = new FormData();
+				formData.append("file", file);
+				const response = await fetch(withStoreQuery("/api/widget/hero-background-upload"), {
+					method: "POST",
+					body: formData,
+				});
+				const payload = await response.json().catch(() => ({}));
+				if (!response.ok || !payload?.url) {
+					throw new Error(payload?.error || t("widget.errorUploadHeroBackground"));
+				}
+				const nextConfig = {
+					...widgetConfig,
+					tryon_layout_background_image: String(payload.url),
+					tryon_layout: "hero" as const,
+				};
+				setWidgetConfig(nextConfig);
+				await fetchJson(withStoreQuery("/api/widget-config"), {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify(nextConfig),
+				});
+				setNotice(t("widget.configSaved"));
+			} catch (requestError) {
+				setError(requestError instanceof Error ? requestError.message : t("feedback.error"));
+			} finally {
+				setHeroUploading(false);
 			}
 		},
 		[t, widgetConfig, withStoreQuery],
@@ -540,15 +583,18 @@ function AppContent({ nexo, store }: AdminAppProps) {
 					/>
 				) : null}
 
-				{section === "widget" ? (
+				{section === "widget" && context ? (
 					<WidgetSection
 						config={widgetConfig}
 						collections={collections}
+						currentPlan={context.billing.plan || "ondemand"}
 						onChange={setWidgetConfig}
 						onSave={saveWidget}
 						onUploadLogo={uploadLogo}
+						onUploadHeroBackground={uploadHeroBackground}
 						busy={busyAction === "widget"}
 						logoUploading={busyAction === "logo-upload"}
+						heroUploading={heroUploading}
 					/>
 				) : null}
 
@@ -682,7 +728,14 @@ function BillingSection({
 					value={getPlanDisplayName(context.billing.plans, context.billing.plan)}
 				/>
 				<StatCard label={t("billing.status")} value={context.billing.status} />
-				<StatCard label={t("billing.remaining")} value={String(context.billing.usage.remaining)} />
+				<StatCard
+					label={t("billing.remaining")}
+					value={
+						context.billing.usage.unlimited
+							? t("billing.unlimited")
+							: String(context.billing.usage.remaining ?? 0)
+					}
+				/>
 				<StatCard label={t("billing.extra")} value={String(context.billing.usage.extraImages)} />
 			</div>
 
@@ -701,14 +754,37 @@ function BillingSection({
 						</div>
 						<div style={subtleTextStyle}>
 							{t("billing.monthlyPrice")}:{" "}
-							{plan.monthlyPrice > 0 ? formatMoney(plan.monthlyPrice, plan.currency) : t("billing.free")}
+							{plan.monthlyPriceUsd && plan.monthlyPriceUsd > 0
+								? `$${plan.monthlyPriceUsd}/30 ${t("billing.days")}`
+								: plan.monthlyPrice > 0
+									? formatMoney(plan.monthlyPrice, plan.currency)
+									: t("billing.free")}
+						</div>
+						{plan.annualPriceUsd ? (
+							<div style={subtleTextStyle}>
+								{t("billing.annualPrice")}: ${plan.annualPriceUsd.toLocaleString("en-US")}
+								{plan.annualDiscountUsd
+									? ` (${t("billing.annualDiscount", { amount: `$${plan.annualDiscountUsd.toLocaleString("en-US")}` })})`
+									: ""}
+							</div>
+						) : null}
+						<div style={subtleTextStyle}>
+							{t("billing.planIncludes")}:{" "}
+							{plan.unlimitedTryOn ? t("billing.unlimited") : plan.imagesIncluded}
 						</div>
 						<div style={subtleTextStyle}>
-							{t("billing.planIncludes")}: {plan.imagesIncluded}
+							{t("billing.pricePerExtra")}:{" "}
+							{plan.unlimitedTryOn
+								? t("billing.planEnterpriseExtra")
+								: formatMoney(plan.pricePerExtraImage, plan.currency)}
 						</div>
-						<div style={subtleTextStyle}>
-							{t("billing.pricePerExtra")}: {formatMoney(plan.pricePerExtraImage, plan.currency)}
-						</div>
+						{plan.featureKeys?.length ? (
+							<ul style={{ ...subtleTextStyle, margin: 0, paddingLeft: 18 }}>
+								{plan.featureKeys.map((key) => (
+									<li key={key}>{t(key)}</li>
+								))}
+							</ul>
+						) : null}
 						<button
 							type="button"
 							style={plan.id === context.billing.plan ? primaryButtonStyle : buttonBaseStyle}
@@ -725,157 +801,6 @@ function BillingSection({
 						</button>
 					</div>
 				))}
-			</div>
-		</div>
-	);
-}
-
-function WidgetSection({
-	config,
-	collections,
-	onChange,
-	onSave,
-	onUploadLogo,
-	busy,
-	logoUploading,
-}: {
-	config: OmafitWidgetConfig;
-	collections: OmafitCollection[];
-	onChange: (next: OmafitWidgetConfig) => void;
-	onSave: () => Promise<void>;
-	onUploadLogo: (file: File) => Promise<void>;
-	busy: boolean;
-	logoUploading: boolean;
-}) {
-	const { t } = useI18n();
-	return (
-		<div style={{ display: "grid", gap: 16 }}>
-			<div style={{ ...cardStyle, display: "grid", gap: 6 }}>
-				<strong style={{ fontSize: 18 }}>{t("widget.title")}</strong>
-				<span style={subtleTextStyle}>{t("widget.subtitle")}</span>
-			</div>
-
-			<div style={{ display: "grid", gridTemplateColumns: "1.2fr 0.8fr", gap: 16 }}>
-				<div style={{ ...cardStyle, display: "grid", gap: 16 }}>
-					<label style={labelStyle}>
-						<span>{t("widget.linkText")}</span>
-						<input
-							style={inputStyle}
-							value={config.link_text}
-							onChange={(event) => onChange({ ...config, link_text: event.target.value })}
-						/>
-					</label>
-
-					<div style={{ display: "grid", gap: 8 }}>
-						<span style={{ ...labelStyle, gap: 0 }}>{t("widget.logoUrl")}</span>
-						<input
-							type="file"
-							accept="image/png,image/jpeg,image/webp,image/svg+xml"
-							onChange={(event) => {
-								const file = event.target.files?.[0];
-								if (file) void onUploadLogo(file);
-								event.currentTarget.value = "";
-							}}
-							disabled={logoUploading}
-						/>
-						{config.store_logo ? (
-							<span style={subtleTextStyle}>
-								Logo atual carregado. {logoUploading ? "Enviando novo arquivo..." : ""}
-							</span>
-						) : null}
-					</div>
-
-					<label style={labelStyle}>
-						<span>{t("widget.primaryColor")}</span>
-						<div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-							<input
-								type="color"
-								value={config.primary_color}
-								onChange={(event) => onChange({ ...config, primary_color: event.target.value })}
-								style={{ width: 52, height: 40, border: "none", background: "transparent" }}
-							/>
-							<input
-								style={inputStyle}
-								value={config.primary_color}
-								onChange={(event) => onChange({ ...config, primary_color: event.target.value })}
-							/>
-						</div>
-					</label>
-
-					<label style={{ ...labelStyle, gridTemplateColumns: "auto 1fr", alignItems: "center" }}>
-						<input
-							type="checkbox"
-							checked={config.widget_enabled}
-							onChange={(event) =>
-								onChange({ ...config, widget_enabled: event.target.checked })
-							}
-						/>
-						<span>{t("widget.enable")}</span>
-					</label>
-
-					<div style={{ display: "grid", gap: 10 }}>
-						<strong>{t("widget.categories")}</strong>
-						<span style={subtleTextStyle}>{t("widget.categoriesHint")}</span>
-						<div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-							{collections.map((collection) => {
-								const id = String(collection.id);
-								const active = config.excluded_collections.includes(id);
-								return (
-									<button
-										key={id}
-										type="button"
-										onClick={() =>
-											onChange({
-												...config,
-												excluded_collections: active
-													? config.excluded_collections.filter((item) => item !== id)
-													: [...config.excluded_collections, id],
-											})
-										}
-										style={{
-											...buttonBaseStyle,
-											padding: "8px 12px",
-											background: active ? "#fee2e2" : "#ffffff",
-											borderColor: active ? "#ef4444" : "#d1d5db",
-										}}
-									>
-										{collection.title}
-									</button>
-								);
-							})}
-						</div>
-					</div>
-
-					<button type="button" style={primaryButtonStyle} onClick={onSave} disabled={busy}>
-						{busy ? t("common.loading") : t("common.save")}
-					</button>
-				</div>
-
-				<div style={{ ...cardStyle, display: "grid", gap: 16, alignContent: "start" }}>
-					<strong>{t("widget.preview")}</strong>
-					<div style={{ ...subtleTextStyle, marginBottom: 4 }}>PDP CTA</div>
-					<div
-						style={{
-							border: `1px solid ${config.primary_color}`,
-							borderRadius: 14,
-							padding: "14px 16px",
-							color: config.primary_color,
-							fontWeight: 700,
-							display: "inline-flex",
-							alignItems: "center",
-							gap: 10,
-						}}
-					>
-						{config.store_logo ? (
-							<img
-								src={config.store_logo}
-								alt=""
-								style={{ width: 24, height: 24, objectFit: "contain", borderRadius: 4 }}
-							/>
-						) : null}
-						<span>{config.link_text || "Ver meu tamanho ideal"}</span>
-					</div>
-				</div>
 			</div>
 		</div>
 	);

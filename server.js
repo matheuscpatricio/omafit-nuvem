@@ -829,6 +829,28 @@ function getPlanCatalog() {
 			usdPricePerExtraImage: 0.08,
 			monthlyPriceUsd: 300,
 		},
+		{
+			id: "enterprise",
+			name: "Enterprise",
+			description:
+				"Sessoes de try-on ilimitadas, AR ilimitado e personalizacao total para alto volume.",
+			monthlyPrice: convertUsdToBrl(600, rate),
+			monthlyPriceUsd: 600,
+			annualPriceUsd: 6000,
+			annualDiscountUsd: 1200,
+			imagesIncluded: 2_000_000,
+			unlimitedTryOn: true,
+			pricePerExtraImage: 0,
+			currency: "BRL",
+			usdPricePerExtraImage: 0,
+			featureKeys: [
+				"billing.enterpriseFeatureTryOn",
+				"billing.enterpriseFeatureAr",
+				"billing.enterpriseFeatureMeasurements",
+				"billing.enterpriseFeatureSupport",
+				"billing.enterpriseFeatureCustom",
+			],
+		},
 	];
 }
 
@@ -1897,8 +1919,13 @@ async function buildTryonDebugSnapshot(rawBody, contentType) {
 	};
 }
 
-async function saveWidgetConfig(storeId, payload) {
+async function saveWidgetConfig(storeId, payload, storeUrl = "") {
 	const shopKey = getCanonicalShopKey(storeId);
+	const shopRecord = await loadLegacyShopRecord(storeId, storeUrl).catch(() => null);
+	const planId = normalizePlanId(shopRecord?.plan || "ondemand");
+	const heroAllowed = hasGrowthPlusPlan(planId);
+	const radius = Number(payload?.cta_button_border_radius);
+	const bg = String(payload?.tryon_layout_background_image || "").trim();
 	const record = {
 		shop_domain: shopKey,
 		link_text: String(payload.link_text || "Ver meu tamanho ideal"),
@@ -1909,12 +1936,22 @@ async function saveWidgetConfig(storeId, payload) {
 			? payload.excluded_collections.map((value) => String(value))
 			: [],
 		admin_locale: String(payload.admin_locale || "pt-BR"),
+		embed_position:
+			payload.embed_position === "above_buy_buttons" ? "above_buy_buttons" : "below_buy_buttons",
+		cta_type: payload.cta_type === "button" ? "button" : "link",
+		cta_button_border_radius: Number.isFinite(radius)
+			? Math.max(0, Math.min(40, Math.round(radius)))
+			: 40,
+		tryon_layout: normalizeWidgetLayout(payload.tryon_layout, heroAllowed),
+		tryon_layout_background_image: bg || null,
+		tryon_enabled: payload.tryon_enabled !== false,
 		updated_at: new Date().toISOString(),
 	};
 	const rows = await supabaseUpsert("widget_configurations", [record], {
 		onConflict: "shop_domain",
 	});
-	return Array.isArray(rows) ? rows[0] || record : record;
+	const saved = Array.isArray(rows) ? rows[0] || record : record;
+	return normalizeWidgetConfigForClient(saved, planId);
 }
 
 async function getSizeCharts(storeId) {
@@ -1994,16 +2031,19 @@ async function saveSizeCharts(storeId, charts) {
 function toUsageSummary(shopRecord) {
 	const planId = normalizePlanId(shopRecord?.plan || "ondemand");
 	const planDef = getPlanDefinition(planId);
+	const isEnterprise = planId === "enterprise";
 	const isOnDemand = ["ondemand", "basic", "starter", "free"].includes(planId);
 	const imagesIncluded =
 		Number(shopRecord?.images_included ?? planDef.imagesIncluded) || planDef.imagesIncluded;
 	const freeImagesUsed = Math.min(50, Number(shopRecord?.free_images_used || 0) || 0);
 	const imagesUsedMonth = Number(shopRecord?.images_used_month || 0) || 0;
 	const imagesUsed = isOnDemand ? freeImagesUsed + imagesUsedMonth : imagesUsedMonth;
-	const remaining = isOnDemand
-		? Math.max(0, 50 - Math.min(50, imagesUsed))
-		: Math.max(0, imagesIncluded - imagesUsedMonth);
-	const extraImages = Math.max(0, imagesUsed - imagesIncluded);
+	const remaining = isEnterprise
+		? null
+		: isOnDemand
+			? Math.max(0, 50 - Math.min(50, imagesUsed))
+			: Math.max(0, imagesIncluded - imagesUsedMonth);
+	const extraImages = isEnterprise ? 0 : Math.max(0, imagesUsed - imagesIncluded);
 	return {
 		plan: planId,
 		imagesIncluded,
@@ -2015,7 +2055,43 @@ function toUsageSummary(shopRecord) {
 			planDef.pricePerExtraImage,
 		currency: shopRecord?.currency || planDef.currency,
 		percentage:
-			imagesIncluded > 0 ? Math.min(100, Math.round((imagesUsed / imagesIncluded) * 100)) : 0,
+			isEnterprise || imagesIncluded <= 0
+				? 0
+				: Math.min(100, Math.round((imagesUsed / imagesIncluded) * 100)),
+		unlimited: isEnterprise,
+	};
+}
+
+function normalizeWidgetLayout(value, heroAllowed) {
+	const raw = String(value || "").trim().toLowerCase();
+	if (raw === "hero" && heroAllowed) return "hero";
+	if (raw === "sidebar") return "sidebar";
+	return "default";
+}
+
+function normalizeWidgetConfigForClient(config, planId = "ondemand") {
+	const heroAllowed = hasGrowthPlusPlan(planId);
+	const radius = Number(config?.cta_button_border_radius);
+	return {
+		link_text: String(config?.link_text || "Ver meu tamanho ideal"),
+		store_logo: config?.store_logo ? String(config.store_logo) : "",
+		primary_color: String(config?.primary_color || "#810707"),
+		widget_enabled: config?.widget_enabled !== false,
+		excluded_collections: Array.isArray(config?.excluded_collections)
+			? config.excluded_collections.map((value) => String(value))
+			: [],
+		admin_locale: String(config?.admin_locale || "pt-BR"),
+		embed_position:
+			config?.embed_position === "above_buy_buttons" ? "above_buy_buttons" : "below_buy_buttons",
+		cta_type: config?.cta_type === "button" ? "button" : "link",
+		cta_button_border_radius: Number.isFinite(radius)
+			? Math.max(0, Math.min(40, Math.round(radius)))
+			: 40,
+		tryon_layout: normalizeWidgetLayout(config?.tryon_layout, heroAllowed),
+		tryon_layout_background_image: config?.tryon_layout_background_image
+			? String(config.tryon_layout_background_image)
+			: "",
+		tryon_enabled: config?.tryon_enabled !== false,
 	};
 }
 
@@ -3170,29 +3246,98 @@ async function handleApi(req, res, reqUrl) {
 			return true;
 		}
 		if (method === "GET") {
+			const shopRecord = await loadLegacyShopRecord(
+				storeContext.storeId,
+				storeContext.storeUrl,
+			).catch(() => null);
+			const planId = normalizePlanId(shopRecord?.plan || "ondemand");
 			const config = await getWidgetConfig(storeContext.storeId);
 			sendJson(res, 200, {
-				config: config || {
-					link_text: "Ver meu tamanho ideal",
-					store_logo: "",
-					primary_color: "#810707",
-					widget_enabled: true,
-					excluded_collections: [],
-					admin_locale: "pt-BR",
-				},
+				config: normalizeWidgetConfigForClient(config || {}, planId),
 			});
 			return true;
 		}
 		if (method === "POST") {
 			try {
 				const payload = await readJsonBody(req);
-				const config = await saveWidgetConfig(storeContext.storeId, payload);
+				const config = await saveWidgetConfig(
+					storeContext.storeId,
+					payload,
+					storeContext.storeUrl,
+				);
 				sendJson(res, 200, { config });
 			} catch (error) {
 				sendJson(res, 500, { error: error.message || "Nao foi possivel salvar a configuracao." });
 			}
 			return true;
 		}
+	}
+
+	if (pathname === "/api/widget/hero-background-upload" && method === "POST") {
+		if (!storeContext.storeId) {
+			sendJson(res, 400, { error: "store_id is required" });
+			return true;
+		}
+		try {
+			const rawBody = await readRequestBody(req);
+			const contentType = req.headers["content-type"] || "";
+			const request = new Request("http://localhost/api/widget/hero-background-upload", {
+				method: "POST",
+				headers: { "Content-Type": contentType },
+				body: rawBody,
+			});
+			const formData = await request.formData();
+			const file = formData.get("file");
+			if (!(file instanceof File)) {
+				sendJson(res, 400, { error: "Arquivo de fundo nao enviado." });
+				return true;
+			}
+			if (!file.type.startsWith("image/")) {
+				sendJson(res, 400, { error: "Formato invalido. Use uma imagem." });
+				return true;
+			}
+			if (file.size > 2 * 1024 * 1024) {
+				sendJson(res, 400, { error: "Arquivo muito grande. Limite de 2MB." });
+				return true;
+			}
+			const config = getSupabaseConfig();
+			if (!config) {
+				sendJson(res, 500, { error: "Supabase nao configurado para upload." });
+				return true;
+			}
+			const bucket = "widget-assets";
+			await ensureStorageBucket(bucket);
+			const extension = (file.name.split(".").pop() || "png").toLowerCase();
+			const safeExt = /^[a-z0-9]+$/.test(extension) ? extension : "png";
+			const objectPath = `nuvemshop/${encodeURIComponent(
+				storeContext.storeId,
+			)}/hero-bg-${Date.now()}.${safeExt}`;
+			const fileBuffer = Buffer.from(await file.arrayBuffer());
+			const uploadResponse = await supabaseStorageRequest(
+				`object/${bucket}/${objectPath}`,
+				{
+					method: "POST",
+					headers: {
+						"Content-Type": file.type || "application/octet-stream",
+						"x-upsert": "true",
+					},
+					body: fileBuffer,
+				},
+			);
+			if (!uploadResponse.ok) {
+				const text = await uploadResponse.text().catch(() => "");
+				sendJson(res, 500, {
+					error:
+						parseSupabaseError(text)?.message || "Nao foi possivel enviar a imagem de fundo.",
+				});
+				return true;
+			}
+			const publicUrl = `${config.url}/storage/v1/object/public/${bucket}/${objectPath}`;
+			sendJson(res, 200, { ok: true, url: publicUrl });
+		} catch (error) {
+			sendJson(res, 500, { error: error.message || "Nao foi possivel enviar a imagem de fundo." });
+		}
+		return true;
 	}
 
 	if (pathname === "/api/widget/logo-upload" && method === "POST") {

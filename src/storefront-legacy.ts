@@ -7,6 +7,9 @@ type LegacyStorefrontConfig = {
 	primary_color?: string;
 	widget_enabled: boolean;
 	excluded_collections: string[];
+	embed_position?: string;
+	cta_type?: string;
+	cta_button_border_radius?: number;
 	tryon_layout?: string;
 	tryon_layout_background_image?: string | null;
 	tryon_enabled?: boolean;
@@ -703,10 +706,87 @@ function ensureStyles(primaryColor: string) {
 	document.head.appendChild(style);
 }
 
-function getMountTarget() {
+function getEmbedMount() {
 	const buyContainer = document.querySelector<HTMLElement>(".js-buy-button-container");
 	if (!buyContainer) return null;
-	return buyContainer.closest(".row") || buyContainer;
+	const row = buyContainer.closest(".row") || buyContainer;
+	return { buyContainer, row };
+}
+
+function mountCtaWrapper(wrapper: HTMLElement, embedPosition?: string) {
+	const mount = getEmbedMount();
+	if (!mount) return false;
+	const above = embedPosition === "above_buy_buttons";
+	if (above) {
+		mount.buyContainer.insertAdjacentElement("beforebegin", wrapper);
+	} else {
+		mount.row.insertAdjacentElement("afterend", wrapper);
+	}
+	return true;
+}
+
+function createStorefrontCta(config: LegacyStorefrontConfig, onOpen: () => void) {
+	const primaryColor = config.primary_color || "#810707";
+	const label = config.link_text || "Ver meu tamanho ideal";
+	const isButton = config.cta_type === "button";
+	const radius = Number.isFinite(Number(config.cta_button_border_radius))
+		? Math.max(0, Math.min(40, Number(config.cta_button_border_radius)))
+		: 40;
+	const logoUrl = config.store_logo ? String(config.store_logo) : "";
+
+	if (isButton) {
+		const button = document.createElement("button");
+		button.id = CTA_BUTTON_ID;
+		button.type = "button";
+		button.style.width = "100%";
+		button.style.display = "inline-flex";
+		button.style.alignItems = "center";
+		button.style.justifyContent = "center";
+		button.style.gap = "10px";
+		button.style.padding = "12px 22px";
+		button.style.borderRadius = `${radius}px`;
+		button.style.border = `2px solid ${primaryColor}`;
+		button.style.background = "#ffffff";
+		button.style.color = primaryColor;
+		button.style.cursor = "pointer";
+		button.style.fontSize = "15px";
+		button.style.fontWeight = "600";
+		button.style.lineHeight = "1.25";
+		button.style.boxShadow = "0 1px 3px rgba(0,0,0,0.08)";
+		if (logoUrl) {
+			const img = document.createElement("img");
+			img.src = logoUrl;
+			img.alt = "";
+			img.style.width = "32px";
+			img.style.height = "32px";
+			img.style.objectFit = "contain";
+			img.style.borderRadius = "6px";
+			button.appendChild(img);
+		}
+		const span = document.createElement("span");
+		span.textContent = label;
+		button.appendChild(span);
+		button.addEventListener("click", (event) => {
+			event.preventDefault();
+			onOpen();
+		});
+		return button;
+	}
+
+	const link = document.createElement("a");
+	link.id = CTA_BUTTON_ID;
+	link.href = "#";
+	link.textContent = label;
+	link.style.color = primaryColor;
+	link.style.textDecoration = "underline";
+	link.style.textUnderlineOffset = "3px";
+	link.style.fontWeight = "600";
+	link.style.display = "inline-block";
+	link.addEventListener("click", (event) => {
+		event.preventDefault();
+		onOpen();
+	});
+	return link;
 }
 
 function ensureModal(widgetUrl: string, iframeContext?: WidgetIframeContext | null) {
@@ -782,8 +862,8 @@ function renderButton(
 		},
 		"L2",
 	);
-	const mountTarget = getMountTarget();
-	if (!mountTarget) {
+	const mount = getEmbedMount();
+	if (!mount) {
 		debugLog("render_missing_mount", { selector: ".js-buy-button-container" }, "L2");
 		return;
 	}
@@ -829,23 +909,19 @@ function renderButton(
 		widgetOrigin,
 	};
 	ensureStyles(config.primary_color || "#810707");
+	const openWidget = () => {
+		const modal = ensureModal(widgetUrl, iframeContext);
+		modal.hidden = false;
+	};
 	let wrapper = document.getElementById(CTA_WRAPPER_ID);
 	if (!wrapper) {
 		wrapper = document.createElement("div");
 		wrapper.id = CTA_WRAPPER_ID;
-		wrapper.innerHTML = `<button id="${CTA_BUTTON_ID}" type="button"></button>`;
-		mountTarget.insertAdjacentElement("afterend", wrapper);
+		wrapper.style.width = "100%";
+		wrapper.style.marginTop = "12px";
+		if (!mountCtaWrapper(wrapper, config.embed_position)) return;
 	}
-	const button = wrapper.querySelector<HTMLButtonElement>(`#${CTA_BUTTON_ID}`);
-	if (!button) return;
-	const logoMarkup = config.store_logo
-		? `<img src="${String(config.store_logo).replace(/"/g, "&quot;")}" alt="" />`
-		: "";
-	button.innerHTML = `${logoMarkup}<span>${config.link_text || "Ver meu tamanho ideal"}</span>`;
-	button.onclick = () => {
-		const modal = ensureModal(widgetUrl, iframeContext);
-		modal.hidden = false;
-	};
+	wrapper.replaceChildren(createStorefrontCta(config, openWidget));
 	debugLog(
 		"render_button_complete",
 		{

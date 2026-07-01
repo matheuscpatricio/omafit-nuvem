@@ -1,24 +1,30 @@
-export type OmafitPlanId = "ondemand" | "growth" | "pro";
+export type OmafitPlanId = "ondemand" | "growth" | "pro" | "enterprise";
 
 export type OmafitPlanDefinition = {
 	id: OmafitPlanId;
 	name: string;
 	description: string;
 	monthlyPrice: number;
+	monthlyPriceUsd?: number;
+	annualPriceUsd?: number;
+	annualDiscountUsd?: number;
 	imagesIncluded: number;
+	unlimitedTryOn?: boolean;
 	pricePerExtraImage: number;
 	currency: string;
+	featureKeys?: string[];
 };
 
 export type OmafitUsageSummary = {
 	plan: string;
 	imagesIncluded: number;
 	imagesUsed: number;
-	remaining: number;
+	remaining: number | null;
 	extraImages: number;
 	pricePerExtraImage: number;
 	currency: string;
 	percentage: number;
+	unlimited?: boolean;
 };
 
 export type OmafitAdminContext = {
@@ -53,7 +59,11 @@ export type OmafitWidgetConfig = {
 	widget_enabled: boolean;
 	excluded_collections: string[];
 	admin_locale: string;
+	embed_position?: "below_buy_buttons" | "above_buy_buttons";
+	cta_type?: "link" | "button";
+	cta_button_border_radius?: number;
 	tryon_layout?: "default" | "sidebar" | "hero";
+	tryon_layout_background_image?: string | null;
 	tryon_enabled?: boolean;
 };
 
