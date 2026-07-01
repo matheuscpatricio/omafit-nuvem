@@ -205,7 +205,7 @@ export function WidgetSection({
 										<div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
 											<button
 												type="button"
-												style={buttonBaseStyle}
+											className="omafit-admin-btn"
 												onClick={() => heroFileRef.current?.click()}
 												disabled={heroUploading}
 											>
@@ -213,7 +213,7 @@ export function WidgetSection({
 											</button>
 											<button
 												type="button"
-												style={buttonBaseStyle}
+											className="omafit-admin-btn"
 												onClick={() => onChange({ ...config, tryon_layout_background_image: "" })}
 											>
 												{t("widget.removeHeroBackground")}
@@ -333,7 +333,7 @@ export function WidgetSection({
 						</div>
 					</div>
 
-					<button type="button" style={primaryButtonStyle} onClick={onSave} disabled={busy}>
+					<button type="button" className="omafit-admin-btn omafit-admin-btn--primary" onClick={onSave} disabled={busy}>
 						{busy ? t("common.loading") : t("common.save")}
 					</button>
 				</div>

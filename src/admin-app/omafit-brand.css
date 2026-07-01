@@ -155,3 +155,262 @@
 		padding: 0 1.5rem 1.5rem;
 	}
 }
+
+/* —— Admin UI (painel Nuvemshop) —— */
+.omafit-admin {
+	--oma-admin-page: #faf6ef;
+	--oma-admin-page-deep: #f3ead8;
+	--oma-admin-card: #fffdf8;
+	--oma-admin-card-border: color-mix(in srgb, var(--oma-accent) 16%, #e8dcc8);
+	--oma-admin-text: var(--oma-bg-primary);
+	--oma-admin-text-muted: #6b5d4f;
+	--oma-admin-shadow: 0 10px 28px color-mix(in srgb, var(--oma-bg-primary) 8%, transparent);
+	min-height: 100vh;
+	background: linear-gradient(
+		180deg,
+		var(--oma-admin-page) 0%,
+		color-mix(in srgb, var(--oma-cream) 55%, white) 100%
+	);
+	color: var(--oma-admin-text);
+	font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.omafit-admin__shell {
+	max-width: 1280px;
+	margin: 0 auto;
+	padding: 24px;
+	display: grid;
+	gap: 20px;
+}
+
+.omafit-admin-card {
+	box-sizing: border-box;
+	background: var(--oma-admin-card);
+	border: 1px solid var(--oma-admin-card-border);
+	border-radius: 18px;
+	padding: 20px;
+	box-shadow: var(--oma-admin-shadow);
+}
+
+.omafit-admin-card--accent {
+	border-color: color-mix(in srgb, var(--oma-accent) 35%, var(--oma-admin-card-border));
+	box-shadow:
+		var(--oma-admin-shadow),
+		inset 0 1px 0 color-mix(in srgb, var(--oma-cream) 80%, white);
+}
+
+.omafit-admin-section-title {
+	margin: 0;
+	font-size: 1.125rem;
+	font-weight: 700;
+	color: var(--oma-admin-text);
+	letter-spacing: -0.01em;
+}
+
+.omafit-admin-subtle {
+	color: var(--oma-admin-text-muted);
+	font-size: 14px;
+	line-height: 1.5;
+}
+
+.omafit-admin-stat__label {
+	color: var(--oma-admin-text-muted);
+	font-size: 14px;
+}
+
+.omafit-admin-stat__value {
+	font-size: 1.5rem;
+	font-weight: 800;
+	color: var(--oma-accent-dark);
+	letter-spacing: -0.02em;
+}
+
+.omafit-admin-nav {
+	display: flex;
+	gap: 10px;
+	flex-wrap: wrap;
+}
+
+.omafit-admin-nav__item {
+	appearance: none;
+	border-radius: 12px;
+	padding: 10px 16px;
+	border: 1px solid color-mix(in srgb, var(--oma-accent) 22%, #d9cdb8);
+	cursor: pointer;
+	font-size: 14px;
+	font-weight: 600;
+	background: color-mix(in srgb, var(--oma-cream) 35%, white);
+	color: var(--oma-admin-text);
+	transition:
+		background 0.15s ease,
+		border-color 0.15s ease,
+		color 0.15s ease,
+		box-shadow 0.15s ease;
+}
+
+.omafit-admin-nav__item:hover {
+	border-color: color-mix(in srgb, var(--oma-accent) 45%, #d9cdb8);
+	background: color-mix(in srgb, var(--oma-accent) 8%, white);
+}
+
+.omafit-admin-nav__item--active {
+	background: linear-gradient(
+		135deg,
+		var(--oma-bg-primary) 0%,
+		var(--oma-bg-secondary) 100%
+	);
+	border-color: var(--oma-bg-primary);
+	color: var(--oma-cream);
+	box-shadow: 0 6px 18px color-mix(in srgb, var(--oma-bg-primary) 25%, transparent);
+}
+
+.omafit-admin-btn {
+	appearance: none;
+	border-radius: 12px;
+	padding: 10px 16px;
+	border: 1px solid color-mix(in srgb, var(--oma-accent) 28%, #d9cdb8);
+	cursor: pointer;
+	font-size: 14px;
+	font-weight: 600;
+	background: color-mix(in srgb, var(--oma-cream) 30%, white);
+	color: var(--oma-admin-text);
+	transition:
+		background 0.15s ease,
+		border-color 0.15s ease,
+		transform 0.1s ease;
+}
+
+.omafit-admin-btn:hover:not(:disabled) {
+	border-color: color-mix(in srgb, var(--oma-accent) 50%, #d9cdb8);
+	background: color-mix(in srgb, var(--oma-accent) 10%, white);
+}
+
+.omafit-admin-btn:disabled {
+	opacity: 0.55;
+	cursor: not-allowed;
+}
+
+.omafit-admin-btn--primary {
+	background: linear-gradient(135deg, var(--oma-accent) 0%, var(--oma-accent-dark) 100%);
+	border-color: var(--oma-accent-dark);
+	color: #fff;
+	box-shadow: 0 6px 16px color-mix(in srgb, var(--oma-accent) 35%, transparent);
+}
+
+.omafit-admin-btn--primary:hover:not(:disabled) {
+	background: linear-gradient(135deg, color-mix(in srgb, var(--oma-accent) 92%, white) 0%, var(--oma-accent-dark) 100%);
+	border-color: var(--oma-accent-dark);
+}
+
+.omafit-admin-input,
+.omafit-admin-select {
+	width: 100%;
+	border-radius: 12px;
+	border: 1px solid color-mix(in srgb, var(--oma-accent) 18%, #d9cdb8);
+	padding: 12px 14px;
+	font-size: 14px;
+	box-sizing: border-box;
+	background: #fffdf8;
+	color: var(--oma-admin-text);
+}
+
+.omafit-admin-input:focus,
+.omafit-admin-select:focus {
+	outline: none;
+	border-color: color-mix(in srgb, var(--oma-accent) 55%, #d9cdb8);
+	box-shadow: 0 0 0 3px color-mix(in srgb, var(--oma-accent) 18%, transparent);
+}
+
+.omafit-admin-label {
+	display: grid;
+	gap: 8px;
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--oma-admin-text);
+}
+
+.omafit-admin-alert {
+	box-sizing: border-box;
+	border-radius: 18px;
+	padding: 20px;
+	border: 1px solid transparent;
+	box-shadow: var(--oma-admin-shadow);
+}
+
+.omafit-admin-alert--success {
+	border-color: #86efac;
+	background: #f0fdf4;
+	color: #166534;
+}
+
+.omafit-admin-alert--error {
+	border-color: #fecaca;
+	background: #fef2f2;
+	color: #b91c1c;
+}
+
+.omafit-admin-alert--warning {
+	border-color: color-mix(in srgb, var(--oma-accent) 40%, #fde68a);
+	background: color-mix(in srgb, var(--oma-cream) 45%, #fffbeb);
+	color: #7c4a1d;
+}
+
+.omafit-admin-pill {
+	display: inline-flex;
+	padding: 8px 12px;
+	border-radius: 999px;
+	font-size: 13px;
+	font-weight: 700;
+}
+
+.omafit-admin-pill--success {
+	background: color-mix(in srgb, #22c55e 14%, var(--oma-cream));
+	color: #166534;
+	border: 1px solid color-mix(in srgb, #22c55e 35%, transparent);
+}
+
+.omafit-admin-pill--warning {
+	background: color-mix(in srgb, var(--oma-accent) 14%, var(--oma-cream));
+	color: #7c4a1d;
+	border: 1px solid color-mix(in srgb, var(--oma-accent) 35%, transparent);
+}
+
+.omafit-admin-pill--neutral {
+	background: color-mix(in srgb, var(--oma-bg-primary) 88%, transparent);
+	color: var(--oma-cream);
+	border: 1px solid color-mix(in srgb, var(--oma-cream) 18%, transparent);
+}
+
+.omafit-admin-progress {
+	width: 100%;
+	height: 8px;
+	border-radius: 999px;
+	background: color-mix(in srgb, var(--oma-cream) 40%, #e8dcc8);
+	overflow: hidden;
+}
+
+.omafit-admin-progress__bar {
+	height: 100%;
+	border-radius: 999px;
+	background: linear-gradient(90deg, var(--oma-accent) 0%, var(--oma-accent-dark) 100%);
+	transition: width 0.2s ease;
+}
+
+.omafit-admin-badge {
+	display: inline-flex;
+	align-items: center;
+	padding: 4px 10px;
+	border-radius: 999px;
+	font-size: 12px;
+	font-weight: 700;
+}
+
+.omafit-admin-badge--success {
+	background: color-mix(in srgb, #22c55e 14%, var(--oma-cream));
+	color: #166534;
+}
+
+.omafit-admin-badge--attention {
+	background: color-mix(in srgb, var(--oma-accent) 16%, var(--oma-cream));
+	color: var(--oma-accent-dark);
+}

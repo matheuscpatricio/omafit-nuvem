@@ -14,62 +14,14 @@ import {
 	normalizeGenderScope,
 	normalizeMeasurementRefsForType,
 } from "./sizeChartModel";
+import {
+	buttonBaseStyle,
+	cardStyle,
+	inputStyle,
+	labelStyle,
+	subtleTextStyle,
+} from "./adminUi";
 import type { OmafitCollection, OmafitProduct, OmafitSizeChart } from "../shared/models";
-
-const cardStyle = {
-	background: "#ffffff",
-	border: "1px solid #e5e7eb",
-	borderRadius: 18,
-	padding: 20,
-	boxShadow: "0 8px 24px rgba(15, 23, 42, 0.05)",
-} as const;
-
-const subtleTextStyle = {
-	color: "#6b7280",
-	fontSize: 14,
-	lineHeight: 1.5,
-} as const;
-
-const buttonBaseStyle = {
-	borderRadius: 12,
-	padding: "10px 16px",
-	border: "1px solid #d1d5db",
-	cursor: "pointer",
-	fontSize: 14,
-	fontWeight: 600,
-	background: "#ffffff",
-} as const;
-
-const primaryButtonStyle = {
-	...buttonBaseStyle,
-	background: "#111827",
-	borderColor: "#111827",
-	color: "#ffffff",
-} as const;
-
-const inputStyle = {
-	width: "100%",
-	borderRadius: 12,
-	border: "1px solid #d1d5db",
-	padding: "12px 14px",
-	fontSize: 14,
-	boxSizing: "border-box" as const,
-};
-
-const labelStyle = {
-	display: "grid",
-	gap: 8,
-	fontSize: 13,
-	fontWeight: 600,
-	color: "#374151",
-} as const;
-
-const tabButtonStyle = (active: boolean) => ({
-	...buttonBaseStyle,
-	background: active ? "#111827" : "#ffffff",
-	color: active ? "#ffffff" : "#111827",
-	borderColor: active ? "#111827" : "#d1d5db",
-});
 
 type SizeChartsSectionProps = {
 	collections: OmafitCollection[];
@@ -387,17 +339,17 @@ export function SizeChartsSection({
 				<div>
 					<strong style={{ fontSize: 15 }}>{t("sizeChart.configureSizeTables")}</strong>
 					<p style={{ ...subtleTextStyle, margin: "8px 0 12px" }}>{t("sizeChart.configureHelp")}</p>
-					<div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+					<div style={{ display: "flex", gap: 8, flexWrap: "wrap" }} className="omafit-admin-nav">
 						<button
 							type="button"
-							style={tabButtonStyle(selectedScopeTab === 0)}
+							className={`omafit-admin-nav__item${selectedScopeTab === 0 ? " omafit-admin-nav__item--active" : ""}`}
 							onClick={() => setSelectedScopeTab(0)}
 						>
 							{t("sizeChart.configureByCollection")}
 						</button>
 						<button
 							type="button"
-							style={tabButtonStyle(selectedScopeTab === 1)}
+							className={`omafit-admin-nav__item${selectedScopeTab === 1 ? " omafit-admin-nav__item--active" : ""}`}
 							onClick={() => setSelectedScopeTab(1)}
 						>
 							{t("sizeChart.configureByProduct")}
@@ -610,12 +562,12 @@ export function SizeChartsSection({
 					</span>
 				</div>
 
-				<div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+				<div style={{ display: "flex", gap: 8, flexWrap: "wrap" }} className="omafit-admin-nav">
 					{visibleGenderOptions.map((opt, index) => (
 						<button
 							key={opt.value}
 							type="button"
-							style={tabButtonStyle(visibleGenderTab === index)}
+							className={`omafit-admin-nav__item${visibleGenderTab === index ? " omafit-admin-nav__item--active" : ""}`}
 							onClick={() => setSelectedGenderTab(index)}
 						>
 							{opt.label}
@@ -628,7 +580,7 @@ export function SizeChartsSection({
 						<strong>{t("sizeChart.measureRefs")}</strong>
 						<button
 							type="button"
-							style={currentChart.enabled ? buttonBaseStyle : primaryButtonStyle}
+							className={currentChart.enabled ? "omafit-admin-btn" : "omafit-admin-btn omafit-admin-btn--primary"}
 							onClick={() =>
 								setChart(selectedHandle, currentGender, (c) => ({
 									...c,
@@ -825,7 +777,7 @@ export function SizeChartsSection({
 				<div style={{ display: "flex", justifyContent: "flex-end" }}>
 					<button
 						type="button"
-						style={primaryButtonStyle}
+						className="omafit-admin-btn omafit-admin-btn--primary"
 						onClick={saveSizeCharts}
 						disabled={saving}
 					>

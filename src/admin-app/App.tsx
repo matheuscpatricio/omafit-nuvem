@@ -9,6 +9,11 @@ import { I18nProvider, useI18n } from "./i18n";
 import { OmafitBrandBanner } from "./OmafitBrandBanner";
 import { SizeChartsSection } from "./SizeChartsSection";
 import { WidgetSection } from "./WidgetSection";
+import {
+	cardStyle,
+	subtleTextStyle,
+} from "./adminUi";
+import "./omafit-brand.css";
 import type {
 	OmafitAdminContext,
 	OmafitAnalyticsSummary,
@@ -30,70 +35,6 @@ type StoreBootstrap = {
 type AdminAppProps = {
 	nexo: NexoClient;
 	store: StoreBootstrap;
-};
-
-const pageStyle: CSSProperties = {
-	minHeight: "100vh",
-	background: "#f5f7fb",
-	color: "#111827",
-	fontFamily:
-		'Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-};
-
-const shellStyle: CSSProperties = {
-	maxWidth: 1280,
-	margin: "0 auto",
-	padding: 24,
-	display: "grid",
-	gap: 20,
-};
-
-const cardStyle: CSSProperties = {
-	background: "#ffffff",
-	border: "1px solid #e5e7eb",
-	borderRadius: 18,
-	padding: 20,
-	boxShadow: "0 8px 24px rgba(15, 23, 42, 0.05)",
-};
-
-const subtleTextStyle: CSSProperties = {
-	color: "#6b7280",
-	fontSize: 14,
-	lineHeight: 1.5,
-};
-
-const buttonBaseStyle: CSSProperties = {
-	borderRadius: 12,
-	padding: "10px 16px",
-	border: "1px solid #d1d5db",
-	cursor: "pointer",
-	fontSize: 14,
-	fontWeight: 600,
-	background: "#ffffff",
-};
-
-const primaryButtonStyle: CSSProperties = {
-	...buttonBaseStyle,
-	background: "#111827",
-	borderColor: "#111827",
-	color: "#ffffff",
-};
-
-const inputStyle: CSSProperties = {
-	width: "100%",
-	borderRadius: 12,
-	border: "1px solid #d1d5db",
-	padding: "12px 14px",
-	fontSize: 14,
-	boxSizing: "border-box",
-};
-
-const labelStyle: CSSProperties = {
-	display: "grid",
-	gap: 8,
-	fontSize: 13,
-	fontWeight: 600,
-	color: "#374151",
 };
 
 function getInitialSection(): SectionId {
@@ -418,26 +359,20 @@ function AppContent({ nexo, store }: AdminAppProps) {
 
 	if (loading) {
 		return (
-			<div style={pageStyle}>
-				<div style={shellStyle}>
-					<div style={cardStyle}>{t("common.loading")}</div>
+			<div className="omafit-brand-shell omafit-admin">
+				<div className="omafit-brand-shell__content omafit-admin__shell">
+					<div className="omafit-admin-card">{t("common.loading")}</div>
 				</div>
 			</div>
 		);
 	}
 
 	return (
-		<div style={pageStyle} className="omafit-brand-shell">
-			<div style={shellStyle} className="omafit-brand-shell__content">
+		<div className="omafit-brand-shell omafit-admin">
+			<div className="omafit-brand-shell__content omafit-admin__shell">
 				<OmafitBrandBanner variant={section === "dashboard" ? "hero" : "compact"} />
 
-				<nav
-					style={{
-						display: "flex",
-						gap: 10,
-						flexWrap: "wrap",
-					}}
-				>
+				<nav className="omafit-admin-nav">
 					{(
 						[
 							["dashboard", t("nav.dashboard")],
@@ -450,56 +385,20 @@ function AppContent({ nexo, store }: AdminAppProps) {
 						<button
 							key={id}
 							type="button"
+							className={`omafit-admin-nav__item${section === id ? " omafit-admin-nav__item--active" : ""}`}
 							onClick={() => setSection(id)}
-							style={{
-								...buttonBaseStyle,
-								background: section === id ? "#111827" : "#ffffff",
-								color: section === id ? "#ffffff" : "#111827",
-								borderColor: section === id ? "#111827" : "#d1d5db",
-							}}
 						>
 							{label}
 						</button>
 					))}
 				</nav>
 
-				{notice ? (
-					<div
-						style={{
-							...cardStyle,
-							borderColor: "#86efac",
-							background: "#f0fdf4",
-							color: "#166534",
-						}}
-					>
-						{notice}
-					</div>
-				) : null}
+				{notice ? <div className="omafit-admin-alert omafit-admin-alert--success">{notice}</div> : null}
 
-				{error ? (
-					<div
-						style={{
-							...cardStyle,
-							borderColor: "#fecaca",
-							background: "#fef2f2",
-							color: "#b91c1c",
-						}}
-					>
-						{error}
-					</div>
-				) : null}
+				{error ? <div className="omafit-admin-alert omafit-admin-alert--error">{error}</div> : null}
 
 				{context?.billing.status && context.billing.status !== "active" ? (
-					<div
-						style={{
-							...cardStyle,
-							borderColor: "#fde68a",
-							background: "#fffbeb",
-							color: "#92400e",
-						}}
-					>
-						{t("billing.inactiveBanner")}
-					</div>
+					<div className="omafit-admin-alert omafit-admin-alert--warning">{t("billing.inactiveBanner")}</div>
 				) : null}
 
 				{section === "dashboard" && context ? (
@@ -627,7 +526,7 @@ function DashboardSection({
 							: t("dashboard.reconnectNeeded")}
 					</span>
 					{!context.auth.connected ? (
-						<button type="button" style={primaryButtonStyle} onClick={onReconnect}>
+						<button type="button" className="omafit-admin-btn omafit-admin-btn--primary" onClick={onReconnect}>
 							{t("nav.reconnect")}
 						</button>
 					) : null}
@@ -759,7 +658,11 @@ function BillingSection({
 						) : null}
 						<button
 							type="button"
-							style={plan.id === context.billing.plan ? primaryButtonStyle : buttonBaseStyle}
+							className={
+								plan.id === context.billing.plan
+									? "omafit-admin-btn"
+									: "omafit-admin-btn omafit-admin-btn--primary"
+							}
 							onClick={() => onActivatePlan(plan.id)}
 							disabled={busyAction === `plan:${plan.id}`}
 						>
@@ -803,13 +706,18 @@ function AnalyticsSection({
 				<strong style={{ fontSize: 18 }}>{t("analytics.title")}</strong>
 				<span style={subtleTextStyle}>{t("analytics.subtitle")}</span>
 				<div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-					<select style={inputStyle} value={days} onChange={(event) => onChangeDays(event.target.value)}>
+					<select className="omafit-admin-select" value={days} onChange={(event) => onChangeDays(event.target.value)}>
 						<option value="7">7 dias</option>
 						<option value="30">30 dias</option>
 						<option value="90">90 dias</option>
 						<option value="365">365 dias</option>
 					</select>
-					<button type="button" style={primaryButtonStyle} onClick={onReload} disabled={busy}>
+					<button
+						type="button"
+						className="omafit-admin-btn omafit-admin-btn--primary"
+						onClick={onReload}
+						disabled={busy}
+					>
 						{busy ? t("common.loading") : t("analytics.reload")}
 					</button>
 				</div>
@@ -999,37 +907,25 @@ function TwoColumnList({
 
 function StatCard({ label, value }: { label: string; value: string }) {
 	return (
-		<div style={{ ...cardStyle, display: "grid", gap: 8 }}>
-			<span style={subtleTextStyle}>{label}</span>
-			<strong style={{ fontSize: 24 }}>{value}</strong>
+		<div className="omafit-admin-card" style={{ display: "grid", gap: 8 }}>
+			<span className="omafit-admin-stat__label">{label}</span>
+			<strong className="omafit-admin-stat__value">{value}</strong>
 		</div>
 	);
 }
 
 function UsageProgressBar({ percentage }: { percentage: number }) {
-	const tone = percentage > 70 ? "#2563eb" : "#16a34a";
 	return (
 		<div
-			style={{
-				width: "100%",
-				height: 8,
-				borderRadius: 999,
-				background: "#e5e7eb",
-				overflow: "hidden",
-			}}
+			className="omafit-admin-progress"
 			role="progressbar"
 			aria-valuenow={percentage}
 			aria-valuemin={0}
 			aria-valuemax={100}
 		>
 			<div
-				style={{
-					width: `${Math.max(0, Math.min(100, percentage))}%`,
-					height: "100%",
-					background: tone,
-					borderRadius: 999,
-					transition: "width 0.2s ease",
-				}}
+				className="omafit-admin-progress__bar"
+				style={{ width: `${Math.max(0, Math.min(100, percentage))}%` }}
 			/>
 		</div>
 	);
@@ -1043,7 +939,7 @@ function ActionButton({
 	onClick: () => void;
 }) {
 	return (
-		<button type="button" style={buttonBaseStyle} onClick={onClick}>
+		<button type="button" className="omafit-admin-btn" onClick={onClick}>
 			{children}
 		</button>
 	);
@@ -1056,26 +952,13 @@ function StatusPill({
 	label: string;
 	tone: "success" | "warning" | "neutral";
 }) {
-	const theme =
+	const className =
 		tone === "success"
-			? { background: "#dcfce7", color: "#166534" }
+			? "omafit-admin-pill omafit-admin-pill--success"
 			: tone === "warning"
-				? { background: "#fef3c7", color: "#92400e" }
-				: { background: "rgba(255,255,255,0.16)", color: "#ffffff" };
-	return (
-		<span
-			style={{
-				display: "inline-flex",
-				padding: "8px 12px",
-				borderRadius: 999,
-				fontSize: 13,
-				fontWeight: 700,
-				...theme,
-			}}
-		>
-			{label}
-		</span>
-	);
+				? "omafit-admin-pill omafit-admin-pill--warning"
+				: "omafit-admin-pill omafit-admin-pill--neutral";
+	return <span className={className}>{label}</span>;
 }
 
 export function OmafitAdminApp(props: AdminAppProps) {
