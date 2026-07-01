@@ -2325,12 +2325,245 @@ async function saveBillingPlan(storeId, planId, storeUrl = "") {
 	});
 }
 
+async function resolveAnalyticsStoreContext(storeId, storeUrl = "") {
+	const shopKey = getCanonicalShopKey(storeId);
+	let normalizedInputUrl = normalizeStoreUrl(storeUrl);
+	let session = null;
+	let shopRecord = null;
+
+	if (storeId) {
+		try {
+			session = await resolveSession(storeId, normalizedInputUrl);
+		} catch (_error) {
+			session = null;
+		}
+		if (!normalizedInputUrl) {
+			normalizedInputUrl = normalizeStoreUrl(session?.store?.url || "");
+		}
+	}
+
+	for (const candidateUrl of Array.from(new Set([normalizedInputUrl, ""]))) {
+		if (!storeId) break;
+		try {
+			const row = await loadLegacyShopRecord(storeId, candidateUrl);
+			if (row) {
+				shopRecord = row;
+				break;
+			}
+		} catch (_error) {
+			// try next lookup
+		}
+	}
+
+	if (!shopRecord && storeId) {
+		try {
+			const byShopKey = await supabaseSelectFirst(
+				`shopify_shops?shop_domain=eq.${encodeURIComponent(shopKey)}&select=*`,
+			);
+			if (byShopKey) shopRecord = byShopKey;
+		} catch (_error) {
+			// non-blocking
+		}
+	}
+
+	const resolvedStoreUrl = normalizeStoreUrl(
+		normalizedInputUrl ||
+			session?.store?.url ||
+			shopRecord?.store_url ||
+			shopRecord?.platform_store_url ||
+			"",
+	);
+	if (!shopRecord && storeId && resolvedStoreUrl) {
+		try {
+			shopRecord = await loadLegacyShopRecord(storeId, resolvedStoreUrl);
+		} catch (_error) {
+			// keep previous shopRecord
+		}
+	}
+
+	const widgetDomains = await loadWidgetKeyDomains(storeId, shopKey);
+	const domainCandidates = buildAnalyticsDomainCandidates(
+		shopKey,
+		resolvedStoreUrl,
+		shopRecord,
+		session,
+		widgetDomains,
+	);
+
+	return {
+		shopKey,
+		session,
+		shopRecord,
+		resolvedStoreUrl,
+		domainCandidates,
+	};
+}
+
+function filterAnalyticsRowsSince(rows, normalizedSince) {
+	if (!normalizedSince || !Array.isArray(rows) || rows.length === 0) return rows;
+	const sinceMs = new Date(normalizedSince).getTime();
+	if (!Number.isFinite(sinceMs)) return rows;
+	return rows.filter((row) => {
+		const raw = row?.created_at || row?.session_start_time || row?.updated_at;
+		const time = new Date(raw || "").getTime();
+		return Number.isFinite(time) && time >= sinceMs;
+	});
+}
+
+function buildAnalyticsDomainCandidates(
+	shopKey,
+	storeUrl = "",
+	shopRecord = null,
+	session = null,
+	extraDomains = [],
+) {
+	const recordDomain = String(shopRecord?.shop_domain || "").trim();
+	const values = [
+		shopKey,
+		storeUrl,
+		session?.store?.url,
+		shopRecord?.store_url,
+		shopRecord?.platform_store_url,
+		recordDomain,
+		...extraDomains,
+	];
+	const set = new Set();
+	for (const value of values) {
+		const text = String(value || "").trim();
+		if (!text) continue;
+		set.add(text);
+		const normalized = normalizeStoreUrl(text);
+		if (normalized) set.add(normalized);
+	}
+	return Array.from(set);
+}
+
+async function loadWidgetKeyDomains(storeId, shopKey) {
+	const domains = [];
+	if (!storeId && !shopKey) return domains;
+	const filters = [];
+	if (shopKey) filters.push(`shop_domain.eq.${encodeURIComponent(shopKey)}`);
+	if (storeId) filters.push(`user_id.eq.${encodeURIComponent(String(storeId))}`);
+	if (filters.length === 0) return domains;
+	try {
+		const rows = await supabaseSelectAll(
+			`widget_keys?select=shop_domain,domain&or=(${filters.join(",")})&limit=40`,
+		);
+		for (const row of rows) {
+			for (const value of [row?.shop_domain, row?.domain]) {
+				const text = String(value || "").trim();
+				if (text) domains.push(text);
+			}
+		}
+	} catch (_error) {
+		// optional enrichment only
+	}
+	return domains;
+}
+
+function combineTryonSessionsWithMeasurements(sessionRows, measurements, normalizedSince, userId) {
+	const normalize = (value) => String(value || "").trim().toLowerCase();
+	const normalizedUserId = normalize(userId);
+	const groupedMeasurements = new Map();
+	for (const measurement of measurements) {
+		const sid = normalize(measurement?.tryon_session_id || measurement?.tryonSessionId || "");
+		if (!sid) continue;
+		if (!groupedMeasurements.has(sid)) groupedMeasurements.set(sid, []);
+		groupedMeasurements.get(sid).push(measurement);
+	}
+
+	const combined = [];
+	for (const sessionRow of sessionRows) {
+		if (normalizedSince) {
+			const rowDate = sessionRow?.session_start_time || sessionRow?.created_at || "";
+			if (rowDate && new Date(rowDate).getTime() < new Date(normalizedSince).getTime()) {
+				continue;
+			}
+		}
+		if (normalizedUserId) {
+			const rowUserId = normalize(sessionRow?.user_id || "");
+			if (rowUserId && rowUserId !== normalizedUserId) continue;
+		}
+		const sid = normalize(sessionRow?.id || "");
+		if (!sid) continue;
+		const measurementList = groupedMeasurements.get(sid) || [];
+		if (measurementList.length === 0) continue;
+		const latestMeasurement = measurementList[measurementList.length - 1];
+		combined.push({
+			...sessionRow,
+			...latestMeasurement,
+			created_at:
+				sessionRow?.session_start_time ||
+				sessionRow?.created_at ||
+				latestMeasurement?.created_at ||
+				latestMeasurement?.updated_at ||
+				null,
+			user_measurements: JSON.stringify(latestMeasurement),
+			collection_handle:
+				latestMeasurement?.collection_handle ||
+				latestMeasurement?.collectionHandle ||
+				"geral",
+		});
+	}
+	return combined;
+}
+
+async function fetchUserMeasurementsSessionsByDomains(
+	domainCandidates,
+	normalizedSince,
+	userId,
+) {
+	const normalize = (value) => String(value || "").trim().toLowerCase();
+	let measurements = [];
+	for (const candidate of domainCandidates) {
+		try {
+			const rows = await supabaseSelectAll(
+				`user_measurements?shop_domain=eq.${encodeURIComponent(candidate)}&select=*&order=updated_at.desc&limit=500`,
+			);
+			if (Array.isArray(rows) && rows.length > 0) {
+				measurements = rows;
+				break;
+			}
+		} catch (_error) {
+			// try next candidate
+		}
+	}
+	if (measurements.length === 0) return [];
+
+	const sessionIds = Array.from(
+		new Set(
+			measurements
+				.map((item) => item?.tryon_session_id || item?.tryonSessionId)
+				.filter(Boolean)
+				.map((value) => String(value)),
+		),
+	);
+	if (sessionIds.length === 0) return [];
+
+	const sessionRows = [];
+	for (let index = 0; index < sessionIds.length; index += 100) {
+		const chunk = sessionIds.slice(index, index + 100).join(",");
+		const rows = await supabaseSelectAll(
+			`tryon_sessions?id=in.(${chunk})&select=id,user_id,session_start_time,session_end_time,created_at,updated_at,shop_name`,
+		).catch(() => []);
+		if (Array.isArray(rows) && rows.length > 0) sessionRows.push(...rows);
+	}
+	if (sessionRows.length === 0) return [];
+
+	return combineTryonSessionsWithMeasurements(
+		sessionRows,
+		measurements,
+		normalizedSince,
+		userId,
+	);
+}
+
 async function fetchSessionAnalyticsByDomains(domainCandidates, normalizedSince, userId) {
 	const dateFilters = normalizedSince
 		? [`created_at=gte.${encodeURIComponent(normalizedSince)}`]
 		: [];
-	const queryWithFilters = async (extraFilters) => {
-		const filters = [...extraFilters, ...dateFilters];
+	const queryWithFilters = async (extraFilters, withDateFilters = true) => {
+		const filters = [...extraFilters, ...(withDateFilters ? dateFilters : [])];
 		const suffix = filters.length ? `&${filters.join("&")}` : "";
 		for (const candidate of domainCandidates) {
 			try {
@@ -2345,29 +2578,40 @@ async function fetchSessionAnalyticsByDomains(domainCandidates, normalizedSince,
 		return [];
 	};
 	if (userId) {
-		const scoped = await queryWithFilters([`user_id=eq.${encodeURIComponent(userId)}`]);
+		const scoped = await queryWithFilters([`user_id=eq.${encodeURIComponent(userId)}`], true);
 		if (scoped.length > 0) return scoped;
+		const scopedUnfiltered = await queryWithFilters(
+			[`user_id=eq.${encodeURIComponent(userId)}`],
+			false,
+		);
+		const scopedFiltered = filterAnalyticsRowsSince(scopedUnfiltered, normalizedSince);
+		if (scopedFiltered.length > 0) return scopedFiltered;
 	}
-	return queryWithFilters([]);
+	let rows = await queryWithFilters([], true);
+	if (rows.length === 0 && normalizedSince) {
+		const unfiltered = await queryWithFilters([], false);
+		rows = filterAnalyticsRowsSince(unfiltered, normalizedSince);
+	}
+	return rows;
 }
 
-async function loadSessionAnalytics(shopKey, storeId, sinceIso, shopRecord = null, storeUrl = "") {
+async function loadSessionAnalytics(
+	shopKey,
+	storeId,
+	sinceIso,
+	shopRecord = null,
+	storeUrl = "",
+	domainCandidatesInput = null,
+) {
 	const normalizedSince = String(sinceIso || "").trim();
-	const userId = String(shopRecord?.user_id || "").trim();
+	const userId = String(
+		shopRecord?.user_id || shopRecord?.store_id || storeId || "",
+	).trim();
 	const normalize = (value) => String(value || "").trim().toLowerCase();
-	const domainCandidates = Array.from(
-		new Set(
-			[
-				shopKey,
-				normalizeStoreUrl(storeUrl),
-				normalizeStoreUrl(shopRecord?.store_url || ""),
-				normalizeStoreUrl(shopRecord?.platform_store_url || ""),
-				normalizeStoreUrl(shopRecord?.shop_domain || ""),
-			]
-				.map((value) => String(value || "").trim())
-				.filter(Boolean),
-		),
-	);
+	const domainCandidates =
+		Array.isArray(domainCandidatesInput) && domainCandidatesInput.length > 0
+			? domainCandidatesInput
+			: buildAnalyticsDomainCandidates(shopKey, storeUrl, shopRecord);
 	const preferSessionAnalyticsFirst = String(shopKey || "").toLowerCase().startsWith("nuvemshop/");
 
 	if (preferSessionAnalyticsFirst) {
@@ -2377,98 +2621,44 @@ async function loadSessionAnalytics(shopKey, storeId, sinceIso, shopRecord = nul
 			userId,
 		);
 		if (fromAnalytics.length > 0) return fromAnalytics;
+
+		const fromMeasurements = await fetchUserMeasurementsSessionsByDomains(
+			domainCandidates,
+			normalizedSince,
+			userId,
+		);
+		if (fromMeasurements.length > 0) return fromMeasurements;
 	}
 
-	// 1) Shopify-like priority: user_measurements + tryon_sessions (requires user_id — never mix all tenants).
-	if (userId) {
+	// 1) user_measurements scoped by shop_domain, joined with tryon_sessions.
+	if (userId || domainCandidates.length > 0) {
 		try {
-			const measurementsFirst = await supabaseSelectAll(
-				"user_measurements?select=*&order=updated_at.desc&limit=500",
+			const fromMeasurements = await fetchUserMeasurementsSessionsByDomains(
+				domainCandidates,
+				normalizedSince,
+				userId,
 			);
-			if (Array.isArray(measurementsFirst) && measurementsFirst.length > 0) {
-				const sessionIds = Array.from(
-					new Set(
-						measurementsFirst
-							.map((item) => item?.tryon_session_id || item?.tryonSessionId)
-							.filter(Boolean)
-							.map((value) => String(value)),
-					),
-				);
-				if (sessionIds.length > 0) {
-					const bySessionRows = [];
-					for (let index = 0; index < sessionIds.length; index += 100) {
-						const chunk = sessionIds.slice(index, index + 100).join(",");
-						const rows = await supabaseSelectAll(
-							`tryon_sessions?id=in.(${chunk})&select=id,user_id,session_start_time,session_end_time,created_at,updated_at,shop_name`,
-						).catch(() => []);
-						if (Array.isArray(rows) && rows.length > 0) bySessionRows.push(...rows);
-					}
-
-					const allowedSessionIds = new Set();
-					for (const row of bySessionRows) {
-						if (normalizedSince) {
-							const rowDate = row?.session_start_time || row?.created_at || "";
-							if (rowDate && new Date(rowDate).getTime() < new Date(normalizedSince).getTime()) {
-								continue;
-							}
-						}
-						if (normalize(row?.user_id) === normalize(userId)) {
-							allowedSessionIds.add(normalize(row?.id));
-						}
-					}
-
-					if (allowedSessionIds.size > 0) {
-						const groupedMeasurements = new Map();
-						for (const measurement of measurementsFirst) {
-							const sid = normalize(
-								measurement?.tryon_session_id || measurement?.tryonSessionId || "",
-							);
-							if (!sid || !allowedSessionIds.has(sid)) continue;
-							if (!groupedMeasurements.has(sid)) groupedMeasurements.set(sid, []);
-							groupedMeasurements.get(sid).push(measurement);
-						}
-
-						const combined = [];
-						for (const sessionRow of bySessionRows) {
-							const sid = normalize(sessionRow?.id || "");
-							if (!sid || !allowedSessionIds.has(sid)) continue;
-							const measurements = groupedMeasurements.get(sid) || [];
-							if (measurements.length === 0) continue;
-							const latestMeasurement = measurements[measurements.length - 1];
-							combined.push({
-								...sessionRow,
-								...latestMeasurement,
-								created_at:
-									sessionRow?.session_start_time ||
-									sessionRow?.created_at ||
-									latestMeasurement?.created_at ||
-									latestMeasurement?.updated_at ||
-									null,
-								user_measurements: JSON.stringify(latestMeasurement),
-								collection_handle:
-									latestMeasurement?.collection_handle ||
-									latestMeasurement?.collectionHandle ||
-									"geral",
-							});
-						}
-						if (combined.length > 0) return combined;
-					}
-				}
-			}
+			if (fromMeasurements.length > 0) return fromMeasurements;
 		} catch (_error) {
 			// fallback chain below
 		}
 	}
 
-	// 2) Secondary path: tryon_sessions scoped by user_id + user_measurements join.
+	// 2) tryon_sessions scoped by user_id + user_measurements join.
 	if (userId) {
 		try {
 			const baseFilter = normalizedSince
 				? `&session_start_time=gte.${encodeURIComponent(normalizedSince)}`
 				: "";
-			const sessions = await supabaseSelectAll(
+			let sessions = await supabaseSelectAll(
 				`tryon_sessions?user_id=eq.${encodeURIComponent(userId)}&select=*&order=session_start_time.desc&limit=500${baseFilter}`,
 			);
+			if ((!Array.isArray(sessions) || sessions.length === 0) && normalizedSince) {
+				sessions = await supabaseSelectAll(
+					`tryon_sessions?user_id=eq.${encodeURIComponent(userId)}&select=*&order=session_start_time.desc&limit=500`,
+				);
+				sessions = filterAnalyticsRowsSince(sessions, normalizedSince);
+			}
 			if (Array.isArray(sessions) && sessions.length > 0) {
 				const ids = sessions.map((item) => item?.id).filter(Boolean).map((value) => String(value));
 				const bySessionMeasurement = new Map();
@@ -2511,7 +2701,7 @@ async function loadSessionAnalytics(shopKey, storeId, sinceIso, shopRecord = nul
 		}
 	}
 
-	// 3) session_analytics by shop_domain (scoped user_id first when present, then sem user_id).
+	// 3) session_analytics by shop_domain (fallback for non-nuvemshop-first stores).
 	if (!preferSessionAnalyticsFirst) {
 		const rows = await fetchSessionAnalyticsByDomains(domainCandidates, normalizedSince, userId);
 		if (rows.length > 0) return rows;
@@ -2609,29 +2799,20 @@ function getMeasurements(session) {
 }
 
 async function getAnalyticsSummary(storeId, storeUrl = "", days = 30) {
-	const shopKey = getCanonicalShopKey(storeId);
 	const periodDays = Math.max(1, Math.min(365, Number(days || 30) || 30));
 	const since = new Date();
 	since.setDate(since.getDate() - periodDays);
 
-	let shopRecord = null;
-	let session = null;
-	try {
-		shopRecord = await loadLegacyShopRecord(storeId, storeUrl);
-	} catch (_error) {
-		shopRecord = null;
-	}
-	try {
-		session = await resolveSession(storeId, storeUrl);
-	} catch (_error) {
-		session = null;
-	}
+	const analyticsContext = await resolveAnalyticsStoreContext(storeId, storeUrl);
+	const { shopKey, session, shopRecord, resolvedStoreUrl, domainCandidates } = analyticsContext;
+
 	const sessions = await loadSessionAnalytics(
 		shopKey,
 		storeId,
 		since.toISOString(),
 		shopRecord,
-		storeUrl,
+		resolvedStoreUrl,
+		domainCandidates,
 	);
 
 	const genderStats = {
@@ -2798,19 +2979,10 @@ async function getAnalyticsSummary(storeId, storeUrl = "", days = 30) {
 		periodDays,
 	};
 	try {
-		const orderDomainCandidates = Array.from(
-			new Set(
-				[
-					shopKey,
-					normalizeStoreUrl(storeUrl),
-					normalizeStoreUrl(shopRecord?.store_url || ""),
-					normalizeStoreUrl(shopRecord?.platform_store_url || ""),
-					normalizeStoreUrl(shopRecord?.shop_domain || ""),
-				]
-					.map((value) => String(value || "").trim())
-					.filter(Boolean),
-			),
-		);
+		const orderDomainCandidates =
+			domainCandidates.length > 0
+				? domainCandidates
+				: buildAnalyticsDomainCandidates(shopKey, resolvedStoreUrl, shopRecord, session);
 		let rows = [];
 		for (const candidate of orderDomainCandidates) {
 			rows = await supabaseSelectAll(

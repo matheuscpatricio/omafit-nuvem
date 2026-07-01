@@ -178,16 +178,18 @@ function AppContent({ nexo, store }: AdminAppProps) {
 	);
 	const [collections, setCollections] = useState<OmafitCollection[]>([]);
 	const [analytics, setAnalytics] = useState<OmafitAnalyticsSummary | null>(null);
-	const [days, setDays] = useState("30");
+	const [days, setDays] = useState("90");
 	const [busyAction, setBusyAction] = useState<string | null>(null);
 	const [heroUploading, setHeroUploading] = useState(false);
 
 	const storeQuery = useMemo(() => {
 		const params = new URLSearchParams();
-		if (store.id) params.set("store_id", store.id);
-		if (store.url) params.set("store_url", store.url);
+		const storeId = context?.store.id || store.id;
+		const storeUrl = context?.store.url || store.url;
+		if (storeId) params.set("store_id", String(storeId));
+		if (storeUrl) params.set("store_url", storeUrl);
 		return params.toString();
-	}, [store.id, store.url]);
+	}, [context?.store.id, context?.store.url, store.id, store.url]);
 
 	const withStoreQuery = useCallback(
 		(path: string) => `${path}${path.includes("?") ? "&" : "?"}${storeQuery}`,
@@ -287,7 +289,7 @@ function AppContent({ nexo, store }: AdminAppProps) {
 		if (section === "analytics") {
 			loadAnalytics();
 		}
-	}, [days, loadAnalytics, section]);
+	}, [context?.store.id, context?.store.url, days, loadAnalytics, section]);
 
 	const saveWidget = useCallback(async () => {
 		setBusyAction("widget");
