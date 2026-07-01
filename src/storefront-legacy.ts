@@ -7,6 +7,10 @@ type LegacyStorefrontConfig = {
 	primary_color?: string;
 	widget_enabled: boolean;
 	excluded_collections: string[];
+	tryon_layout?: string;
+	tryon_layout_background_image?: string | null;
+	tryon_enabled?: boolean;
+	font_family?: string | null;
 };
 
 type LegacyStorefrontResponse = {
@@ -17,6 +21,8 @@ type LegacyStorefrontResponse = {
 	size_charts_count?: number;
 	footwear_rows_count?: number;
 	footwear_rows_missing_handle?: boolean;
+	billing_plan?: string | null;
+	stylist_mode_enabled?: boolean;
 };
 
 type LegacyStoreContext = {
@@ -165,6 +171,8 @@ async function loadConfig(appBaseUrl: string, storeId: string) {
 			widgetUrl: String(data.widgetUrl || `${appBaseUrl}/widget.html`),
 			publicId: String(data.publicId || ""),
 			footwearCollectionHandles: footwearHandles,
+			billingPlan: String(data.billing_plan || ""),
+			stylistModeEnabled: Boolean(data.stylist_mode_enabled),
 		};
 	} catch (error) {
 		debugLog(
@@ -185,6 +193,8 @@ async function loadConfig(appBaseUrl: string, storeId: string) {
 			widgetUrl: `${appBaseUrl}/widget.html`,
 			publicId: "",
 			footwearCollectionHandles: [] as string[],
+			billingPlan: "",
+			stylistModeEnabled: false,
 		};
 	}
 }
@@ -207,6 +217,202 @@ function resolveWidgetBaseUrl(
 	}
 }
 
+function deriveStoreDisplayName(domain: string) {
+	const normalized = String(domain || "")
+		.replace(/^https?:\/\//, "")
+		.split(".")[0];
+	if (!normalized) return "Omafit";
+	return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+}
+
+function buildProductVariantCatalog() {
+	const form = findProductForm();
+	const sizes = new Set<string>();
+	const colors = new Set<string>();
+	const variants: Array<Record<string, unknown>> = [];
+
+	if (form) {
+		for (const select of Array.from(form.querySelectorAll<HTMLSelectElement>("select"))) {
+			const label =
+				select.getAttribute("aria-label") ||
+				select.closest("label")?.textContent ||
+				select.name ||
+				"";
+			const normalizedLabel = normalizeText(label);
+			for (const option of Array.from(select.options)) {
+				const value = String(option.value || option.text || "").trim();
+				if (!value || value === "0") continue;
+				if (normalizedLabel.includes("tamanho") || normalizedLabel.includes("size")) {
+					sizes.add(value);
+				} else if (
+					normalizedLabel.includes("cor") ||
+					normalizedLabel.includes("color") ||
+					normalizedLabel.includes("colour")
+				) {
+					colors.add(value);
+				}
+			}
+		}
+	}
+
+	const variantId = getCurrentVariantId();
+	if (variantId) {
+		variants.push({ id: variantId, available: true });
+	}
+
+	return {
+		sizes: Array.from(sizes),
+		colors: Array.from(colors),
+		variants,
+	};
+}
+
+function getProductDescriptionText() {
+	const meta =
+		document.querySelector<HTMLMetaElement>('meta[name="description"]')?.content ||
+		document.querySelector<HTMLMetaElement>('meta[property="og:description"]')?.content ||
+		"";
+	return String(meta || "").trim();
+}
+
+type WidgetIframeContext = {
+	store: LegacyStoreContext;
+	product: LegacyProductContext;
+	config: LegacyStorefrontConfig;
+	publicId: string;
+	collectionHandle: string;
+	billingPlan: string;
+	stylistModeEnabled: boolean;
+	widgetOrigin: string;
+};
+
+let lastWidgetIframeContext: WidgetIframeContext | null = null;
+
+function postWidgetContextToIframe(iframe: HTMLIFrameElement, ctx: WidgetIframeContext) {
+	if (!iframe.contentWindow) return;
+	const { store, product, config, publicId, collectionHandle, billingPlan, stylistModeEnabled, widgetOrigin } =
+		ctx;
+	const shopDomain = `nuvemshop/${store.id}`;
+	const storeName = deriveStoreDisplayName(store.domain);
+	const fontFamily = sanitizeFontFamilyForCss(getStorefrontFontFamily());
+	const tryonLayout =
+		config.tryon_layout === "hero" || config.tryon_layout === "sidebar"
+			? config.tryon_layout
+			: "default";
+	const tryonLayoutBackground = String(config.tryon_layout_background_image || "").trim();
+	const productCatalog = buildProductVariantCatalog();
+	const selectedVariantId = getCurrentVariantId();
+	const productDescription = getProductDescriptionText();
+	const sharedWidgetData = {
+		productDescription,
+		product_description: productDescription,
+		selectedImage: product.imageUrl || "",
+		selected_image: product.imageUrl || "",
+		productImage: product.imageUrl || "",
+		product_image: product.imageUrl || "",
+		productImages: product.imageUrls,
+		product_images: product.imageUrls,
+		productHandle: product.handle,
+		product_handle: product.handle,
+		productCatalog,
+		product_catalog: productCatalog,
+		selectedVariantId,
+		selected_variant_id: selectedVariantId,
+	};
+
+	const sendPayloads = () => {
+		if (!iframe.contentWindow) return;
+		iframe.contentWindow.postMessage(
+			{
+				type: "omafit-context",
+				language: "pt",
+				locale: "pt",
+				storeLanguage: "pt",
+				shopName: storeName,
+				shop_name: storeName,
+				storeName,
+				store_name: storeName,
+				productName: product.name,
+				product_name: product.name,
+				shopDomain,
+				publicId,
+				...sharedWidgetData,
+				collectionHandle,
+				collectionHandles: collectionHandle ? [collectionHandle] : [],
+				tryon_layout: tryonLayout,
+				tryonLayout,
+				tryon_layout_background_image: tryonLayoutBackground,
+				tryonLayoutBackgroundImage: tryonLayoutBackground,
+				billing_plan: billingPlan || null,
+				billingPlan: billingPlan || null,
+				stylist_mode_enabled: stylistModeEnabled,
+				stylistModeEnabled,
+				primaryColor: config.primary_color || "#810707",
+				fontFamily: fontFamily || "",
+			},
+			widgetOrigin,
+		);
+
+		iframe.contentWindow.postMessage(
+			{
+				type: "omafit-product-images",
+				images: product.imageUrls,
+				productImage: product.imageUrl || "",
+				product_image: product.imageUrl || "",
+			},
+			widgetOrigin,
+		);
+
+		if (config.store_logo) {
+			iframe.contentWindow.postMessage(
+				{
+					type: "omafit-store-logo",
+					logo: config.store_logo,
+				},
+				widgetOrigin,
+			);
+		}
+
+		iframe.contentWindow.postMessage(
+			{
+				type: "omafit-config-update",
+				language: "pt",
+				locale: "pt",
+				storeLanguage: "pt",
+				primaryColor: config.primary_color || "#810707",
+				storeName,
+				store_name: storeName,
+				shopName: storeName,
+				shop_name: storeName,
+				storeLogo: config.store_logo || "",
+				fontFamily: fontFamily || "",
+				shopDomain,
+				publicId,
+				...sharedWidgetData,
+				collectionHandle,
+				collectionHandles: collectionHandle ? [collectionHandle] : [],
+				tryon_layout: tryonLayout,
+				tryonLayout,
+				tryon_layout_background_image: tryonLayoutBackground,
+				tryonLayoutBackgroundImage: tryonLayoutBackground,
+				billing_plan: billingPlan || null,
+				billingPlan: billingPlan || null,
+				stylist_mode_enabled: stylistModeEnabled,
+				stylistModeEnabled,
+			},
+			widgetOrigin,
+		);
+
+		if (fontFamily) {
+			iframe.contentWindow.postMessage({ type: "omafit-store-font", fontFamily }, widgetOrigin);
+		}
+	};
+
+	sendPayloads();
+	window.setTimeout(sendPayloads, 120);
+	window.setTimeout(sendPayloads, 480);
+}
+
 function buildWidgetUrl(
 	baseUrl: string,
 	store: LegacyStoreContext,
@@ -216,25 +422,66 @@ function buildWidgetUrl(
 	collectionHandle: string,
 ) {
 	const widgetUrl = new URL(baseUrl);
+	const shopDomain = `nuvemshop/${store.id}`;
+	const storeName = deriveStoreDisplayName(store.domain);
+	const tryonLayout =
+		config.tryon_layout === "hero" || config.tryon_layout === "sidebar"
+			? config.tryon_layout
+			: "default";
+	const fontFamily = sanitizeFontFamilyForCss(getStorefrontFontFamily());
+
 	widgetUrl.searchParams.set("platform", "nuvemshop");
 	widgetUrl.searchParams.set("store_id", store.id);
 	widgetUrl.searchParams.set("store_domain", store.domain);
+	widgetUrl.searchParams.set("shopDomain", shopDomain);
+	widgetUrl.searchParams.set("productImage", product.imageUrl || "");
+	widgetUrl.searchParams.set("productId", product.productId || product.variantId || product.handle);
+	widgetUrl.searchParams.set("productName", product.name);
+	widgetUrl.searchParams.set("productHandle", product.handle);
+	widgetUrl.searchParams.set("publicId", publicId || "");
+	widgetUrl.searchParams.set("language", "pt");
+	widgetUrl.searchParams.set("locale", "pt");
+	widgetUrl.searchParams.set("tryon_layout", tryonLayout);
+	widgetUrl.searchParams.set("tryonLayout", tryonLayout);
+
+	if (collectionHandle) {
+		widgetUrl.searchParams.set("collectionHandle", collectionHandle);
+		widgetUrl.searchParams.set("collection_handle", collectionHandle);
+	}
+	if (config.store_logo && widgetUrl.toString().length < 2400) {
+		widgetUrl.searchParams.set("storeLogo", String(config.store_logo));
+	}
+	if (config.primary_color) {
+		widgetUrl.searchParams.set("primaryColor", String(config.primary_color));
+	}
+	if (storeName) {
+		widgetUrl.searchParams.set("shopName", storeName);
+		widgetUrl.searchParams.set("storeName", storeName);
+	}
+	if (fontFamily) {
+		widgetUrl.searchParams.set("fontFamily", fontFamily);
+	}
+	if (config.tryon_layout_background_image && widgetUrl.toString().length < 2400) {
+		widgetUrl.searchParams.set(
+			"tryon_layout_background_image",
+			String(config.tryon_layout_background_image),
+		);
+	}
+
+	// Compatibilidade com parâmetros legados Nuvemshop.
 	widgetUrl.searchParams.set("product_id", product.productId || product.variantId || product.handle);
 	widgetUrl.searchParams.set("variant_id", product.variantId || "");
 	widgetUrl.searchParams.set("product_name", product.name);
 	widgetUrl.searchParams.set("product_handle", product.handle);
-	if (collectionHandle) {
-		widgetUrl.searchParams.set("collection_handle", collectionHandle);
-	}
 	if (product.imageUrl) widgetUrl.searchParams.set("product_image", product.imageUrl);
 	if (product.imageUrls.length) {
 		widgetUrl.searchParams.set("product_images", JSON.stringify(product.imageUrls));
 	}
 	if (publicId) widgetUrl.searchParams.set("public_id", publicId);
-	if (config.store_logo) widgetUrl.searchParams.set("store_logo", config.store_logo);
-	if (config.primary_color) widgetUrl.searchParams.set("primary_color", config.primary_color);
-	const storeFont = sanitizeFontFamilyForCss(getStorefrontFontFamily());
-	if (storeFont) widgetUrl.searchParams.set("store_font", storeFont);
+	if (config.store_logo) widgetUrl.searchParams.set("store_logo", String(config.store_logo));
+	if (config.primary_color) widgetUrl.searchParams.set("primary_color", String(config.primary_color));
+	if (fontFamily) widgetUrl.searchParams.set("store_font", fontFamily);
+
 	return widgetUrl.toString();
 }
 
@@ -462,7 +709,7 @@ function getMountTarget() {
 	return buyContainer.closest(".row") || buyContainer;
 }
 
-function ensureModal(widgetUrl: string) {
+function ensureModal(widgetUrl: string, iframeContext?: WidgetIframeContext | null) {
 	let modal = document.getElementById(MODAL_ID);
 	if (!modal) {
 		modal = document.createElement("div");
@@ -483,18 +730,19 @@ function ensureModal(widgetUrl: string) {
 		modal.querySelector(".omafit-modal-close")?.addEventListener("click", () => {
 			modal.hidden = true;
 		});
-		const iframeNew = modal.querySelector("iframe");
-		if (iframeNew instanceof HTMLIFrameElement) {
-			iframeNew.addEventListener("load", () => {
-				const fontFamily = sanitizeFontFamilyForCss(getStorefrontFontFamily());
-				if (!fontFamily || !iframeNew.contentWindow) return;
-				iframeNew.contentWindow.postMessage({ type: "omafit-store-font", fontFamily }, "*");
-			});
-		}
 	}
 	const iframe = modal.querySelector("iframe");
 	if (iframe instanceof HTMLIFrameElement) {
 		iframe.src = widgetUrl;
+		if (iframeContext) {
+			lastWidgetIframeContext = iframeContext;
+			const onLoad = () => {
+				if (lastWidgetIframeContext) {
+					postWidgetContextToIframe(iframe, lastWidgetIframeContext);
+				}
+			};
+			iframe.addEventListener("load", onLoad, { once: true });
+		}
 	}
 	return modal;
 }
@@ -506,6 +754,8 @@ function renderButton(
 	widgetBaseUrl: string,
 	publicId: string | null | undefined,
 	footwearCollectionHandles: string[],
+	billingPlan: string,
+	stylistModeEnabled: boolean,
 ) {
 	if (config.widget_enabled === false) {
 		debugLog("render_skipped_disabled", { storeId: store.id }, "L2");
@@ -561,6 +811,23 @@ function renderButton(
 		"L2",
 	);
 	const widgetUrl = buildWidgetUrl(resolvedBaseUrl, store, product, config, publicId, currentCollectionHandle);
+	const widgetOrigin = (() => {
+		try {
+			return new URL(widgetUrl).origin;
+		} catch {
+			return "*";
+		}
+	})();
+	const iframeContext: WidgetIframeContext = {
+		store,
+		product,
+		config,
+		publicId: String(publicId || ""),
+		collectionHandle: currentCollectionHandle,
+		billingPlan,
+		stylistModeEnabled,
+		widgetOrigin,
+	};
 	ensureStyles(config.primary_color || "#810707");
 	let wrapper = document.getElementById(CTA_WRAPPER_ID);
 	if (!wrapper) {
@@ -576,7 +843,7 @@ function renderButton(
 		: "";
 	button.innerHTML = `${logoMarkup}<span>${config.link_text || "Ver meu tamanho ideal"}</span>`;
 	button.onclick = () => {
-		const modal = ensureModal(widgetUrl);
+		const modal = ensureModal(widgetUrl, iframeContext);
 		modal.hidden = false;
 	};
 	debugLog(
@@ -609,11 +876,18 @@ async function init() {
 	);
 	if (!store || !product) return;
 	const appBaseUrl = getAppBaseUrl();
-	const { config, widgetUrl, publicId, footwearCollectionHandles } = await loadConfig(
-		appBaseUrl,
-		store.id,
+	const { config, widgetUrl, publicId, footwearCollectionHandles, billingPlan, stylistModeEnabled } =
+		await loadConfig(appBaseUrl, store.id);
+	renderButton(
+		store,
+		product,
+		config,
+		widgetUrl,
+		publicId,
+		footwearCollectionHandles,
+		billingPlan,
+		stylistModeEnabled,
 	);
-	renderButton(store, product, config, widgetUrl, publicId, footwearCollectionHandles);
 }
 
 if (document.readyState === "loading") {

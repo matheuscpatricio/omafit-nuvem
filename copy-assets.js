@@ -113,13 +113,15 @@ const widgetHtml = `<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Permissions-Policy" content="camera=*, microphone=*, fullscreen=*">
+  <meta http-equiv="Content-Security-Policy" content="frame-ancestors *">
   <title>Omafit Widget</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     html, body {
       margin: 0;
       min-height: 100%;
-      background: #f8fafc;
+      background: transparent;
       font-family: var(
         --omafit-store-font,
         system-ui,
