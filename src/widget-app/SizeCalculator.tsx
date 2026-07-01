@@ -84,7 +84,8 @@ export function SizeCalculator({
   const [fitIndex, setFitIndex] = useState<number>(1);
   const weightInputRef = useRef<HTMLInputElement>(null);
 
-  const t = (key: WidgetTranslationKey) => widgetTranslations[language][key] || widgetTranslations.en[key] || key;
+  const t = (key: WidgetTranslationKey) =>
+    widgetTranslations[language]?.[key] ?? widgetTranslations.en?.[key] ?? widgetTranslations.pt?.[key] ?? key;
   const accentColor =
     (primaryColor && String(primaryColor).trim()) || '#810707';
   const bodyTypes = gender === 'male' ? bodyTypesMale : bodyTypesFemale;

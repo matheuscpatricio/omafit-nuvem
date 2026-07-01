@@ -465,7 +465,11 @@ function mapFrontendMeasurements(
 
 function getT(language: WidgetLanguage) {
 	return (key: WidgetTranslationKey, replacements?: Record<string, string>) => {
-		let value = widgetTranslations[language][key] || widgetTranslations.en[key] || key;
+		let value =
+			widgetTranslations[language]?.[key] ??
+			widgetTranslations.en?.[key] ??
+			widgetTranslations.pt?.[key] ??
+			key;
 		if (replacements) {
 			for (const [token, replacement] of Object.entries(replacements)) {
 				value = value.replace(`{${token}}`, replacement);

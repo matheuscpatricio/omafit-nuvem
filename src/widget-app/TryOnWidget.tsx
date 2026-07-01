@@ -719,7 +719,10 @@ export function TryOnWidget({
   const [currentLanguage, setCurrentLanguage] = useState<'pt' | 'es' | 'en'>(detectWidgetLanguage(language));
   const t = (key: WidgetTranslationKey): string => {
     const translation =
-      widgetTranslations[currentLanguage][key] ?? widgetTranslations['en'][key] ?? key;
+      widgetTranslations[currentLanguage]?.[key] ??
+      widgetTranslations.en?.[key] ??
+      widgetTranslations.pt?.[key] ??
+      key;
     // Substituir {storeName} pelo nome real da loja (?? preserva tradução vazia legítima)
     return String(translation).replace('{storeName}', storeName || 'nossa loja');
   };
