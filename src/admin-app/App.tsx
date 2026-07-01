@@ -107,16 +107,6 @@ function getInitialSection(): SectionId {
 	return "dashboard";
 }
 
-function formatDate(value?: string | null) {
-	if (!value) return "—";
-	const date = new Date(value);
-	if (Number.isNaN(date.getTime())) return "—";
-	return new Intl.DateTimeFormat("pt-BR", {
-		dateStyle: "short",
-		timeStyle: "short",
-	}).format(date);
-}
-
 function formatMoney(value: number, currency: string) {
 	try {
 		return new Intl.NumberFormat("pt-BR", {
@@ -586,6 +576,15 @@ function DashboardSection({
 	onSelectSection: (section: SectionId) => void;
 }) {
 	const { t } = useI18n();
+	const usage = context.billing.usage;
+	const showUsage = context.billing.status === "active";
+	const imagesIncluded = usage.imagesIncluded;
+	const imagesUsed = usage.imagesUsed;
+	const usageLabel =
+		usage.unlimited || imagesIncluded <= 0
+			? String(imagesUsed)
+			: `${imagesUsed} / ${imagesIncluded}`;
+
 	return (
 		<div style={{ display: "grid", gap: 20 }}>
 			<div
@@ -596,9 +595,11 @@ function DashboardSection({
 				}}
 			>
 				<StatCard label={t("dashboard.storeName")} value={context.store.name} />
-				<StatCard label={t("dashboard.storeId")} value={context.store.id || "—"} />
 				<StatCard label={t("dashboard.storeUrl")} value={context.store.url || "—"} />
-				<StatCard label={t("dashboard.plan")} value={context.billing.plan || "ondemand"} />
+				<StatCard
+					label={t("dashboard.plan")}
+					value={getPlanDisplayName(context.billing.plans, context.billing.plan)}
+				/>
 			</div>
 
 			<div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 16 }}>
@@ -631,15 +632,39 @@ function DashboardSection({
 				</div>
 			</div>
 
-			<div style={{ ...cardStyle, display: "grid", gap: 10 }}>
-				<strong>{t("dashboard.webhooks")}</strong>
-				<span style={subtleTextStyle}>
-					{t("dashboard.lastSync")}: {formatDate(context.auth.lastSyncAt)}
-				</span>
-				<span style={subtleTextStyle}>
-						{t("dashboard.autoUpdates")}: {formatDate(context.auth.webhooksSyncedAt)}
-				</span>
-			</div>
+			{showUsage ? (
+				<div style={{ ...cardStyle, display: "grid", gap: 14 }}>
+					<strong style={{ fontSize: 16 }}>{t("dashboard.monthlyUsage")}</strong>
+					<div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+						<span style={{ fontWeight: 600 }}>{t("dashboard.imagesGenerated")}</span>
+						<strong style={{ fontSize: 18 }}>{usageLabel}</strong>
+					</div>
+					{!usage.unlimited && imagesIncluded > 0 ? (
+						<>
+							<UsageProgressBar percentage={usage.percentage} />
+							<div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+								<span style={subtleTextStyle}>{t("dashboard.remaining")}</span>
+								<span>
+									{usage.remaining ?? 0} {t("dashboard.imagesUnit")}
+								</span>
+							</div>
+						</>
+					) : usage.unlimited ? (
+						<div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+							<span style={subtleTextStyle}>{t("dashboard.remaining")}</span>
+							<span>{t("billing.unlimited")}</span>
+						</div>
+					) : null}
+					{!usage.unlimited && imagesIncluded > 0 && usage.extraImages > 0 ? (
+						<div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+							<span style={subtleTextStyle}>{t("dashboard.extraImagesLabel")}</span>
+							<strong>
+								{usage.extraImages} {t("dashboard.imagesUnit")}
+							</strong>
+						</div>
+					) : null}
+				</div>
+			) : null}
 		</div>
 	);
 }
@@ -975,6 +1000,35 @@ function StatCard({ label, value }: { label: string; value: string }) {
 		<div style={{ ...cardStyle, display: "grid", gap: 8 }}>
 			<span style={subtleTextStyle}>{label}</span>
 			<strong style={{ fontSize: 24 }}>{value}</strong>
+		</div>
+	);
+}
+
+function UsageProgressBar({ percentage }: { percentage: number }) {
+	const tone = percentage > 70 ? "#2563eb" : "#16a34a";
+	return (
+		<div
+			style={{
+				width: "100%",
+				height: 8,
+				borderRadius: 999,
+				background: "#e5e7eb",
+				overflow: "hidden",
+			}}
+			role="progressbar"
+			aria-valuenow={percentage}
+			aria-valuemin={0}
+			aria-valuemax={100}
+		>
+			<div
+				style={{
+					width: `${Math.max(0, Math.min(100, percentage))}%`,
+					height: "100%",
+					background: tone,
+					borderRadius: 999,
+					transition: "width 0.2s ease",
+				}}
+			/>
 		</div>
 	);
 }
