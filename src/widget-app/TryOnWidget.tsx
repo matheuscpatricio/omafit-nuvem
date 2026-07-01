@@ -2143,7 +2143,7 @@ export function TryOnWidget({
       if (!effectiveShopDomain) {
         console.log('⚠️ Não há shopDomain para buscar configurações');
         setHeroBackgroundResolved(true);
-        if (layoutFromUrl === undefined && tryonLayoutOverride === undefined && !isTryonWidgetEmbedded()) {
+        if (layoutFromUrl === undefined && tryonLayoutOverride === undefined) {
           setTryonLayout((p) => (p === 'pending' ? 'default' : p));
         }
         return;
@@ -2205,22 +2205,14 @@ export function TryOnWidget({
             console.log('🌍 Idioma definido via widget_configurations.admin_locale:', adminLocale);
             setCurrentLanguage(adminLocale);
           }
-        } else if (
-          layoutFromUrl === undefined &&
-          tryonLayoutOverride === undefined &&
-          !isTryonWidgetEmbedded()
-        ) {
+        } else if (layoutFromUrl === undefined && tryonLayoutOverride === undefined) {
           setTryonLayout('default');
           writeTryonLayoutToSession(effectiveShopDomain, 'default');
         }
       } catch (error) {
         console.error('❌ Erro ao buscar configurações:', error);
         setHeroBackgroundResolved(true);
-        if (
-          layoutFromUrl === undefined &&
-          tryonLayoutOverride === undefined &&
-          !isTryonWidgetEmbedded()
-        ) {
+        if (layoutFromUrl === undefined && tryonLayoutOverride === undefined) {
           setTryonLayout((p) => (p === 'pending' ? 'default' : p));
         }
       }

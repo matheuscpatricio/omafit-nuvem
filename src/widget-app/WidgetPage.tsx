@@ -97,6 +97,11 @@ export function WidgetPage() {
 		if (name) setProductName(name);
 		const handle = decodeValue(params.get("product_handle"));
 		if (handle) setProductHandle(handle);
+		const singleImage = decodeValue(params.get("product_image"));
+		if (singleImage) {
+			setProductImage(singleImage);
+			setProductImages((current) => (current.length ? current : [singleImage]));
+		}
 		const images = parseListParam(params.get("product_images"));
 		if (images.length) {
 			setProductImages(images);

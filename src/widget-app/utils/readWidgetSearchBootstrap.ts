@@ -75,9 +75,13 @@ export function readWidgetSearchBootstrap(): WidgetSearchBootstrap {
   }
   const params = new URLSearchParams(window.location.search);
 
-  const productImage = normalizeGalleryUrl(
-    tryDecodeUrlParam(params.get('productImage')?.trim() || '')
-  );
+	const productImage = normalizeGalleryUrl(
+		tryDecodeUrlParam(
+			params.get("productImage")?.trim() ||
+				params.get("product_image")?.trim() ||
+				"",
+		),
+	);
   const productHandle =
     params.get('productHandle')?.trim() ||
     params.get('product_handle')?.trim() ||
@@ -85,7 +89,7 @@ export function readWidgetSearchBootstrap(): WidgetSearchBootstrap {
     '';
 
   let productImages: string[] = [];
-  const imagesParam = params.get('productImages');
+  const imagesParam = params.get('productImages') || params.get('product_images');
   if (imagesParam) {
     try {
       const parsed = JSON.parse(decodeURIComponent(imagesParam));
