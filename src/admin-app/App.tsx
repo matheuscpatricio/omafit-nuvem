@@ -7,16 +7,15 @@ import {
 import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { I18nProvider, useI18n } from "./i18n";
 import { OmafitBrandBanner } from "./OmafitBrandBanner";
+import { SizeChartsSection } from "./SizeChartsSection";
 import type {
 	OmafitAdminContext,
 	OmafitAnalyticsSummary,
 	OmafitCollection,
-	OmafitProduct,
-	OmafitSizeChart,
 	OmafitWidgetConfig,
 } from "../shared/models";
 
-type SectionId = "dashboard" | "billing" | "widget" | "size-charts" | "size-chart-mapping" | "analytics";
+type SectionId = "dashboard" | "billing" | "widget" | "size-charts" | "analytics";
 
 type StoreBootstrap = {
 	id: string;
@@ -103,7 +102,6 @@ function getInitialSection(): SectionId {
 	if (section === "billing") return "billing";
 	if (section === "widget") return "widget";
 	if (section === "size-charts") return "size-charts";
-	if (section === "size-chart-mapping") return "size-chart-mapping";
 	if (section === "analytics") return "analytics";
 	return "dashboard";
 }
@@ -172,84 +170,6 @@ function defaultWidgetConfig(locale: string): OmafitWidgetConfig {
 	};
 }
 
-function defaultChart(): OmafitSizeChart {
-	return {
-		collection_handle: "",
-		gender: "female",
-		collection_type: "upper",
-		collection_elasticity: "structured",
-		measurement_refs: ["peito", "cintura", "quadril"],
-		sizes: [{ size: "P", peito: "", cintura: "", quadril: "" }],
-	};
-}
-
-const COLLECTION_TYPE_OPTIONS: Array<{ value: OmafitSizeChart["collection_type"]; label: string }> = [
-	{ value: "upper", label: "Superior (camisas, jaquetas...)" },
-	{ value: "lower", label: "Inferior (calças, saias...)" },
-	{ value: "full", label: "Corpo inteiro (vestidos, macacões...)" },
-	{ value: "footwear", label: "Calçados (tênis, botas...)" },
-];
-
-const COLLECTION_ELASTICITY_OPTIONS: Array<{
-	value: Exclude<OmafitSizeChart["collection_elasticity"], "">;
-	label: string;
-}> = [
-	{ value: "structured", label: "Estruturada" },
-	{ value: "light_flex", label: "Leve flexibilidade" },
-	{ value: "flexible", label: "Flexível" },
-	{ value: "high_elasticity", label: "Alta elasticidade" },
-];
-
-const MEASUREMENT_REF_OPTIONS = [
-	{ value: "peito", label: "Peito" },
-	{ value: "cintura", label: "Cintura" },
-	{ value: "quadril", label: "Quadril" },
-	{ value: "comprimento", label: "Comprimento" },
-	{ value: "tornozelo", label: "Tornozelo" },
-];
-
-const FOOTWEAR_MEASUREMENT_REF_OPTIONS = [{ value: "tamanho_pe", label: "Tamanho do pé" }];
-
-function normalizeMeasurementRefsForCollectionType(
-	collectionType: OmafitSizeChart["collection_type"],
-	refs: string[],
-) {
-	if (collectionType === "footwear") return ["tamanho_pe"];
-	const allowed = new Set(MEASUREMENT_REF_OPTIONS.map((option) => option.value));
-	const sanitized = Array.isArray(refs)
-		? refs
-				.map((value) => String(value || "").trim())
-				.filter((value) => allowed.has(value))
-		: [];
-	const defaults = ["peito", "cintura", "quadril"];
-	const result = [...sanitized];
-	for (const fallback of defaults) {
-		if (result.length >= 3) break;
-		if (!result.includes(fallback)) result.push(fallback);
-	}
-	return result.slice(0, 3);
-}
-
-function normalizeChartForType(chart: OmafitSizeChart): OmafitSizeChart {
-	const measurementRefs = normalizeMeasurementRefsForCollectionType(
-		chart.collection_type,
-		chart.measurement_refs,
-	);
-	return {
-		...chart,
-		collection_elasticity:
-			chart.collection_type === "footwear" ? "" : chart.collection_elasticity || "structured",
-		measurement_refs: measurementRefs,
-		sizes: chart.sizes.map((row) => {
-			const next: Record<string, string> = { size: row.size || "" };
-			for (const key of measurementRefs) {
-				next[key] = row[key] || "";
-			}
-			return next;
-		}),
-	};
-}
-
 function AppContent({ nexo, store }: AdminAppProps) {
 	const { t } = useI18n();
 	const [section, setSection] = useState<SectionId>(getInitialSection);
@@ -261,8 +181,6 @@ function AppContent({ nexo, store }: AdminAppProps) {
 		defaultWidgetConfig(store.language),
 	);
 	const [collections, setCollections] = useState<OmafitCollection[]>([]);
-	const [sizeCharts, setSizeCharts] = useState<OmafitSizeChart[]>([defaultChart()]);
-	const [products, setProducts] = useState<OmafitProduct[]>([]);
 	const [analytics, setAnalytics] = useState<OmafitAnalyticsSummary | null>(null);
 	const [days, setDays] = useState("30");
 	const [busyAction, setBusyAction] = useState<string | null>(null);
@@ -288,13 +206,7 @@ function AppContent({ nexo, store }: AdminAppProps) {
 			syncPathname(nexo, `/${nextSection}`);
 			navigateHeader(nexo, {
 				text: `Omafit · ${t(
-					`nav.${
-						nextSection === "size-charts"
-							? "sizeCharts"
-							: nextSection === "size-chart-mapping"
-								? "sizeChartMapping"
-								: nextSection
-					}`,
+					`nav.${nextSection === "size-charts" ? "sizeCharts" : nextSection}`,
 				)}`,
 			});
 		},
@@ -338,30 +250,6 @@ function AppContent({ nexo, store }: AdminAppProps) {
 		}
 	}, [context?.store.language, store.language, withStoreQuery]);
 
-	const loadSizeCharts = useCallback(async () => {
-		try {
-			const data = await fetchJson<{ charts: OmafitSizeChart[] }>(
-				withStoreQuery("/api/size-charts"),
-			);
-			setSizeCharts(
-				data.charts && data.charts.length > 0
-					? data.charts.map(normalizeChartForType)
-					: [defaultChart()],
-			);
-		} catch (_error) {
-			setSizeCharts([defaultChart()]);
-		}
-	}, [withStoreQuery]);
-
-	const loadProducts = useCallback(async () => {
-		try {
-			const data = await fetchJson<{ products: OmafitProduct[] }>(withStoreQuery("/api/products"));
-			setProducts(data.products || []);
-		} catch (_error) {
-			setProducts([]);
-		}
-	}, [withStoreQuery]);
-
 	const loadAnalytics = useCallback(async () => {
 		setBusyAction("analytics");
 		try {
@@ -380,8 +268,7 @@ function AppContent({ nexo, store }: AdminAppProps) {
 		loadContext();
 		loadCollections();
 		loadWidgetConfig();
-		loadSizeCharts();
-	}, [loadCollections, loadContext, loadSizeCharts, loadWidgetConfig]);
+	}, [loadCollections, loadContext, loadWidgetConfig]);
 
 	useEffect(() => {
 		updateUrlSection(section);
@@ -403,11 +290,7 @@ function AppContent({ nexo, store }: AdminAppProps) {
 		if (section === "analytics") {
 			loadAnalytics();
 		}
-		if (section === "size-chart-mapping") {
-			void loadProducts();
-			void loadSizeCharts();
-		}
-	}, [days, loadAnalytics, loadProducts, loadSizeCharts, section]);
+	}, [days, loadAnalytics, section]);
 
 	const saveWidget = useCallback(async () => {
 		setBusyAction("widget");
@@ -470,25 +353,6 @@ function AppContent({ nexo, store }: AdminAppProps) {
 		[t, widgetConfig, withStoreQuery],
 	);
 
-	const saveCharts = useCallback(async () => {
-		setBusyAction("charts");
-		setError(null);
-		try {
-			await fetchJson(withStoreQuery("/api/size-charts"), {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					charts: sizeCharts.map(normalizeChartForType),
-				}),
-			});
-			setNotice(t("sizeCharts.saved"));
-		} catch (requestError) {
-			setError(requestError instanceof Error ? requestError.message : t("feedback.error"));
-		} finally {
-			setBusyAction(null);
-		}
-	}, [sizeCharts, t, withStoreQuery]);
-
 	const activatePlan = useCallback(
 		async (planId: string) => {
 			setBusyAction(`plan:${planId}`);
@@ -530,14 +394,6 @@ function AppContent({ nexo, store }: AdminAppProps) {
 			setBusyAction(null);
 		}
 	}, [loadContext, t, withStoreQuery]);
-
-	const updateChart = useCallback((index: number, nextChart: OmafitSizeChart) => {
-		setSizeCharts((current) =>
-			current.map((chart, chartIndex) =>
-				chartIndex === index ? normalizeChartForType(nextChart) : chart,
-			),
-		);
-	}, []);
 
 	if (loading) {
 		return (
@@ -603,7 +459,6 @@ function AppContent({ nexo, store }: AdminAppProps) {
 							["billing", t("nav.billing")],
 							["widget", t("nav.widget")],
 							["size-charts", t("nav.sizeCharts")],
-							["size-chart-mapping", t("nav.sizeChartMapping")],
 							["analytics", t("nav.analytics")],
 						] as Array<[SectionId, string]>
 					).map(([id, label]) => (
@@ -700,23 +555,15 @@ function AppContent({ nexo, store }: AdminAppProps) {
 				{section === "size-charts" ? (
 					<SizeChartsSection
 						collections={collections}
-						charts={sizeCharts}
-						onChange={updateChart}
-						onAddChart={() => setSizeCharts((current) => [...current, defaultChart()])}
-						onRemoveChart={(index) =>
-							setSizeCharts((current) =>
-								current.length === 1
-									? [defaultChart()]
-									: current.filter((_, chartIndex) => chartIndex !== index),
-							)
-						}
-						onSave={saveCharts}
-						busy={busyAction === "charts"}
+						withStoreQuery={withStoreQuery}
+						onNotice={(message) => {
+							setNotice(message);
+							setError(null);
+						}}
+						onError={(message) => {
+							setError(message);
+						}}
 					/>
-				) : null}
-
-				{section === "size-chart-mapping" ? (
-					<SizeChartMappingSection products={products} charts={sizeCharts} />
 				) : null}
 
 				{section === "analytics" ? (
@@ -1034,286 +881,6 @@ function WidgetSection({
 	);
 }
 
-function SizeChartsSection({
-	collections,
-	charts,
-	onChange,
-	onAddChart,
-	onRemoveChart,
-	onSave,
-	busy,
-}: {
-	collections: OmafitCollection[];
-	charts: OmafitSizeChart[];
-	onChange: (index: number, chart: OmafitSizeChart) => void;
-	onAddChart: () => void;
-	onRemoveChart: (index: number) => void;
-	onSave: () => Promise<void>;
-	busy: boolean;
-}) {
-	const { t } = useI18n();
-	return (
-		<div style={{ display: "grid", gap: 16 }}>
-			<div style={{ ...cardStyle, display: "grid", gap: 8 }}>
-				<strong style={{ fontSize: 18 }}>{t("sizeCharts.title")}</strong>
-				<span style={subtleTextStyle}>{t("sizeCharts.subtitle")}</span>
-				<div>
-					<button type="button" style={buttonBaseStyle} onClick={onAddChart}>
-						{t("sizeCharts.addChart")}
-					</button>
-				</div>
-			</div>
-
-			{charts.map((chart, index) => (
-				<SizeChartEditor
-					key={`${chart.collection_handle}-${chart.gender}-${index}`}
-					index={index}
-					chart={chart}
-					collections={collections}
-					onChange={onChange}
-					onRemove={() => onRemoveChart(index)}
-				/>
-			))}
-
-			<div>
-				<button type="button" style={primaryButtonStyle} onClick={onSave} disabled={busy}>
-					{busy ? t("common.loading") : t("common.save")}
-				</button>
-			</div>
-		</div>
-	);
-}
-
-function SizeChartEditor({
-	index,
-	chart,
-	collections,
-	onChange,
-	onRemove,
-}: {
-	index: number;
-	chart: OmafitSizeChart;
-	collections: OmafitCollection[];
-	onChange: (index: number, chart: OmafitSizeChart) => void;
-	onRemove: () => void;
-}) {
-	const { t } = useI18n();
-	const measurementRefs =
-		chart.collection_type === "footwear" ? ["tamanho_pe"] : chart.measurement_refs;
-
-	function update(next: Partial<OmafitSizeChart>) {
-		onChange(index, normalizeChartForType({ ...chart, ...next }));
-	}
-
-	return (
-		<div style={{ ...cardStyle, display: "grid", gap: 14 }}>
-			<div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-				<strong>
-					{t("sizeCharts.collection")} #{index + 1}
-				</strong>
-				<button type="button" style={buttonBaseStyle} onClick={onRemove}>
-					Remover
-				</button>
-			</div>
-
-			<div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
-				<label style={labelStyle}>
-					<span>{t("sizeCharts.collection")}</span>
-					<select
-						style={inputStyle}
-						value={chart.collection_handle}
-						onChange={(event) => update({ collection_handle: event.target.value })}
-					>
-						<option value="">Geral</option>
-						{collections.map((collection) => (
-							<option key={collection.id} value={collection.handle}>
-								{collection.title}
-							</option>
-						))}
-					</select>
-				</label>
-
-				<label style={labelStyle}>
-					<span>Produto (handle)</span>
-					<input
-						style={inputStyle}
-						value={chart.product_handle || ""}
-						onChange={(event) => update({ product_handle: event.target.value })}
-						placeholder="opcional — escopo por produto"
-					/>
-				</label>
-
-				<label style={labelStyle}>
-					<span>Escopo de gênero</span>
-					<select
-						style={inputStyle}
-						value={chart.gender_scope || "both"}
-						onChange={(event) =>
-							update({ gender_scope: event.target.value as OmafitSizeChart["gender_scope"] })
-						}
-					>
-						<option value="both">Ambos</option>
-						<option value="male">Masculino</option>
-						<option value="female">Feminino</option>
-					</select>
-				</label>
-
-				<label style={labelStyle}>
-					<span>{t("sizeCharts.gender")}</span>
-					<select
-						style={inputStyle}
-						value={chart.gender}
-						onChange={(event) =>
-							update({ gender: event.target.value as OmafitSizeChart["gender"] })
-						}
-					>
-						<option value="female">Feminino</option>
-						<option value="male">Masculino</option>
-						<option value="unisex">Unissex</option>
-					</select>
-				</label>
-
-				<label style={labelStyle}>
-					<span>{t("sizeCharts.collectionType")}</span>
-					<select
-						style={inputStyle}
-						value={chart.collection_type}
-						onChange={(event) =>
-							update({
-								collection_type: event.target.value as OmafitSizeChart["collection_type"],
-							})
-						}
-					>
-						{COLLECTION_TYPE_OPTIONS.map((option) => (
-							<option key={option.value} value={option.value}>
-								{option.label}
-							</option>
-						))}
-					</select>
-				</label>
-
-				<label style={labelStyle}>
-					<span>{t("sizeCharts.elasticity")}</span>
-					<select
-						style={inputStyle}
-						value={chart.collection_elasticity}
-						disabled={chart.collection_type === "footwear"}
-						onChange={(event) =>
-							update({
-								collection_elasticity:
-									event.target.value as OmafitSizeChart["collection_elasticity"],
-							})
-						}
-					>
-						{COLLECTION_ELASTICITY_OPTIONS.map((option) => (
-							<option key={option.value} value={option.value}>
-								{option.label}
-							</option>
-						))}
-					</select>
-				</label>
-			</div>
-
-			<div style={{ display: "grid", gap: 8 }}>
-				<strong>{t("sizeCharts.measurements")}</strong>
-				<div style={{ display: "grid", gridTemplateColumns: `repeat(${measurementRefs.length}, 1fr)`, gap: 12 }}>
-					{measurementRefs.map((measurement, measurementIndex) => {
-						const options =
-							chart.collection_type === "footwear"
-								? FOOTWEAR_MEASUREMENT_REF_OPTIONS
-								: MEASUREMENT_REF_OPTIONS;
-						return (
-							<select
-								key={`${measurement}-${measurementIndex}`}
-								style={inputStyle}
-								value={measurement}
-								disabled={chart.collection_type === "footwear"}
-								onChange={(event) => {
-									const nextRefs = [...measurementRefs];
-									nextRefs[measurementIndex] = event.target.value;
-									update({ measurement_refs: nextRefs });
-								}}
-							>
-								{options.map((option) => (
-									<option key={option.value} value={option.value}>
-										{option.label}
-									</option>
-								))}
-							</select>
-						);
-					})}
-				</div>
-			</div>
-
-			<div style={{ display: "grid", gap: 8 }}>
-				<strong>{t("sizeCharts.sizeRows")}</strong>
-				{chart.sizes.map((row, rowIndex) => (
-					<div
-						key={`${row.size}-${rowIndex}`}
-						style={{
-							display: "grid",
-							gridTemplateColumns: `140px repeat(${measurementRefs.length}, 1fr) auto`,
-							gap: 10,
-						}}
-					>
-						<input
-							style={inputStyle}
-							value={row.size}
-							onChange={(event) => {
-								const nextRows = [...chart.sizes];
-								nextRows[rowIndex] = { ...nextRows[rowIndex], size: event.target.value };
-								update({ sizes: nextRows });
-							}}
-						/>
-						{measurementRefs.map((measurement) => (
-							<input
-								key={measurement}
-								style={inputStyle}
-								value={row[measurement] || ""}
-								onChange={(event) => {
-									const nextRows = [...chart.sizes];
-									nextRows[rowIndex] = {
-										...nextRows[rowIndex],
-										[measurement]: event.target.value,
-									};
-									update({ sizes: nextRows });
-								}}
-							/>
-						))}
-						<button
-							type="button"
-							style={buttonBaseStyle}
-							onClick={() =>
-								update({
-									sizes: chart.sizes.filter((_, currentRowIndex) => currentRowIndex !== rowIndex),
-								})
-							}
-						>
-							X
-						</button>
-					</div>
-				))}
-				<button
-					type="button"
-					style={buttonBaseStyle}
-					onClick={() =>
-						update({
-							sizes: [
-								...chart.sizes,
-								Object.fromEntries(
-									["size", ...measurementRefs].map((measurement) => [measurement, ""]),
-								) as Record<string, string>,
-							],
-						})
-					}
-				>
-					{t("sizeCharts.addRow")}
-				</button>
-			</div>
-		</div>
-	);
-}
-
 function AnalyticsSection({
 	data,
 	days,
@@ -1503,86 +1070,6 @@ function AnalyticsSection({
 				</>
 			) : (
 				<div style={cardStyle}>{t("common.noData")}</div>
-			)}
-		</div>
-	);
-}
-
-function pickPreferredCollectionHandle(handles: string[]) {
-	const unique = Array.from(new Set(handles.map((h) => String(h || "").trim()).filter(Boolean)));
-	const lower = (s: string) => s.toLowerCase();
-	const isRefinementOf = (maybeRefined: string, base: string) => {
-		const x = lower(maybeRefined);
-		const b = lower(base);
-		if (!b.length || b === x) return false;
-		return x.startsWith(`${b}-`) || x.startsWith(`${b}_`);
-	};
-	const filtered = unique.filter((h) => !unique.some((other) => other !== h && isRefinementOf(other, h)));
-	const candidates = filtered.length > 0 ? filtered : unique;
-	return candidates.sort((a, b) => b.split(/[-_]/).length - a.split(/[-_]/).length)[0] || "";
-}
-
-function resolveChartForProduct(product: OmafitProduct, charts: OmafitSizeChart[]) {
-	const productHandle = String(product.handle || "").toLowerCase();
-	const collectionHandles = (product.collections || []).map((c) => String(c.handle || "").toLowerCase());
-	const preferredCollection = pickPreferredCollectionHandle(collectionHandles);
-	const byProduct = charts.find((c) => String(c.product_handle || "").toLowerCase() === productHandle);
-	if (byProduct) return byProduct;
-	const byCollection = charts.find(
-		(c) => String(c.collection_handle || "").toLowerCase() === preferredCollection,
-	);
-	if (byCollection) return byCollection;
-	return charts.find((c) => !c.collection_handle && !c.product_handle) || null;
-}
-
-function SizeChartMappingSection({
-	products,
-	charts,
-}: {
-	products: OmafitProduct[];
-	charts: OmafitSizeChart[];
-}) {
-	const { t } = useI18n();
-	const rows = products.slice(0, 200).map((product) => {
-		const resolved = resolveChartForProduct(product, charts);
-		return {
-			product,
-			resolvedLabel: resolved
-				? resolved.product_handle
-					? `Produto: ${resolved.product_handle}`
-					: resolved.collection_handle
-						? `Categoria: ${resolved.collection_handle}`
-						: "Global"
-				: "Sem tabela",
-		};
-	});
-	return (
-		<div style={{ ...cardStyle, display: "grid", gap: 12 }}>
-			<strong style={{ fontSize: 18 }}>{t("sizeChartMapping.title")}</strong>
-			<span style={subtleTextStyle}>{t("sizeChartMapping.subtitle")}</span>
-			{rows.length === 0 ? (
-				<span style={subtleTextStyle}>{t("common.noData")}</span>
-			) : (
-				<div style={{ overflowX: "auto" }}>
-					<table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
-						<thead>
-							<tr>
-								<th style={{ textAlign: "left", padding: 8 }}>Produto</th>
-								<th style={{ textAlign: "left", padding: 8 }}>Handle</th>
-								<th style={{ textAlign: "left", padding: 8 }}>Tabela resolvida</th>
-							</tr>
-						</thead>
-						<tbody>
-							{rows.map(({ product, resolvedLabel }) => (
-								<tr key={product.id}>
-									<td style={{ padding: 8, borderTop: "1px solid #e5e7eb" }}>{product.title}</td>
-									<td style={{ padding: 8, borderTop: "1px solid #e5e7eb" }}>{product.handle}</td>
-									<td style={{ padding: 8, borderTop: "1px solid #e5e7eb" }}>{resolvedLabel}</td>
-								</tr>
-							))}
-						</tbody>
-					</table>
-				</div>
 			)}
 		</div>
 	);
