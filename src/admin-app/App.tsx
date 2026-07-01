@@ -6,6 +6,7 @@ import {
 } from "../lib/nexo";
 import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { I18nProvider, useI18n } from "./i18n";
+import { OmafitBrandBanner } from "./OmafitBrandBanner";
 import { SizeChartsSection } from "./SizeChartsSection";
 import { WidgetSection } from "./WidgetSection";
 import type {
@@ -436,6 +437,8 @@ function AppContent({ nexo, store }: AdminAppProps) {
 	return (
 		<div style={pageStyle} className="omafit-brand-shell">
 			<div style={shellStyle} className="omafit-brand-shell__content">
+				<OmafitBrandBanner variant={section === "dashboard" ? "hero" : "compact"} />
+
 				<nav
 					style={{
 						display: "flex",
