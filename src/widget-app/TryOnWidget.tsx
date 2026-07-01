@@ -407,7 +407,7 @@ const normalizeOptionList = (value: unknown): string[] => {
   return Array.from(unique);
 };
 
-const verboseTryOnDebug = import.meta.env.DEV;
+const verboseTryOnDebug = Boolean(import.meta.env?.DEV);
 
 const logVerboseTryOn = (...args: unknown[]) => {
   if (verboseTryOnDebug) {
