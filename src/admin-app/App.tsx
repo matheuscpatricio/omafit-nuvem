@@ -6,7 +6,6 @@ import {
 } from "../lib/nexo";
 import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { I18nProvider, useI18n } from "./i18n";
-import { OmafitBrandBanner } from "./OmafitBrandBanner";
 import { SizeChartsSection } from "./SizeChartsSection";
 import { WidgetSection } from "./WidgetSection";
 import type {
@@ -424,20 +423,6 @@ function AppContent({ nexo, store }: AdminAppProps) {
 		[loadContext, t, withStoreQuery],
 	);
 
-	const syncStore = useCallback(async () => {
-		setBusyAction("sync");
-		setError(null);
-		try {
-			await fetchJson(withStoreQuery("/api/admin/sync"), { method: "POST" });
-			await loadContext();
-			setNotice("Loja sincronizada com sucesso.");
-		} catch (requestError) {
-			setError(requestError instanceof Error ? requestError.message : t("feedback.error"));
-		} finally {
-			setBusyAction(null);
-		}
-	}, [loadContext, t, withStoreQuery]);
-
 	if (loading) {
 		return (
 			<div style={pageStyle}>
@@ -451,44 +436,6 @@ function AppContent({ nexo, store }: AdminAppProps) {
 	return (
 		<div style={pageStyle} className="omafit-brand-shell">
 			<div style={shellStyle} className="omafit-brand-shell__content">
-				<OmafitBrandBanner variant={section === "dashboard" ? "hero" : "compact"} />
-
-				<header style={{ ...cardStyle, display: "grid", gap: 12 }}>
-					<div style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
-						<div style={{ display: "grid", gap: 8 }}>
-							<strong style={{ fontSize: 18 }}>{context?.appName || "Omafit"}</strong>
-							<span style={subtleTextStyle}>{t("dashboard.subtitle")}</span>
-						</div>
-						<div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "start" }}>
-							<a href={context?.supportUrl} style={{ ...buttonBaseStyle, textDecoration: "none", color: "#111827" }}>
-								{t("common.openSupport")}
-							</a>
-							<button
-								type="button"
-								style={primaryButtonStyle}
-								onClick={syncStore}
-								disabled={busyAction === "sync" || !context?.auth.connected}
-							>
-								{busyAction === "sync" ? t("common.loading") : t("common.refresh")}
-							</button>
-						</div>
-					</div>
-					<div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-						<StatusPill
-							label={`${t("dashboard.authStatus")}: ${context?.auth.connected ? t("common.connected") : t("common.disconnected")}`}
-							tone={context?.auth.connected ? "success" : "warning"}
-						/>
-						<StatusPill
-							label={`${t("billing.currentPlan")}: ${getPlanDisplayName(context?.billing.plans, context?.billing.plan || "ondemand")}`}
-							tone="neutral"
-						/>
-						<StatusPill
-							label={`${t("dashboard.imagesUsed")}: ${context?.billing.usage.imagesUsed || 0}/${context?.billing.usage.imagesIncluded || 0}`}
-							tone="neutral"
-						/>
-					</div>
-				</header>
-
 				<nav
 					style={{
 						display: "flex",
@@ -638,11 +585,6 @@ function DashboardSection({
 	const { t } = useI18n();
 	return (
 		<div style={{ display: "grid", gap: 20 }}>
-			<div style={{ ...cardStyle, display: "grid", gap: 8 }}>
-				<strong style={{ fontSize: 18 }}>{t("dashboard.title")}</strong>
-				<span style={subtleTextStyle}>{t("dashboard.syncHint")}</span>
-			</div>
-
 			<div
 				style={{
 					display: "grid",

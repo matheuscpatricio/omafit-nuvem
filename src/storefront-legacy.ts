@@ -620,7 +620,6 @@ function ensureStyles(primaryColor: string) {
 	style.textContent = `
 #${CTA_WRAPPER_ID} {
   width: 100%;
-  margin-top: 12px;
 }
 #${CTA_BUTTON_ID} {
   width: 100%;
@@ -713,9 +712,21 @@ function getEmbedMount() {
 	return { buyContainer, row };
 }
 
+function applyCtaWrapperSpacing(wrapper: HTMLElement, embedPosition?: string) {
+	const above = embedPosition === "above_buy_buttons";
+	if (above) {
+		wrapper.style.marginTop = "0";
+		wrapper.style.marginBottom = "16px";
+	} else {
+		wrapper.style.marginTop = "16px";
+		wrapper.style.marginBottom = "0";
+	}
+}
+
 function mountCtaWrapper(wrapper: HTMLElement, embedPosition?: string) {
 	const mount = getEmbedMount();
 	if (!mount) return false;
+	applyCtaWrapperSpacing(wrapper, embedPosition);
 	const above = embedPosition === "above_buy_buttons";
 	if (above) {
 		mount.buyContainer.insertAdjacentElement("beforebegin", wrapper);
@@ -918,9 +929,8 @@ function renderButton(
 		wrapper = document.createElement("div");
 		wrapper.id = CTA_WRAPPER_ID;
 		wrapper.style.width = "100%";
-		wrapper.style.marginTop = "12px";
-		if (!mountCtaWrapper(wrapper, config.embed_position)) return;
 	}
+	if (!mountCtaWrapper(wrapper, config.embed_position)) return;
 	wrapper.replaceChildren(createStorefrontCta(config, openWidget));
 	debugLog(
 		"render_button_complete",
