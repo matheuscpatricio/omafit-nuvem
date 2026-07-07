@@ -867,7 +867,7 @@ async function nuvemshopPartnerActionRequest(path, options = {}) {
 	const response = await fetch(`${getPartnerActionBase()}${path}`, {
 		...options,
 		headers: {
-			Authentication: `bearer ${token}`,
+			Authorization: `Bearer ${token}`,
 			"User-Agent": `${getAppName()} (${getSupportEmail()})`,
 			"Content-Type": "application/json; charset=utf-8",
 			...(options.headers || {}),
@@ -2120,14 +2120,101 @@ async function getBillingSummary(storeId, storeUrl = "") {
 	};
 }
 
+function buildBillingDebugChecks(snapshot) {
+	const issues = [];
+	const recommendations = [];
+	const billingMode = String(snapshot.billingMode || "auto");
+	const conceptCode = String(snapshot.effectiveConceptCode || "").trim();
+	const serviceId = String(snapshot.effectiveServiceId || "").trim();
+	const subscription = snapshot.subscription || null;
+	const webhookState = snapshot.webhookState || {};
+
+	if (!snapshot.hasConfiguredAppId) {
+		issues.push("NUVEMSHOP_APP_ID nao configurado.");
+		recommendations.push("Defina NUVEMSHOP_APP_ID no ambiente de producao.");
+	}
+	if (!snapshot.hasPartnerSecret) {
+		issues.push("NUVEMSHOP_CLIENT_SECRET ausente — Billing API indisponivel.");
+		recommendations.push("Defina NUVEMSHOP_CLIENT_SECRET no Railway.");
+	}
+	if (!snapshot.webhookBaseUrl) {
+		issues.push("NUVEMSHOP_WEBHOOK_BASE_URL nao configurado ou sem HTTPS.");
+		recommendations.push(
+			"Configure NUVEMSHOP_WEBHOOK_BASE_URL com a URL publica HTTPS do app.",
+		);
+	}
+	if (!conceptCode) {
+		issues.push(
+			"concept_code ausente — cobranca nativa da Nuvemshop nao pode ser vinculada.",
+		);
+		recommendations.push(
+			"Aguarde o webhook subscription/updated apos a instalacao ou defina NUVEMSHOP_BILLING_CONCEPT_CODE.",
+		);
+	}
+	if (!webhookState.subscriptionUpdatedWebhook) {
+		issues.push("Webhook subscription/updated nao registrado para esta loja.");
+		recommendations.push(
+			"Reinstale o app ou chame POST /api/admin/sync para registrar webhooks.",
+		);
+	}
+	if (snapshot.partnerApiProbe?.status === 401) {
+		issues.push("Billing API retornou 401 — verifique NUVEMSHOP_CLIENT_SECRET e NUVEMSHOP_APP_ID.");
+	}
+	if (snapshot.partnerApiProbe?.status === 404 && conceptCode) {
+		issues.push("Assinatura nao encontrada na Billing API para o concept_code atual.");
+		recommendations.push(
+			"Confirme no Partner Portal que billing esta habilitado e que a loja aceitou o plano na instalacao.",
+		);
+	}
+	if (billingMode === "auto" && !conceptCode) {
+		recommendations.push(
+			"Enquanto concept_code estiver ausente, trocas de plano usam self-billing (apenas Supabase).",
+		);
+	}
+	if (billingMode === "self") {
+		recommendations.push(
+			"OMAFIT_BILLING_MODE=self — cobranca nativa da Nuvemshop esta desativada por configuracao.",
+		);
+	}
+
+	const nativeBillingReady =
+		Boolean(conceptCode) &&
+		Boolean(serviceId) &&
+		Boolean(snapshot.hasPartnerSecret) &&
+		Boolean(snapshot.hasConfiguredAppId) &&
+		Boolean(subscription?.concept_code || subscription?.store_id) &&
+		snapshot.partnerApiProbe?.ok === true;
+
+	const chargesReady =
+		nativeBillingReady && Boolean(webhookState.subscriptionUpdatedWebhook);
+
+	return {
+		nativeBillingReady,
+		chargesReady,
+		webhooksReady: Boolean(webhookState.subscriptionUpdatedWebhook),
+		partnerApiReachable: snapshot.partnerApiProbe?.ok === true,
+		likelySelfBilling:
+			!nativeBillingReady &&
+			String(snapshot.recordBillingStatus || "").toLowerCase() === "active",
+		issues,
+		recommendations,
+	};
+}
+
 async function buildBillingDebugSnapshot(storeId, storeUrl = "") {
 	const storeRecord = await loadLegacyShopRecord(storeId, storeUrl).catch(() => null);
 	const credentialRecord = await loadNuvemshopCredential(storeId).catch(() => null);
 	const session = await resolveSession(storeId, storeUrl).catch(() => null);
+	const webhookBaseUrl = getWebhookPublicBaseUrl({ headers: {} }) || "";
+	const expectedWebhookUrl = webhookBaseUrl
+		? `${webhookBaseUrl}/api/webhooks/nuvemshop`
+		: "";
 	let webhookState = {
 		registered: false,
 		subscriptionUpdatedWebhook: false,
 		webhookCount: 0,
+		events: [],
+		expectedUrl: expectedWebhookUrl,
 	};
 	if (session?.accessToken && session?.storeId) {
 		try {
@@ -2135,18 +2222,25 @@ async function buildBillingDebugSnapshot(storeId, storeUrl = "") {
 				method: "GET",
 			});
 			const hooks = response.ok ? await response.json().catch(() => []) : [];
-			const expectedUrl = `${getWebhookPublicBaseUrl({ headers: {} }) || ""}/api/webhooks/nuvemshop`;
 			const subscriptionWebhook = Array.isArray(hooks)
 				? hooks.find(
 						(item) =>
 							item?.event === "subscription/updated" &&
-							(!expectedUrl || item?.url === expectedUrl),
+							(!expectedWebhookUrl || item?.url === expectedWebhookUrl),
 				  )
 				: null;
 			webhookState = {
 				registered: Array.isArray(hooks) && hooks.length > 0,
 				subscriptionUpdatedWebhook: Boolean(subscriptionWebhook),
 				webhookCount: Array.isArray(hooks) ? hooks.length : 0,
+				events: Array.isArray(hooks)
+					? hooks.map((item) => ({
+							event: String(item?.event || ""),
+							url: String(item?.url || ""),
+					  }))
+					: [],
+				expectedUrl: expectedWebhookUrl,
+				listStatus: response.status,
 			};
 		} catch (error) {
 			webhookState = {
@@ -2155,30 +2249,100 @@ async function buildBillingDebugSnapshot(storeId, storeUrl = "") {
 			};
 		}
 	}
-	return {
+
+	const sessionConceptCode = String(session?.billingConceptCode || "").trim();
+	const credentialConceptCode = String(credentialRecord?.billing_concept_code || "").trim();
+	const fallbackConceptCode = String(getBillingConceptCodeFallback() || "").trim();
+	const effectiveConceptCode =
+		sessionConceptCode || credentialConceptCode || fallbackConceptCode;
+	const effectiveServiceId = String(
+		session?.billingServiceId ||
+			credentialRecord?.billing_service_id ||
+			getNuvemshopAppId() ||
+			"",
+	).trim();
+
+	let discovery = null;
+	if (!sessionConceptCode && !credentialConceptCode) {
+		discovery = await discoverBillingIdentifiers(storeId, storeUrl, storeRecord).catch(
+			() => null,
+		);
+	}
+
+	const resolvedConceptCode =
+		effectiveConceptCode || String(discovery?.conceptCode || "").trim();
+	const resolvedServiceId = effectiveServiceId || String(discovery?.serviceId || "").trim();
+
+	let subscription = null;
+	let partnerApiProbe = { ok: false, reason: "not_attempted" };
+	if (resolvedConceptCode && resolvedServiceId) {
+		try {
+			const response = await nuvemshopPartnerActionRequest(
+				`/concepts/${encodeURIComponent(resolvedConceptCode)}/services/${encodeURIComponent(resolvedServiceId)}/subscriptions`,
+				{ method: "GET" },
+			);
+			const text = await response.text().catch(() => "");
+			partnerApiProbe = {
+				ok: response.ok,
+				status: response.status,
+				reason: response.ok ? "subscription_found" : parseSupabaseError(text)?.message || text,
+			};
+			if (response.ok && text) {
+				subscription = JSON.parse(text);
+			}
+		} catch (error) {
+			partnerApiProbe = {
+				ok: false,
+				reason: String(error?.message || "partner_api_failed"),
+			};
+		}
+	} else {
+		partnerApiProbe = {
+			ok: false,
+			reason: "missing_identifiers",
+			skipped: true,
+		};
+	}
+
+	const snapshot = {
 		storeId,
 		storeUrl,
+		billingMode: getBillingMode(),
 		configuredAppId: String(getNuvemshopAppId() || ""),
+		hasConfiguredAppId: Boolean(getNuvemshopAppId()),
+		hasPartnerSecret: Boolean(getPartnerActionToken()),
+		webhookBaseUrl,
 		hasSession: Boolean(session),
 		hasStoreRecord: Boolean(storeRecord),
 		hasCredentialRecord: Boolean(credentialRecord),
 		hasAccessToken: Boolean(session?.accessToken),
 		sessionStoreId: String(session?.storeId || ""),
 		sessionStoreUrl: String(session?.store?.url || ""),
-		sessionBillingConceptCode: String(session?.billingConceptCode || ""),
+		sessionBillingConceptCode: sessionConceptCode,
 		sessionBillingServiceId: String(session?.billingServiceId || ""),
-		effectiveServiceId: String(session?.billingServiceId || getNuvemshopAppId() || ""),
+		credentialBillingConceptCode: credentialConceptCode,
+		credentialBillingServiceId: String(credentialRecord?.billing_service_id || ""),
+		credentialBillingNextExecution: credentialRecord?.billing_next_execution || null,
+		effectiveConceptCode: resolvedConceptCode,
+		effectiveServiceId: resolvedServiceId,
 		sessionWebhooksSyncedAt: session?.webhooksSyncedAt || null,
-		fallbackConceptCode: String(getBillingConceptCodeFallback() || ""),
+		fallbackConceptCode,
 		recordPlan: String(storeRecord?.plan || ""),
 		recordBillingStatus: String(storeRecord?.billing_status || ""),
 		recordStoreUrl: String(storeRecord?.store_url || storeRecord?.platform_store_url || ""),
+		recordBillingCycleEnd: storeRecord?.billing_cycle_end || null,
+		recordSubscriptionAmount: storeRecord?.subscription_amount_value ?? null,
 		credentialUpdatedAt: credentialRecord?.updated_at || null,
+		discovery,
+		subscription,
+		partnerApiProbe,
 		webhookState,
 		webhookAudit: readWebhookAudit()
 			.filter((item) => String(item?.storeId || "") === String(storeId || ""))
 			.slice(0, 5),
 	};
+	snapshot.checks = buildBillingDebugChecks(snapshot);
+	return snapshot;
 }
 
 async function saveBillingPlan(storeId, planId, storeUrl = "") {
@@ -3789,6 +3953,25 @@ async function handleApi(req, res, reqUrl) {
 		} catch (error) {
 			sendJson(res, 500, {
 				error: error.message || "Nao foi possivel processar o assistente de calcados.",
+			});
+		}
+		return true;
+	}
+
+	if (pathname === "/api/billing/debug") {
+		if (!storeContext.storeId) {
+			sendJson(res, 400, { error: "store_id is required" });
+			return true;
+		}
+		try {
+			const snapshot = await buildBillingDebugSnapshot(
+				storeContext.storeId,
+				storeContext.storeUrl,
+			);
+			sendJson(res, 200, snapshot);
+		} catch (error) {
+			sendJson(res, 500, {
+				error: error.message || "Nao foi possivel gerar o diagnostico de billing.",
 			});
 		}
 		return true;
