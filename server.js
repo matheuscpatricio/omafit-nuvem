@@ -46,6 +46,8 @@ const SESSIONS_FILE = join(DATA_DIR, "nuvemshop-sessions.json");
 const TRYON_JOBS_FILE = join(DATA_DIR, "nuvemshop-tryon-jobs.json");
 const BILLING_EVENTS_FILE = join(DATA_DIR, "nuvemshop-billing-events.json");
 const WEBHOOK_AUDIT_FILE = join(DATA_DIR, "nuvemshop-webhook-audit.json");
+const OAUTH_STATES_FILE = join(DATA_DIR, "nuvemshop-oauth-states.json");
+const OAUTH_STATE_TTL_MS = 15 * 60 * 1000;
 const WEBHOOK_EVENTS = [
 	"app/uninstalled",
 	"app/suspended",
@@ -1360,6 +1362,51 @@ function buildAuthUrl(state) {
 	const url = new URL(`${getAuthorizeBase()}/apps/${appId}/authorize`);
 	if (state) url.searchParams.set("state", state);
 	return url.toString();
+}
+
+function readOAuthStates() {
+	return readJsonFile(OAUTH_STATES_FILE, {});
+}
+
+function saveOAuthStates(states) {
+	writeJsonFile(OAUTH_STATES_FILE, states);
+}
+
+function pruneOAuthStates(states) {
+	const now = Date.now();
+	const next = {};
+	for (const [key, value] of Object.entries(states || {})) {
+		if (now - Number(value?.createdAt || 0) < OAUTH_STATE_TTL_MS) {
+			next[key] = value;
+		}
+	}
+	return next;
+}
+
+function issueOAuthState() {
+	const state = randomUUID();
+	const states = pruneOAuthStates(readOAuthStates());
+	states[state] = { createdAt: Date.now() };
+	saveOAuthStates(states);
+	return state;
+}
+
+function validateOAuthState(state) {
+	const normalized = String(state || "").trim();
+	if (!normalized) {
+		return { ok: false, reason: "missing" };
+	}
+	const states = pruneOAuthStates(readOAuthStates());
+	if (!states[normalized]) {
+		return { ok: false, reason: "invalid_or_expired" };
+	}
+	delete states[normalized];
+	saveOAuthStates(states);
+	return { ok: true };
+}
+
+function createOAuthAuthorizeUrl() {
+	return buildAuthUrl(issueOAuthState());
 }
 
 function summarizeOAuthTokenData(tokenData) {
@@ -3301,7 +3348,7 @@ function buildAdminContext(storeContext, session, storeRecord) {
 			connected: Boolean(session?.accessToken || storeRecord?.access_token),
 			lastSyncAt: session?.lastSyncAt || storeRecord?.updated_at || null,
 			webhooksSyncedAt: session?.webhooksSyncedAt || null,
-			authUrl: buildAuthUrl(randomUUID()),
+			authUrl: createOAuthAuthorizeUrl(),
 		},
 		billing: {
 			status: String(storeRecord?.billing_status || "inactive").toLowerCase(),
@@ -3364,7 +3411,7 @@ async function handleApi(req, res, reqUrl) {
 			widgetUrl: getWidgetBaseUrl(req),
 			supportUrl: getSupportUrl(),
 			supportEmail: getSupportEmail(),
-			authUrl: buildAuthUrl(randomUUID()),
+			authUrl: createOAuthAuthorizeUrl(),
 		});
 		return true;
 	}
@@ -3396,15 +3443,32 @@ async function handleApi(req, res, reqUrl) {
 			lastSyncAt: new Date().toISOString(),
 		});
 		await saveNuvemshopCredential(normalizedSession, storeData);
-		const row = 		await upsertStoreRecord(normalizedSession, storeData);
+		const row = await upsertStoreRecord(normalizedSession, storeData);
+		const webhookSync = await ensureWebhooks(normalizedSession, req).catch((error) => ({
+			skipped: true,
+			reason: String(error?.message || "webhook_sync_failed"),
+		}));
+		const syncedSession =
+			webhookSync?.session ||
+			persistSession({
+				...normalizedSession,
+				webhooksSyncedAt: webhookSync?.skipped
+					? normalizedSession.webhooksSyncedAt || null
+					: new Date().toISOString(),
+			}) ||
+			normalizedSession;
+		if (syncedSession?.accessToken) {
+			await saveNuvemshopCredential(syncedSession, storeData).catch(() => null);
+		}
 		await reactivateWidgetKeysForStore(
-			normalizedSession.storeId,
-			normalizedSession.store?.url || "",
+			syncedSession.storeId,
+			syncedSession.store?.url || "",
 		).catch(() => null);
 		sendJson(res, 200, {
 			ok: true,
-			session: normalizedSession,
+			session: syncedSession,
 			store: row || storeData,
+			webhookSync,
 		});
 		return true;
 	}
@@ -4106,8 +4170,17 @@ async function handleApi(req, res, reqUrl) {
 		const payload = JSON.parse(rawBody.toString("utf8") || "{}");
 		const storeId = String(payload.store_id || "").trim();
 		if (payload.event === "app/uninstalled" && storeId) {
-			deleteSession(storeId);
-			await deleteNuvemshopCredential(storeId);
+			const currentSession = getSession(storeId);
+			const shopKey = getCanonicalShopKey(storeId);
+			const storeUrl = normalizeStoreUrl(currentSession?.store?.url || "");
+			await handleStoreRedact({
+				storeId,
+				shopKey,
+				storeUrl,
+				supabaseDelete,
+				deleteSession,
+				deleteNuvemshopCredential,
+			});
 		}
 		if (payload.event === "subscription/updated" && storeId) {
 			const currentSession = getSession(storeId);
@@ -4236,8 +4309,7 @@ async function handleApi(req, res, reqUrl) {
 
 async function handleAuth(req, res, reqUrl) {
 	if (reqUrl.pathname === "/auth/install") {
-		const state = reqUrl.searchParams.get("state") || randomUUID();
-		const authUrl = buildAuthUrl(state);
+		const authUrl = createOAuthAuthorizeUrl();
 		if (!authUrl) {
 			sendJson(res, 500, {
 				error: "Configure NUVEMSHOP_APP_ID before starting the install flow.",
@@ -4251,9 +4323,17 @@ async function handleAuth(req, res, reqUrl) {
 
 	if (reqUrl.pathname === "/auth/callback") {
 		const code = reqUrl.searchParams.get("code") || "";
+		const state = reqUrl.searchParams.get("state") || "";
 		if (!code) {
 			sendJson(res, 400, { error: "Missing authorization code" });
 			return true;
+		}
+		if (state) {
+			const stateValidation = validateOAuthState(state);
+			if (!stateValidation.ok) {
+				sendJson(res, 400, { error: "Invalid OAuth state" });
+				return true;
+			}
 		}
 		const authDebug = {
 			step: "callback_start",

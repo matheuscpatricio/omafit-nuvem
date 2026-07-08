@@ -23,6 +23,22 @@ import type {
 
 type SectionId = "dashboard" | "billing" | "widget" | "size-charts" | "analytics";
 
+type BillingDebugSnapshot = {
+	effectiveConceptCode?: string;
+	effectiveServiceId?: string;
+	checks?: {
+		nativeBillingReady?: boolean;
+		chargesReady?: boolean;
+		webhooksReady?: boolean;
+		likelySelfBilling?: boolean;
+		issues?: string[];
+		recommendations?: string[];
+	};
+	webhookState?: {
+		events?: Array<{ event?: string; url?: string }>;
+	};
+};
+
 type StoreBootstrap = {
 	id: string;
 	name: string;
@@ -421,6 +437,7 @@ function AppContent({ nexo, store }: AdminAppProps) {
 						context={context}
 						onActivatePlan={activatePlan}
 						busyAction={busyAction}
+						withStoreQuery={withStoreQuery}
 					/>
 				) : null}
 
@@ -574,18 +591,123 @@ function BillingSection({
 	context,
 	onActivatePlan,
 	busyAction,
+	withStoreQuery,
 }: {
 	context: OmafitAdminContext;
 	onActivatePlan: (planId: string) => Promise<void>;
 	busyAction: string | null;
+	withStoreQuery: (path: string) => string;
 }) {
 	const { t } = useI18n();
+	const [billingDebug, setBillingDebug] = useState<BillingDebugSnapshot | null>(null);
+	const [billingDebugLoading, setBillingDebugLoading] = useState(false);
+	const [billingDebugError, setBillingDebugError] = useState<string | null>(null);
+
+	const runBillingDiagnostic = useCallback(async () => {
+		setBillingDebugLoading(true);
+		setBillingDebugError(null);
+		try {
+			const snapshot = await fetchJson<BillingDebugSnapshot>(
+				withStoreQuery("/api/billing/debug"),
+			);
+			setBillingDebug(snapshot);
+		} catch (requestError) {
+			setBillingDebug(null);
+			setBillingDebugError(
+				requestError instanceof Error ? requestError.message : t("feedback.error"),
+			);
+		} finally {
+			setBillingDebugLoading(false);
+		}
+	}, [t, withStoreQuery]);
+
 	return (
 		<div style={{ display: "grid", gap: 16 }}>
 			<div style={{ ...cardStyle, display: "grid", gap: 6 }}>
 				<strong style={{ fontSize: 18 }}>{t("billing.title")}</strong>
 				<span style={subtleTextStyle}>{t("billing.subtitle")}</span>
+				<div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 4 }}>
+					<button
+						type="button"
+						className="omafit-admin-btn"
+						onClick={() => void runBillingDiagnostic()}
+						disabled={billingDebugLoading}
+					>
+						{billingDebugLoading ? t("common.loading") : t("billing.diagnose")}
+					</button>
+				</div>
 			</div>
+
+			{billingDebugError ? (
+				<div className="omafit-admin-alert omafit-admin-alert--warning">{billingDebugError}</div>
+			) : null}
+
+			{billingDebug ? (
+				<div style={{ ...cardStyle, display: "grid", gap: 12 }}>
+					<strong>{t("billing.diagnoseTitle")}</strong>
+					<div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+						<BillingStatusPill
+							ok={billingDebug.checks?.nativeBillingReady === true}
+							label={t("billing.nativeBillingReady")}
+						/>
+						<BillingStatusPill
+							ok={billingDebug.checks?.chargesReady === true}
+							label={t("billing.chargesReady")}
+						/>
+						<BillingStatusPill
+							ok={billingDebug.checks?.webhooksReady === true}
+							label={t("billing.webhooksReady")}
+						/>
+						{billingDebug.checks?.likelySelfBilling ? (
+							<span className="omafit-admin-pill omafit-admin-pill--warning">
+								{t("billing.likelySelfBilling")}
+							</span>
+						) : null}
+					</div>
+					{billingDebug.effectiveConceptCode ? (
+						<div style={subtleTextStyle}>
+							{t("billing.conceptCode")}: {billingDebug.effectiveConceptCode}
+						</div>
+					) : null}
+					{billingDebug.effectiveServiceId ? (
+						<div style={subtleTextStyle}>
+							{t("billing.effectiveServiceId")}: {billingDebug.effectiveServiceId}
+						</div>
+					) : null}
+					{billingDebug.webhookState?.events?.length ? (
+						<div style={subtleTextStyle}>
+							{t("billing.registeredWebhooks")}:{" "}
+							{billingDebug.webhookState.events.map((item) => item.event).join(", ")}
+						</div>
+					) : null}
+					{billingDebug.checks?.issues?.length ? (
+						<div style={{ display: "grid", gap: 6 }}>
+							<strong>{t("billing.issues")}</strong>
+							<ul style={{ margin: 0, paddingLeft: 18 }}>
+								{billingDebug.checks.issues.map((issue) => (
+									<li key={issue} style={subtleTextStyle}>
+										{issue}
+									</li>
+								))}
+							</ul>
+						</div>
+					) : (
+						<div style={subtleTextStyle}>{t("billing.noIssues")}</div>
+					)}
+					{billingDebug.checks?.recommendations?.length ? (
+						<div style={{ display: "grid", gap: 6 }}>
+							<strong>{t("billing.recommendations")}</strong>
+							<ul style={{ margin: 0, paddingLeft: 18 }}>
+								{billingDebug.checks.recommendations.map((item) => (
+									<li key={item} style={subtleTextStyle}>
+										{item}
+									</li>
+								))}
+							</ul>
+						</div>
+					) : null}
+				</div>
+			) : null}
 
 			<div
 				style={{
@@ -678,6 +800,18 @@ function BillingSection({
 				))}
 			</div>
 		</div>
+	);
+}
+
+function BillingStatusPill({ ok, label }: { ok: boolean; label: string }) {
+	return (
+		<span
+			className={
+				ok ? "omafit-admin-pill omafit-admin-pill--success" : "omafit-admin-pill omafit-admin-pill--neutral"
+			}
+		>
+			{label}: {ok ? "OK" : "—"}
+		</span>
 	);
 }
 
