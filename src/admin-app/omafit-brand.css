@@ -355,6 +355,12 @@
 	color: #7c4a1d;
 }
 
+.omafit-admin-alert--info {
+	border-color: #93c5fd;
+	background: #eff6ff;
+	color: #1d4ed8;
+}
+
 .omafit-admin-pill {
 	display: inline-flex;
 	padding: 8px 12px;

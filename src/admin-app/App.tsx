@@ -26,8 +26,12 @@ type SectionId = "dashboard" | "billing" | "widget" | "size-charts" | "analytics
 type BillingDebugSnapshot = {
 	effectiveConceptCode?: string;
 	effectiveServiceId?: string;
+	billingMode?: string;
+	recordPendingOverageAmount?: number;
 	checks?: {
 		nativeBillingReady?: boolean;
+		selfBillingReady?: boolean;
+		selfBillingActive?: boolean;
 		chargesReady?: boolean;
 		webhooksReady?: boolean;
 		likelySelfBilling?: boolean;
@@ -827,10 +831,17 @@ function BillingSection({
 				<div style={{ ...cardStyle, display: "grid", gap: 12 }}>
 					<strong>{t("billing.diagnoseTitle")}</strong>
 					<div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-						<BillingStatusPill
-							ok={billingDebug.checks?.nativeBillingReady === true}
-							label={t("billing.nativeBillingReady")}
-						/>
+						{billingDebug.checks?.selfBillingActive ? (
+							<BillingStatusPill
+								ok={billingDebug.checks?.selfBillingReady === true}
+								label={t("billing.selfBillingReady")}
+							/>
+						) : (
+							<BillingStatusPill
+								ok={billingDebug.checks?.nativeBillingReady === true}
+								label={t("billing.nativeBillingReady")}
+							/>
+						)}
 						<BillingStatusPill
 							ok={billingDebug.checks?.chargesReady === true}
 							label={t("billing.chargesReady")}
@@ -839,12 +850,16 @@ function BillingSection({
 							ok={billingDebug.checks?.webhooksReady === true}
 							label={t("billing.webhooksReady")}
 						/>
-						{billingDebug.checks?.likelySelfBilling ? (
-							<span className="omafit-admin-pill omafit-admin-pill--warning">
-								{t("billing.likelySelfBilling")}
-							</span>
-						) : null}
 					</div>
+					{Number(billingDebug.recordPendingOverageAmount || 0) > 0 ? (
+						<div style={subtleTextStyle}>
+							{t("billing.pendingOverage")}:{" "}
+							{formatMoney(
+								Number(billingDebug.recordPendingOverageAmount || 0),
+								context.billing.usage.currency,
+							)}
+						</div>
+					) : null}
 					{billingDebug.effectiveConceptCode ? (
 						<div style={subtleTextStyle}>
 							{t("billing.conceptCode")}: {billingDebug.effectiveConceptCode}
@@ -911,7 +926,23 @@ function BillingSection({
 					}
 				/>
 				<StatCard label={t("billing.extra")} value={String(context.billing.usage.extraImages)} />
+				{context.billing.usage.pendingOverageAmount != null &&
+				context.billing.usage.pendingOverageAmount > 0 ? (
+					<StatCard
+						label={t("billing.pendingOverage")}
+						value={formatMoney(
+							context.billing.usage.pendingOverageAmount,
+							context.billing.usage.currency,
+						)}
+					/>
+				) : null}
 			</div>
+
+			{context.billing.mode === "self" || context.billing.usage.billingMode === "self" ? (
+				<div className="omafit-admin-alert omafit-admin-alert--info">
+					{t("billing.selfBillingNote")}
+				</div>
+			) : null}
 
 			<div
 				style={{

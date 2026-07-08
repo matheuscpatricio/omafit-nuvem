@@ -25,6 +25,10 @@ export type OmafitUsageSummary = {
 	currency: string;
 	percentage: number;
 	unlimited?: boolean;
+	pendingOverageAmount?: number;
+	pendingOverageUnits?: number;
+	extraCost?: number;
+	billingMode?: string;
 };
 
 export type OmafitAdminContext = {
@@ -47,6 +51,7 @@ export type OmafitAdminContext = {
 	billing: {
 		status: string;
 		plan: string;
+		mode?: string;
 		usage: OmafitUsageSummary;
 		plans: OmafitPlanDefinition[];
 	};

@@ -30,6 +30,10 @@ import {
 } from "./lib/widget-catalog-search.js";
 import { upsertOmafitOrderAnalytics } from "./lib/order-analytics.js";
 import {
+	recordSelfBillingOverage,
+	shouldUseSelfBilling,
+} from "./lib/self-billing-usage.js";
+import {
 	handleNuvemshopAppUninstalled,
 	handleStoreRedact,
 	handleCustomerRedact,
@@ -416,9 +420,9 @@ function getBillingConceptCodeFallback() {
 }
 
 function getBillingMode() {
-	const mode = String(process.env.OMAFIT_BILLING_MODE || "auto").trim().toLowerCase();
+	const mode = String(process.env.OMAFIT_BILLING_MODE || "self").trim().toLowerCase();
 	if (["nuvemshop", "self", "auto"].includes(mode)) return mode;
-	return "auto";
+	return "self";
 }
 
 function isValidNuvemshopApiHost(value) {
@@ -1162,9 +1166,25 @@ async function recordCompletedTryonUsage(storeId, storeUrl, predictionId) {
 		planDef,
 	);
 	const identifiers = resolveBillingIdentifiers(storeId);
+	const billingMode = getBillingMode();
+	const useSelfBilling = shouldUseSelfBilling(billingMode, identifiers.conceptCode);
 	let charge = null;
+	let selfBillingCharge = null;
 
-	if (extraUnits > 0 && identifiers.conceptCode && identifiers.serviceId) {
+	if (extraUnits > 0 && useSelfBilling) {
+		selfBillingCharge = await recordSelfBillingOverage({
+			storeId,
+			storeUrl,
+			shopRecord: updatedRecord || shopRecord || {},
+			extraUnits,
+			pricePerExtra: Number(updatedRecord?.price_per_extra_image || planDef.pricePerExtraImage) || 0,
+			currency: "BRL",
+			predictionId,
+			supabaseRequest,
+			getCanonicalShopKey,
+			normalizeStoreUrl,
+		});
+	} else if (extraUnits > 0 && identifiers.conceptCode && identifiers.serviceId) {
 		const subscription = await getNuvemshopSubscription(
 			identifiers.conceptCode,
 			identifiers.serviceId,
@@ -1192,14 +1212,19 @@ async function recordCompletedTryonUsage(storeId, storeUrl, predictionId) {
 	rememberBillingEvent(eventKey, {
 		storeId,
 		predictionId,
-		charged: Boolean(charge && !charge.error),
+		charged: Boolean(
+			(charge && !charge.error) || (selfBillingCharge && selfBillingCharge.ok),
+		),
+		billingMode: useSelfBilling ? "self" : "nuvemshop",
 		charge,
+		selfBillingCharge,
 	});
 
 	return {
 		ok: true,
-		charged: Boolean(charge && !charge.error),
+		charged: Boolean((charge && !charge.error) || (selfBillingCharge && selfBillingCharge.ok)),
 		charge,
+		selfBillingCharge,
 		record: updatedRecord,
 	};
 }
@@ -1340,6 +1365,9 @@ async function upsertStoreRecord(session, storeData = {}) {
 					price_per_extra_image: baseRecord.price_per_extra_image,
 					currency: baseRecord.currency,
 					platform: "nuvemshop",
+					billing_mode: String(storeData.billing_mode || getBillingMode()),
+					pending_overage_amount: Number(storeData.pending_overage_amount || 0) || 0,
+					pending_overage_units: Number(storeData.pending_overage_units || 0) || 0,
 					updated_at: baseRecord.updated_at,
 				},
 			],
@@ -2132,21 +2160,29 @@ function toUsageSummary(shopRecord) {
 			? Math.max(0, 50 - Math.min(50, imagesUsed))
 			: Math.max(0, imagesIncluded - imagesUsedMonth);
 	const extraImages = isEnterprise ? 0 : Math.max(0, imagesUsed - imagesIncluded);
+	const pricePerExtraImage =
+		Number(shopRecord?.price_per_extra_image ?? planDef.pricePerExtraImage) ||
+		planDef.pricePerExtraImage;
+	const pendingOverageAmount = Number(shopRecord?.pending_overage_amount || 0) || 0;
+	const pendingOverageUnits = Number(shopRecord?.pending_overage_units || 0) || 0;
+	const extraCost = Number((extraImages * pricePerExtraImage).toFixed(2));
 	return {
 		plan: planId,
 		imagesIncluded,
 		imagesUsed,
 		remaining,
 		extraImages,
-		pricePerExtraImage:
-			Number(shopRecord?.price_per_extra_image ?? planDef.pricePerExtraImage) ||
-			planDef.pricePerExtraImage,
+		pricePerExtraImage,
 		currency: shopRecord?.currency || planDef.currency,
 		percentage:
 			isEnterprise || imagesIncluded <= 0
 				? 0
 				: Math.min(100, Math.round((imagesUsed / imagesIncluded) * 100)),
 		unlimited: isEnterprise,
+		pendingOverageAmount,
+		pendingOverageUnits,
+		extraCost,
+		billingMode: String(shopRecord?.billing_mode || getBillingMode()),
 	};
 }
 
@@ -2211,19 +2247,16 @@ async function getBillingSummary(storeId, storeUrl = "") {
 function buildBillingDebugChecks(snapshot) {
 	const issues = [];
 	const recommendations = [];
-	const billingMode = String(snapshot.billingMode || "auto");
+	const billingMode = String(snapshot.billingMode || "self");
 	const conceptCode = String(snapshot.effectiveConceptCode || "").trim();
 	const serviceId = String(snapshot.effectiveServiceId || "").trim();
 	const subscription = snapshot.subscription || null;
 	const webhookState = snapshot.webhookState || {};
+	const selfBillingActive = shouldUseSelfBilling(billingMode, conceptCode);
 
 	if (!snapshot.hasConfiguredAppId) {
 		issues.push("NUVEMSHOP_APP_ID nao configurado.");
 		recommendations.push("Defina NUVEMSHOP_APP_ID no ambiente de producao.");
-	}
-	if (!snapshot.hasPartnerSecret) {
-		issues.push("NUVEMSHOP_CLIENT_SECRET ausente — Billing API indisponivel.");
-		recommendations.push("Defina NUVEMSHOP_CLIENT_SECRET no Railway.");
 	}
 	if (!snapshot.webhookBaseUrl) {
 		issues.push("NUVEMSHOP_WEBHOOK_BASE_URL nao configurado ou sem HTTPS.");
@@ -2231,13 +2264,42 @@ function buildBillingDebugChecks(snapshot) {
 			"Configure NUVEMSHOP_WEBHOOK_BASE_URL com a URL publica HTTPS do app.",
 		);
 	}
-	if (!conceptCode) {
-		issues.push(
-			"concept_code ausente — cobranca nativa da Nuvemshop nao pode ser vinculada.",
-		);
+	if (!selfBillingActive) {
+		if (!snapshot.hasPartnerSecret) {
+			issues.push("NUVEMSHOP_CLIENT_SECRET ausente — Billing API indisponivel.");
+			recommendations.push("Defina NUVEMSHOP_CLIENT_SECRET no Railway.");
+		}
+		if (!conceptCode) {
+			issues.push(
+				"concept_code ausente — cobranca nativa da Nuvemshop nao pode ser vinculada.",
+			);
+			recommendations.push(
+				"Aguarde o webhook subscription/updated apos a instalacao ou defina NUVEMSHOP_BILLING_CONCEPT_CODE.",
+			);
+		}
+		if (snapshot.partnerApiProbe?.status === 401) {
+			issues.push("Billing API retornou 401 — verifique NUVEMSHOP_CLIENT_SECRET e NUVEMSHOP_APP_ID.");
+		}
+		if (snapshot.partnerApiProbe?.status === 404 && conceptCode) {
+			issues.push("Assinatura nao encontrada na Billing API para o concept_code atual.");
+			recommendations.push(
+				"Confirme no Partner Portal que billing esta habilitado e que a loja aceitou o plano na instalacao.",
+			);
+		}
+	} else {
 		recommendations.push(
-			"Aguarde o webhook subscription/updated apos a instalacao ou defina NUVEMSHOP_BILLING_CONCEPT_CODE.",
+			"Billing proprio ativo — excedentes de try-on sao acumulados em pending_overage_amount no Supabase.",
 		);
+		if (Number(snapshot.recordPendingOverageAmount || 0) > 0) {
+			recommendations.push(
+				`Saldo pendente de excedente: ${Number(snapshot.recordPendingOverageAmount).toFixed(2)} ${snapshot.recordCurrency || "BRL"}.`,
+			);
+		}
+		if (!snapshot.selfBillingSchemaReady) {
+			issues.push(
+				"Colunas de billing proprio ausentes no Supabase — execute docs/supabase_self_billing.sql.",
+			);
+		}
 	}
 	if (!webhookState.subscriptionUpdatedWebhook) {
 		issues.push("Webhook subscription/updated nao registrado para esta loja.");
@@ -2260,27 +2322,14 @@ function buildBillingDebugChecks(snapshot) {
 			);
 		}
 	}
-	if (snapshot.partnerApiProbe?.status === 401) {
-		issues.push("Billing API retornou 401 — verifique NUVEMSHOP_CLIENT_SECRET e NUVEMSHOP_APP_ID.");
-	}
-	if (snapshot.partnerApiProbe?.status === 404 && conceptCode) {
-		issues.push("Assinatura nao encontrada na Billing API para o concept_code atual.");
-		recommendations.push(
-			"Confirme no Partner Portal que billing esta habilitado e que a loja aceitou o plano na instalacao.",
-		);
-	}
-	if (billingMode === "auto" && !conceptCode) {
+	if (billingMode === "auto" && !conceptCode && !selfBillingActive) {
 		recommendations.push(
 			"Enquanto concept_code estiver ausente, trocas de plano usam self-billing (apenas Supabase).",
 		);
 	}
-	if (billingMode === "self") {
-		recommendations.push(
-			"OMAFIT_BILLING_MODE=self — cobranca nativa da Nuvemshop esta desativada por configuracao.",
-		);
-	}
 
 	const nativeBillingReady =
+		!selfBillingActive &&
 		Boolean(conceptCode) &&
 		Boolean(serviceId) &&
 		Boolean(snapshot.hasPartnerSecret) &&
@@ -2288,17 +2337,24 @@ function buildBillingDebugChecks(snapshot) {
 		Boolean(subscription?.concept_code || subscription?.store_id) &&
 		snapshot.partnerApiProbe?.ok === true;
 
-	const chargesReady =
-		nativeBillingReady && Boolean(webhookState.subscriptionUpdatedWebhook);
+	const selfBillingReady =
+		selfBillingActive &&
+		Boolean(webhookState.registered) &&
+		orderPaidRegistered &&
+		snapshot.selfBillingSchemaReady !== false;
+
+	const chargesReady = selfBillingActive
+		? selfBillingReady
+		: nativeBillingReady && Boolean(webhookState.subscriptionUpdatedWebhook);
 
 	return {
 		nativeBillingReady,
+		selfBillingReady,
 		chargesReady,
+		selfBillingActive,
 		webhooksReady: Boolean(webhookState.subscriptionUpdatedWebhook),
 		partnerApiReachable: snapshot.partnerApiProbe?.ok === true,
-		likelySelfBilling:
-			!nativeBillingReady &&
-			String(snapshot.recordBillingStatus || "").toLowerCase() === "active",
+		likelySelfBilling: selfBillingActive,
 		issues,
 		recommendations,
 	};
@@ -2437,6 +2493,13 @@ async function buildBillingDebugSnapshot(storeId, storeUrl = "") {
 		recordStoreUrl: String(storeRecord?.store_url || storeRecord?.platform_store_url || ""),
 		recordBillingCycleEnd: storeRecord?.billing_cycle_end || null,
 		recordSubscriptionAmount: storeRecord?.subscription_amount_value ?? null,
+		recordPendingOverageAmount: Number(storeRecord?.pending_overage_amount || 0) || 0,
+		recordPendingOverageUnits: Number(storeRecord?.pending_overage_units || 0) || 0,
+		recordCurrency: String(storeRecord?.currency || "BRL"),
+		recordBillingMode: String(storeRecord?.billing_mode || getBillingMode()),
+		selfBillingSchemaReady:
+			!storeRecord ||
+			Object.prototype.hasOwnProperty.call(storeRecord, "pending_overage_amount"),
 		credentialUpdatedAt: credentialRecord?.updated_at || null,
 		discovery,
 		subscription,
@@ -2477,8 +2540,7 @@ async function saveBillingPlan(storeId, planId, storeUrl = "") {
 		const discoveryAttempts = discovered?.attempts || [];
 		if (!billingIdentifiers.conceptCode || !billingIdentifiers.serviceId) {
 		const billingMode = getBillingMode();
-		const shouldUseSelfBilling = billingMode === "self" || billingMode === "auto";
-		if (shouldUseSelfBilling) {
+		if (shouldUseSelfBilling(billingMode, billingIdentifiers.conceptCode)) {
 			const rate = await resolveUsdToBrlRate();
 			usdBrlRateCache = {
 				value: rate,
@@ -3413,6 +3475,7 @@ function buildAdminContext(storeContext, session, storeRecord) {
 		billing: {
 			status: String(storeRecord?.billing_status || "inactive").toLowerCase(),
 			plan: String(storeRecord?.plan || "ondemand").toLowerCase(),
+			mode: String(storeRecord?.billing_mode || getBillingMode()),
 			usage: billing,
 			plans: getPlanCatalog(),
 		},

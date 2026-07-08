@@ -59,12 +59,25 @@
 
 ## Billing no Partner Portal
 
-1. Habilite billing na Business Unit e vincule o app como **Service** (`service_id` = `NUVEMSHOP_APP_ID`).
-2. O lojista deve aceitar o plano no fluxo de instalacao da Nuvemshop.
-3. A Nuvemshop envia o webhook `subscription/updated` com `concept_code` e `service_id`.
-4. O backend registra esse identificador e sincroniza plano, mensalidade e cobrancas extras.
+### Opcao recomendada: Gratis + vendas no aplicativo
 
-### Planos criados pela API
+Se no Portal voce escolheu **Gratis** com **Possui vendas no aplicativo**, o billing e **proprio do parceiro**:
+
+1. Defina `OMAFIT_BILLING_MODE=self` no Railway (padrao do projeto).
+2. Execute `docs/supabase_self_billing.sql` no Supabase.
+3. Planos e mensalidades sao geridos no admin Omafit (Supabase).
+4. Cada sessao de try-on **excedente** incrementa `pending_overage_amount` e gera linha em `billing_usage_charges`.
+5. O `concept_code` da Nuvemshop **nao e necessario** nesse modelo.
+
+### Opcao alternativa: billing nativo Nuvemshop
+
+1. Escolha **Valor mensal** ou **Valor unico** no Portal.
+2. O lojista aceita o plano no fluxo de instalacao da Nuvemshop.
+3. A Nuvemshop envia `subscription/updated` com `concept_code` e `service_id`.
+4. Defina `OMAFIT_BILLING_MODE=nuvemshop` ou `auto`.
+5. Excedente de try-ons gera charge via `POST /services/{app_id}/charges`.
+
+### Planos no admin Omafit
 
 | Plano | external_reference | Mensalidade (USD base) |
 |-------|-------------------|------------------------|
@@ -73,7 +86,7 @@
 | Pro | `omafit-pro-brl` | $300 |
 | Enterprise | `omafit-enterprise-brl` | $600 |
 
-Precos em BRL sao calculados com `USD_TO_BRL_RATE`. Excedente de try-ons gera charge via `POST /services/{app_id}/charges`.
+Precos em BRL sao calculados com `USD_TO_BRL_RATE`.
 
 ## Diagnostico de billing
 
@@ -89,7 +102,7 @@ Resposta inclui:
 - `subscription` consultada na Billing API
 - `webhookState` (incluindo `subscription/updated`)
 - `partnerApiProbe` (teste de autenticacao Partner Actions)
-- `checks` com `nativeBillingReady`, `chargesReady`, `issues` e `recommendations`
+- `checks` com `selfBillingReady`, `chargesReady`, `issues` e `recommendations`
 
 Exemplo:
 
