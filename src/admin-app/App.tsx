@@ -254,6 +254,22 @@ function AppContent({ nexo, store }: AdminAppProps) {
 	}, [loadCollections, loadContext, loadWidgetConfig]);
 
 	useEffect(() => {
+		if (typeof window === "undefined") return;
+		const params = new URLSearchParams(window.location.search);
+		const billingResult = params.get("billing");
+		if (!billingResult) return;
+		if (billingResult === "success") {
+			setNotice(t("billing.checkoutSuccess"));
+		} else if (billingResult === "cancel") {
+			setNotice(t("billing.checkoutCancel"));
+		}
+		params.delete("billing");
+		const next = `${window.location.pathname}?${params.toString()}`.replace(/\?$/, "");
+		window.history.replaceState({}, "", next);
+		void loadContext();
+	}, [loadContext, t]);
+
+	useEffect(() => {
 		updateUrlSection(section);
 	}, [section, updateUrlSection]);
 
@@ -399,6 +415,8 @@ function AppContent({ nexo, store }: AdminAppProps) {
 			try {
 				const response = await fetchJson<{
 					ok: boolean;
+					checkoutRequired?: boolean;
+					checkoutUrl?: string;
 					record?: unknown;
 					debug?: unknown;
 				}>(withStoreQuery("/api/billing/plan"), {
@@ -406,9 +424,11 @@ function AppContent({ nexo, store }: AdminAppProps) {
 					headers: { "Content-Type": "application/json" },
 					body: JSON.stringify({ planId }),
 				});
-				// #region agent log
-				console.info("[Omafit Debug] H17 billing_plan_success_json", JSON.stringify(response));
-				// #endregion
+				if (response.checkoutRequired && response.checkoutUrl) {
+					setNotice(t("billing.checkoutRedirect"));
+					window.location.href = response.checkoutUrl;
+					return;
+				}
 				await loadContext();
 				setNotice(t("feedback.saved"));
 			} catch (requestError) {
@@ -419,6 +439,26 @@ function AppContent({ nexo, store }: AdminAppProps) {
 		},
 		[loadContext, t, withStoreQuery],
 	);
+
+	const openBillingPortal = useCallback(async () => {
+		setBusyAction("billing-portal");
+		setError(null);
+		try {
+			const response = await fetchJson<{ ok: boolean; portalUrl?: string }>(
+				withStoreQuery("/api/billing/portal"),
+				{ method: "POST" },
+			);
+			if (response.portalUrl) {
+				window.location.href = response.portalUrl;
+				return;
+			}
+			setError(t("feedback.error"));
+		} catch (requestError) {
+			setError(requestError instanceof Error ? requestError.message : t("feedback.error"));
+		} finally {
+			setBusyAction(null);
+		}
+	}, [t, withStoreQuery]);
 
 	if (loading) {
 		return (
@@ -486,6 +526,7 @@ function AppContent({ nexo, store }: AdminAppProps) {
 					<BillingSection
 						context={context}
 						onActivatePlan={activatePlan}
+						onOpenPortal={openBillingPortal}
 						busyAction={busyAction}
 						withStoreQuery={withStoreQuery}
 						onSyncStore={syncStore}
@@ -755,6 +796,7 @@ function DashboardSection({
 function BillingSection({
 	context,
 	onActivatePlan,
+	onOpenPortal,
 	busyAction,
 	withStoreQuery,
 	onSyncStore,
@@ -763,6 +805,7 @@ function BillingSection({
 }: {
 	context: OmafitAdminContext;
 	onActivatePlan: (planId: string) => Promise<void>;
+	onOpenPortal: () => Promise<void>;
 	busyAction: string | null;
 	withStoreQuery: (path: string) => string;
 	onSyncStore: () => Promise<void>;
@@ -773,6 +816,15 @@ function BillingSection({
 	const [billingDebug, setBillingDebug] = useState<BillingDebugSnapshot | null>(null);
 	const [billingDebugLoading, setBillingDebugLoading] = useState(false);
 	const [billingDebugError, setBillingDebugError] = useState<string | null>(null);
+	const stripe = context.billing.stripe;
+	const stripeStatusLabel = (() => {
+		if (!stripe?.configured) return t("billing.stripeNotConfigured");
+		const status = String(stripe.paymentStatus || "").toLowerCase();
+		if (status === "active" || status === "trialing") return t("billing.stripeActive");
+		if (status === "past_due") return t("billing.stripePastDue");
+		if (status === "canceled") return t("billing.stripeCanceled");
+		return stripe.hasPaymentMethod ? t("billing.stripeActive") : "—";
+	})();
 
 	const runBillingDiagnostic = useCallback(async () => {
 		setBillingDebugLoading(true);
@@ -806,6 +858,16 @@ function BillingSection({
 					>
 						{billingDebugLoading ? t("common.loading") : t("billing.diagnose")}
 					</button>
+					{stripe?.configured && stripe?.hasPaymentMethod ? (
+						<button
+							type="button"
+							className="omafit-admin-btn"
+							onClick={() => void onOpenPortal()}
+							disabled={busyAction === "billing-portal"}
+						>
+							{busyAction === "billing-portal" ? t("common.loading") : t("billing.managePayment")}
+						</button>
+					) : null}
 					<button
 						type="button"
 						className="omafit-admin-btn omafit-admin-btn--primary"
@@ -917,6 +979,9 @@ function BillingSection({
 					value={getPlanDisplayName(context.billing.plans, context.billing.plan)}
 				/>
 				<StatCard label={t("billing.status")} value={context.billing.status} />
+				{stripe?.configured ? (
+					<StatCard label={t("billing.stripePaymentStatus")} value={stripeStatusLabel} />
+				) : null}
 				<StatCard
 					label={t("billing.remaining")}
 					value={
@@ -938,7 +1003,10 @@ function BillingSection({
 				) : null}
 			</div>
 
-			{context.billing.mode === "self" || context.billing.usage.billingMode === "self" ? (
+			{context.billing.mode === "self" ||
+			context.billing.mode === "stripe" ||
+			context.billing.usage.billingMode === "self" ||
+			context.billing.usage.billingMode === "stripe" ? (
 				<div className="omafit-admin-alert omafit-admin-alert--info">
 					{t("billing.selfBillingNote")}
 				</div>

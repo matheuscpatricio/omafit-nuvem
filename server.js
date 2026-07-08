@@ -33,6 +33,20 @@ import {
 	recordSelfBillingOverage,
 	shouldUseSelfBilling,
 } from "./lib/self-billing-usage.js";
+import { applySelfBillingPlan } from "./lib/self-billing-plan.js";
+import { getCanonicalShopKey } from "./lib/nuvemshop-shop-keys.js";
+import {
+	isStripeConfigured,
+	planRequiresStripeCheckout,
+} from "./lib/stripe-config.js";
+import {
+	buildStripeBillingSummary,
+	chargeStripeOverage,
+	createStripeCheckoutSession,
+	createStripePortalSession,
+	handleStripeWebhookEvent,
+	verifyStripeWebhookSignature,
+} from "./lib/stripe-billing.js";
 import {
 	handleNuvemshopAppUninstalled,
 	handleStoreRedact,
@@ -126,9 +140,6 @@ function saveSessions(sessions) {
 	writeJsonFile(SESSIONS_FILE, sessions);
 }
 
-function getCanonicalShopKey(storeId) {
-	return `nuvemshop/${String(storeId || "").trim()}`;
-}
 
 function normalizeStoreUrl(storeUrl) {
 	if (!storeUrl) return "";
@@ -1171,6 +1182,7 @@ async function recordCompletedTryonUsage(storeId, storeUrl, predictionId) {
 	let charge = null;
 	let selfBillingCharge = null;
 
+	let stripeOverageCharge = null;
 	if (extraUnits > 0 && useSelfBilling) {
 		selfBillingCharge = await recordSelfBillingOverage({
 			storeId,
@@ -1184,6 +1196,27 @@ async function recordCompletedTryonUsage(storeId, storeUrl, predictionId) {
 			getCanonicalShopKey,
 			normalizeStoreUrl,
 		});
+		const billingRecord = selfBillingCharge?.shopRecord || updatedRecord || shopRecord || {};
+		if (
+			selfBillingCharge?.ok &&
+			String(billingRecord?.billing_mode || "") === "stripe" &&
+			billingRecord?.stripe_customer_id &&
+			isStripeConfigured()
+		) {
+			const overageAmount = Number(selfBillingCharge.amount || 0);
+			stripeOverageCharge = await chargeStripeOverage({
+				storeId,
+				shopRecord: billingRecord,
+				amountBrl: overageAmount,
+				units: extraUnits,
+				description:
+					extraUnits === 1
+						? "Sessao extra de try-on Omafit"
+						: `${extraUnits} sessoes extras de try-on Omafit`,
+				predictionId,
+				supabaseRequest,
+			});
+		}
 	} else if (extraUnits > 0 && identifiers.conceptCode && identifiers.serviceId) {
 		const subscription = await getNuvemshopSubscription(
 			identifiers.conceptCode,
@@ -1213,11 +1246,16 @@ async function recordCompletedTryonUsage(storeId, storeUrl, predictionId) {
 		storeId,
 		predictionId,
 		charged: Boolean(
-			(charge && !charge.error) || (selfBillingCharge && selfBillingCharge.ok),
+			(charge && !charge.error) ||
+				(stripeOverageCharge && stripeOverageCharge.ok) ||
+				(selfBillingCharge && selfBillingCharge.ok),
 		),
-		billingMode: useSelfBilling ? "self" : "nuvemshop",
+		billingMode: useSelfBilling
+			? String((updatedRecord || shopRecord)?.billing_mode || "self")
+			: "nuvemshop",
 		charge,
 		selfBillingCharge,
+		stripeOverageCharge,
 	});
 
 	return {
@@ -1236,13 +1274,13 @@ async function loadLegacyShopRecord(storeId, storeUrl = "") {
 		`platform_shops?store_id=eq.${encodeURIComponent(storeId)}&select=*`,
 		`platform_shops?shop_key=eq.${encodeURIComponent(shopKey)}&select=*`,
 		`nuvemshop_shops?store_id=eq.${encodeURIComponent(storeId)}&select=*`,
+		`shopify_shops?shop_domain=eq.${encodeURIComponent(shopKey)}&platform=eq.nuvemshop&select=*`,
 		`shopify_shops?shop_domain=eq.${encodeURIComponent(shopKey)}&select=*`,
 	];
 	if (normalizedUrl) {
 		candidates.unshift(
 			`platform_shops?store_url=eq.${encodeURIComponent(normalizedUrl)}&select=*`,
 			`nuvemshop_shops?store_url=eq.${encodeURIComponent(normalizedUrl)}&select=*`,
-			`shopify_shops?shop_domain=eq.${encodeURIComponent(normalizedUrl)}&select=*`,
 		);
 	}
 	for (const candidate of candidates) {
@@ -1368,6 +1406,9 @@ async function upsertStoreRecord(session, storeData = {}) {
 					billing_mode: String(storeData.billing_mode || getBillingMode()),
 					pending_overage_amount: Number(storeData.pending_overage_amount || 0) || 0,
 					pending_overage_units: Number(storeData.pending_overage_units || 0) || 0,
+					stripe_customer_id: storeData.stripe_customer_id || null,
+					stripe_subscription_id: storeData.stripe_subscription_id || null,
+					stripe_payment_status: storeData.stripe_payment_status || null,
 					updated_at: baseRecord.updated_at,
 				},
 			],
@@ -2234,6 +2275,7 @@ async function getBillingSummary(storeId, storeUrl = "") {
 				currency: planDef.currency,
 			}),
 			plans: getPlanCatalog(),
+			stripe: buildStripeBillingSummary(null),
 		};
 	}
 	return {
@@ -2241,6 +2283,7 @@ async function getBillingSummary(storeId, storeUrl = "") {
 		billingStatus: String(shopRecord.billing_status || "active").toLowerCase(),
 		usage: toUsageSummary(shopRecord),
 		plans: getPlanCatalog(),
+		stripe: buildStripeBillingSummary(shopRecord),
 	};
 }
 
@@ -2546,60 +2589,51 @@ async function saveBillingPlan(storeId, planId, storeUrl = "") {
 				value: rate,
 				expiresAt: Date.now() + 1000 * 60 * 60 * 12,
 			};
-			const pricePerExtraImageBrl = convertUsdToBrl(planDef.usdPricePerExtraImage || 0, rate);
-			const desiredRecord = {
-				...storeInfo,
-				plan: planDef.id,
-				billing_status: "active",
-				images_included: planDef.imagesIncluded,
-				price_per_extra_image: pricePerExtraImageBrl,
-				currency: "BRL",
-				billing_mode: "self",
-				billing_cycle_start: new Date().toISOString(),
-			};
-			const domainCandidates = Array.from(
-				new Set(
-					[
-						requestedStoreUrl,
-						normalizeStoreUrl(storeInfo?.url || ""),
-						normalizeStoreUrl(storeRecord?.store_url || ""),
-						normalizeStoreUrl(storeRecord?.platform_store_url || ""),
-						String(storeRecord?.shop_domain || "").includes(".")
-							? normalizeStoreUrl(storeRecord?.shop_domain || "")
-							: "",
-					].filter(Boolean),
-				),
-			);
-			for (const domain of domainCandidates) {
-				try {
-					const response = await supabaseRequest(
-						`shopify_shops?shop_domain=eq.${encodeURIComponent(domain)}&select=*`,
-						{
-							method: "PATCH",
-							headers: {
-								Prefer: "return=representation",
-							},
-							body: JSON.stringify({
-								plan: desiredRecord.plan,
-								billing_status: desiredRecord.billing_status,
-								images_included: desiredRecord.images_included,
-								price_per_extra_image: desiredRecord.price_per_extra_image,
-								currency: desiredRecord.currency,
-								updated_at: new Date().toISOString(),
-							}),
-						},
-					);
-					if (response.ok) {
-						const rows = await response.json().catch(() => []);
-						if (Array.isArray(rows) && rows[0]) {
-							return rows[0];
-						}
-					}
-				} catch (_error) {
-					// try next candidate
-				}
+
+			if (
+				isStripeConfigured() &&
+				planRequiresStripeCheckout(normalizedPlanId)
+			) {
+				const baseUrl = getPublicBaseUrl({ headers: {} }).replace(/\/+$/, "");
+				const query = new URLSearchParams({
+					section: "billing",
+					store_id: String(storeId),
+				});
+				if (requestedStoreUrl) query.set("store_url", requestedStoreUrl);
+				const { session: checkoutSession } = await createStripeCheckoutSession({
+					storeId,
+					planId: normalizedPlanId,
+					storeUrl: requestedStoreUrl,
+					shopRecord: storeRecord,
+					email: String(storeInfo?.email || storeRecord?.email || ""),
+					storeName: String(storeInfo?.name || storeRecord?.name || ""),
+					successUrl: `${baseUrl}/app.html?${query.toString()}&billing=success`,
+					cancelUrl: `${baseUrl}/app.html?${query.toString()}&billing=cancel`,
+					supabaseRequest,
+				});
+				return {
+					checkoutRequired: true,
+					checkoutUrl: checkoutSession.url,
+					sessionId: checkoutSession.id,
+					plan: normalizedPlanId,
+				};
 			}
-			return upsertStoreRecord(session || { storeId }, desiredRecord);
+
+			return applySelfBillingPlan({
+				storeId,
+				planId: normalizedPlanId,
+				planDef,
+				storeUrl: requestedStoreUrl,
+				storeInfo,
+				storeRecord,
+				session,
+				supabaseRequest,
+				upsertStoreRecord,
+				normalizeStoreUrl,
+				convertUsdToBrl,
+				usdRate: rate,
+				billingMode: "self",
+			});
 		}
 		const error = new Error(
 			"A assinatura da loja ainda nao informou o identificador de billing da Nuvemshop. Aguarde o webhook subscription/updated ou configure NUVEMSHOP_BILLING_CONCEPT_CODE.",
@@ -3478,6 +3512,7 @@ function buildAdminContext(storeContext, session, storeRecord) {
 			mode: String(storeRecord?.billing_mode || getBillingMode()),
 			usage: billing,
 			plans: getPlanCatalog(),
+			stripe: buildStripeBillingSummary(storeRecord),
 		},
 	};
 }
@@ -4191,6 +4226,16 @@ async function handleApi(req, res, reqUrl) {
 				payload.planId,
 				storeContext.storeUrl,
 			);
+			if (record?.checkoutRequired && record?.checkoutUrl) {
+				sendJson(res, 200, {
+					ok: true,
+					checkoutRequired: true,
+					checkoutUrl: record.checkoutUrl,
+					sessionId: record.sessionId,
+					plan: record.plan,
+				});
+				return true;
+			}
 			const reloadedByStoreUrl = await loadLegacyShopRecord(
 				storeContext.storeId,
 				storeContext.storeUrl,
@@ -4226,6 +4271,88 @@ async function handleApi(req, res, reqUrl) {
 		return true;
 	}
 
+	if (pathname === "/api/billing/checkout" && method === "POST") {
+		if (!storeContext.storeId) {
+			sendJson(res, 400, { error: "store_id is required" });
+			return true;
+		}
+		if (!isStripeConfigured()) {
+			sendJson(res, 503, { error: "Stripe nao configurado." });
+			return true;
+		}
+		const payload = await readJsonBody(req);
+		const planId = normalizePlanId(payload.planId || "growth");
+		try {
+			const storeRecord = await loadLegacyShopRecord(
+				storeContext.storeId,
+				storeContext.storeUrl,
+			);
+			const session = await resolveSession(storeContext.storeId, storeContext.storeUrl);
+			const storeInfo = session?.store || storeRecord || { id: storeContext.storeId };
+			const baseUrl = getPublicBaseUrl(req).replace(/\/+$/, "");
+			const query = new URLSearchParams({
+				section: "billing",
+				store_id: String(storeContext.storeId),
+			});
+			if (storeContext.storeUrl) query.set("store_url", storeContext.storeUrl);
+			const { session: checkoutSession } = await createStripeCheckoutSession({
+				storeId: storeContext.storeId,
+				planId,
+				storeUrl: storeContext.storeUrl,
+				shopRecord: storeRecord,
+				email: String(storeInfo?.email || storeRecord?.email || ""),
+				storeName: String(storeInfo?.name || storeRecord?.name || ""),
+				successUrl: `${baseUrl}/app.html?${query.toString()}&billing=success`,
+				cancelUrl: `${baseUrl}/app.html?${query.toString()}&billing=cancel`,
+				supabaseRequest,
+			});
+			sendJson(res, 200, {
+				ok: true,
+				checkoutUrl: checkoutSession.url,
+				sessionId: checkoutSession.id,
+			});
+		} catch (error) {
+			sendJson(res, 500, { error: error.message || "Nao foi possivel iniciar checkout." });
+		}
+		return true;
+	}
+
+	if (pathname === "/api/billing/portal" && method === "POST") {
+		if (!storeContext.storeId) {
+			sendJson(res, 400, { error: "store_id is required" });
+			return true;
+		}
+		if (!isStripeConfigured()) {
+			sendJson(res, 503, { error: "Stripe nao configurado." });
+			return true;
+		}
+		try {
+			const shopRecord = await loadLegacyShopRecord(
+				storeContext.storeId,
+				storeContext.storeUrl,
+			);
+			if (!shopRecord?.stripe_customer_id) {
+				sendJson(res, 400, { error: "Nenhum cliente Stripe vinculado a esta loja." });
+				return true;
+			}
+			const baseUrl = getPublicBaseUrl(req).replace(/\/+$/, "");
+			const query = new URLSearchParams({
+				section: "billing",
+				store_id: String(storeContext.storeId),
+			});
+			if (storeContext.storeUrl) query.set("store_url", storeContext.storeUrl);
+			const portalSession = await createStripePortalSession({
+				storeId: storeContext.storeId,
+				shopRecord,
+				returnUrl: `${baseUrl}/app.html?${query.toString()}`,
+			});
+			sendJson(res, 200, { ok: true, portalUrl: portalSession.url });
+		} catch (error) {
+			sendJson(res, 500, { error: error.message || "Nao foi possivel abrir o portal." });
+		}
+		return true;
+	}
+
 	if (pathname === "/api/analytics/summary") {
 		if (!storeContext.storeId) {
 			sendJson(res, 200, {
@@ -4257,6 +4384,34 @@ async function handleApi(req, res, reqUrl) {
 			sendJson(res, 200, summary);
 		} catch (error) {
 			sendJson(res, 500, { error: error.message || "Nao foi possivel carregar analytics." });
+		}
+		return true;
+	}
+
+	if (pathname === "/api/webhooks/stripe" && method === "POST") {
+		const rawBody = await readRequestBody(req);
+		const signature =
+			req.headers["stripe-signature"] || req.headers["http_stripe_signature"];
+		const event = verifyStripeWebhookSignature(rawBody, signature);
+		if (!event) {
+			sendJson(res, 400, { error: "Invalid Stripe webhook signature" });
+			return true;
+		}
+		try {
+			const result = await handleStripeWebhookEvent(event, {
+				supabaseRequest,
+				upsertStoreRecord,
+				resolveSession,
+				getPlanDefinition,
+				convertUsdToBrl,
+				resolveUsdToBrlRate,
+				loadLegacyShopRecord,
+			});
+			sendJson(res, 200, { received: true, ...result });
+		} catch (error) {
+			sendJson(res, 500, {
+				error: error.message || "Stripe webhook handler failed",
+			});
 		}
 		return true;
 	}

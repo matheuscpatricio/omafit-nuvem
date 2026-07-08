@@ -31,6 +31,14 @@ export type OmafitUsageSummary = {
 	billingMode?: string;
 };
 
+export type OmafitStripeBillingSummary = {
+	configured: boolean;
+	customerId: string | null;
+	subscriptionId: string | null;
+	paymentStatus: string | null;
+	hasPaymentMethod: boolean;
+};
+
 export type OmafitAdminContext = {
 	appName: string;
 	supportUrl: string;
@@ -54,6 +62,7 @@ export type OmafitAdminContext = {
 		mode?: string;
 		usage: OmafitUsageSummary;
 		plans: OmafitPlanDefinition[];
+		stripe?: OmafitStripeBillingSummary;
 	};
 };
 
