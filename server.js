@@ -1506,11 +1506,21 @@ async function listCategories(session) {
 		: [];
 }
 
+function hasOrdersScope(scopeValue = "") {
+	const scopes = String(scopeValue || "")
+		.split(",")
+		.map((item) => item.trim().toLowerCase())
+		.filter(Boolean);
+	return scopes.some((scope) => scope === "read_orders" || scope === "write_orders");
+}
+
 async function ensureWebhooks(session, req) {
 	const webhookBase = getWebhookPublicBaseUrl(req);
 	if (!webhookBase) {
 		return { skipped: true, reason: "Configure NUVEMSHOP_WEBHOOK_BASE_URL with HTTPS" };
 	}
+	const oauthScope = String(session?.scope || "");
+	const ordersScopeGranted = hasOrdersScope(oauthScope);
 	let existing = [];
 	try {
 		const listResponse = await nuvemshopApi(session, "/webhooks?per_page=200&page=1", {
@@ -1523,27 +1533,57 @@ async function ensureWebhooks(session, req) {
 	const results = [];
 	for (const event of WEBHOOK_EVENTS) {
 		const url = `${webhookBase}/api/webhooks/nuvemshop`;
-		const alreadyExists = Array.isArray(existing)
-			? existing.find((item) => item.event === event && item.url === url)
+		const existingForEvent = Array.isArray(existing)
+			? existing.find((item) => item?.event === event)
 			: null;
-		if (alreadyExists) {
+		if (existingForEvent?.url === url) {
 			results.push({ event, status: "existing" });
+			continue;
+		}
+		if (existingForEvent?.url && existingForEvent.url !== url) {
+			results.push({
+				event,
+				status: "conflict",
+				existingUrl: String(existingForEvent.url),
+			});
+			continue;
+		}
+		if (event === "order/paid" && !ordersScopeGranted) {
+			results.push({
+				event,
+				status: "failed",
+				error: "missing_read_orders_scope",
+			});
 			continue;
 		}
 		const createResponse = await nuvemshopApi(session, "/webhooks", {
 			method: "POST",
 			body: JSON.stringify({ event, url }),
 		});
+		if (createResponse.ok) {
+			results.push({ event, status: "created" });
+			continue;
+		}
+		const errorText = await createResponse.text().catch(() => "");
+		const parsedError = parseSupabaseError(errorText);
 		results.push({
 			event,
-			status: createResponse.ok ? "created" : "failed",
+			status: "failed",
+			httpStatus: createResponse.status,
+			error: parsedError?.message || errorText || "webhook_create_failed",
 		});
 	}
 	const updated = persistSession({
 		...session,
 		webhooksSyncedAt: new Date().toISOString(),
 	});
-	return { skipped: false, results, session: updated };
+	return {
+		skipped: false,
+		results,
+		session: updated,
+		oauthScope,
+		hasOrdersScope: ordersScopeGranted,
+	};
 }
 
 function verifyWebhookSignature(rawBody, signature) {
@@ -2205,6 +2245,21 @@ function buildBillingDebugChecks(snapshot) {
 			"Reinstale o app ou chame POST /api/admin/sync para registrar webhooks.",
 		);
 	}
+	const orderPaidRegistered = Boolean(
+		webhookState.events?.some((item) => item?.event === "order/paid"),
+	);
+	if (!orderPaidRegistered) {
+		issues.push("Webhook order/paid nao registrado para esta loja.");
+		if (snapshot.hasOrdersScope === false) {
+			recommendations.push(
+				"Ative o escopo read_orders no Partner Portal, salve o app, desinstale e reinstale na loja.",
+			);
+		} else {
+			recommendations.push(
+				"Use Sincronizar loja no admin. Se continuar falhando, reinstale o app para renovar permissoes.",
+			);
+		}
+	}
 	if (snapshot.partnerApiProbe?.status === 401) {
 		issues.push("Billing API retornou 401 — verifique NUVEMSHOP_CLIENT_SECRET e NUVEMSHOP_APP_ID.");
 	}
@@ -2368,6 +2423,8 @@ async function buildBillingDebugSnapshot(storeId, storeUrl = "") {
 		sessionStoreUrl: String(session?.store?.url || ""),
 		sessionBillingConceptCode: sessionConceptCode,
 		sessionBillingServiceId: String(session?.billingServiceId || ""),
+		oauthScope: String(session?.scope || ""),
+		hasOrdersScope: hasOrdersScope(session?.scope || ""),
 		credentialBillingConceptCode: credentialConceptCode,
 		credentialBillingServiceId: String(credentialRecord?.billing_service_id || ""),
 		credentialBillingNextExecution: credentialRecord?.billing_next_execution || null,
@@ -3349,6 +3406,8 @@ function buildAdminContext(storeContext, session, storeRecord) {
 			connected: Boolean(session?.accessToken || storeRecord?.access_token),
 			lastSyncAt: session?.lastSyncAt || storeRecord?.updated_at || null,
 			webhooksSyncedAt: session?.webhooksSyncedAt || null,
+			scope: String(session?.scope || storeRecord?.scope || ""),
+			hasOrdersScope: hasOrdersScope(session?.scope || storeRecord?.scope || ""),
 			authUrl: createOAuthAuthorizeUrl(),
 		},
 		billing: {

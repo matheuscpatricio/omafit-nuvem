@@ -42,7 +42,15 @@ type BillingDebugSnapshot = {
 type WebhookSyncReport = {
 	skipped?: boolean;
 	reason?: string;
-	results?: Array<{ event: string; status: string }>;
+	hasOrdersScope?: boolean;
+	oauthScope?: string;
+	results?: Array<{
+		event: string;
+		status: string;
+		error?: string;
+		existingUrl?: string;
+		httpStatus?: number;
+	}>;
 };
 
 type StoreSyncResponse = {
@@ -525,6 +533,40 @@ function AppContent({ nexo, store }: AdminAppProps) {
 	);
 }
 
+function webhookStatusLabel(
+	row: { status: string },
+	t: (key: string, vars?: Record<string, string | number | null>) => string,
+) {
+	if (row.status === "created") return t("dashboard.webhookStatus.created");
+	if (row.status === "existing") return t("dashboard.webhookStatus.existing");
+	if (row.status === "conflict") return t("dashboard.webhookStatus.conflict");
+	return t("dashboard.webhookStatus.failed");
+}
+
+function webhookRowDetail(
+	row: {
+		status: string;
+		error?: string;
+		existingUrl?: string;
+		httpStatus?: number;
+	},
+	t: (key: string, vars?: Record<string, string | number | null>) => string,
+) {
+	if (row.error === "missing_read_orders_scope") {
+		return t("dashboard.webhookError.missingOrdersScope");
+	}
+	if (row.status === "conflict" && row.existingUrl) {
+		return t("dashboard.webhookError.conflictUrl", { url: row.existingUrl });
+	}
+	if (row.error) {
+		return t("dashboard.webhookError.api", {
+			status: row.httpStatus || "—",
+			message: row.error,
+		});
+	}
+	return null;
+}
+
 function WebhookSyncReportView({
 	report,
 	t,
@@ -544,19 +586,23 @@ function WebhookSyncReportView({
 	return (
 		<div style={{ display: "grid", gap: 8 }}>
 			<strong>{t("dashboard.webhookSyncTitle")}</strong>
+			{report.hasOrdersScope === false ? (
+				<div className="omafit-admin-alert omafit-admin-alert--warning">
+					{t("dashboard.webhookMissingOrdersScope")}
+				</div>
+			) : null}
 			<ul style={{ margin: 0, paddingLeft: 18 }}>
-				{(report.results || []).map((row) => (
-					<li key={row.event} style={subtleTextStyle}>
-						{row.event}:{" "}
-						{t(
-							row.status === "created"
-								? "dashboard.webhookStatus.created"
-								: row.status === "existing"
-									? "dashboard.webhookStatus.existing"
-									: "dashboard.webhookStatus.failed",
-						)}
-					</li>
-				))}
+				{(report.results || []).map((row) => {
+					const detail = webhookRowDetail(row, t);
+					return (
+						<li key={row.event} style={subtleTextStyle}>
+							{row.event}: {webhookStatusLabel(row, t)}
+							{detail ? (
+								<div style={{ marginTop: 4, fontSize: 12 }}>{detail}</div>
+							) : null}
+						</li>
+					);
+				})}
 			</ul>
 			{orderPaid?.status === "existing" || orderPaid?.status === "created" ? (
 				<span className="omafit-admin-pill omafit-admin-pill--success">

@@ -102,6 +102,9 @@ https://seu-dominio.com/api/billing/debug?store_id=6994912&store_url=arrascaneta
 1. O lojista instala o app e a Nuvemshop redireciona para `/auth/callback`.
 2. O backend troca o `code` por `access_token`, salva a sessao e sincroniza a loja.
 3. O backend registra webhooks essenciais (`subscription/updated`, `order/paid`, etc.).
+   - O evento `order/paid` exige o escopo OAuth `read_orders` (ou `write_orders`) no app.
+   - Se o escopo nao estiver ativo no Partner Portal, o sync mostrara falha em `order/paid`.
+   - Correcao: Partner Portal > App > Permissoes > ativar `read_orders`, salvar, desinstalar e reinstalar o app na loja, depois **Sincronizar loja** no admin.
 4. A Nuvemshop envia `subscription/updated` com o `concept_code` da loja.
 5. O admin embutido em `app.html` carrega via Nexo, identifica a loja e consome as APIs internas.
 6. Troca de plano no admin atualiza assinatura na Nuvemshop; uso excedente gera charges automaticas.

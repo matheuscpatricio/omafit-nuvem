@@ -39,7 +39,14 @@ const translations: Record<LocaleKey, Dictionary> = {
 		"dashboard.webhookSyncSkipped": "Webhooks não sincronizados: {reason}",
 		"dashboard.webhookStatus.created": "criado",
 		"dashboard.webhookStatus.existing": "já existia",
+		"dashboard.webhookStatus.conflict": "URL diferente já registrada",
 		"dashboard.webhookStatus.failed": "falhou",
+		"dashboard.webhookMissingOrdersScope":
+			"O token OAuth desta loja não inclui read_orders. Ative o escopo no Partner Portal, salve o app, desinstale e reinstale na loja.",
+		"dashboard.webhookError.missingOrdersScope":
+			"Escopo read_orders ausente — necessário para registrar order/paid.",
+		"dashboard.webhookError.conflictUrl": "Já existe webhook apontando para {url}.",
+		"dashboard.webhookError.api": "API {status}: {message}",
 		"dashboard.orderPaidReady": "order/paid registrado",
 		"dashboard.orderPaidMissing": "order/paid ainda não registrado",
 		"dashboard.quickActions": "Ações rápidas",
@@ -265,7 +272,14 @@ const translations: Record<LocaleKey, Dictionary> = {
 		"dashboard.webhookSyncSkipped": "Webhooks were not synced: {reason}",
 		"dashboard.webhookStatus.created": "created",
 		"dashboard.webhookStatus.existing": "already exists",
+		"dashboard.webhookStatus.conflict": "different URL already registered",
 		"dashboard.webhookStatus.failed": "failed",
+		"dashboard.webhookMissingOrdersScope":
+			"This store OAuth token does not include read_orders. Enable the scope in Partner Portal, save the app, uninstall and reinstall on the store.",
+		"dashboard.webhookError.missingOrdersScope":
+			"Missing read_orders scope — required to register order/paid.",
+		"dashboard.webhookError.conflictUrl": "Webhook already points to {url}.",
+		"dashboard.webhookError.api": "API {status}: {message}",
 		"dashboard.orderPaidReady": "order/paid registered",
 		"dashboard.orderPaidMissing": "order/paid not registered yet",
 		"dashboard.quickActions": "Quick actions",
@@ -480,7 +494,14 @@ const translations: Record<LocaleKey, Dictionary> = {
 		"dashboard.webhookSyncSkipped": "Webhooks no sincronizados: {reason}",
 		"dashboard.webhookStatus.created": "creado",
 		"dashboard.webhookStatus.existing": "ya existia",
+		"dashboard.webhookStatus.conflict": "URL diferente ya registrada",
 		"dashboard.webhookStatus.failed": "fallo",
+		"dashboard.webhookMissingOrdersScope":
+			"El token OAuth de esta tienda no incluye read_orders. Activa el alcance en Partner Portal, guarda la app, desinstala y reinstala en la tienda.",
+		"dashboard.webhookError.missingOrdersScope":
+			"Falta el alcance read_orders — necesario para registrar order/paid.",
+		"dashboard.webhookError.conflictUrl": "Ya existe un webhook apuntando a {url}.",
+		"dashboard.webhookError.api": "API {status}: {message}",
 		"dashboard.orderPaidReady": "order/paid registrado",
 		"dashboard.orderPaidMissing": "order/paid aun no registrado",
 		"dashboard.quickActions": "Acciones rapidas",
