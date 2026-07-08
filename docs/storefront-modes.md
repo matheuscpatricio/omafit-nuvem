@@ -1,35 +1,35 @@
 # Modos da Storefront Omafit
 
-O storefront na Nuvemshop usa **apenas NubeSDK** (`src/main.tsx`), conforme exigido para homologacao a partir de junho/2026.
+## Temas Nuvemshop
 
-## Arquitetura
+| Tema | Script | Modelo |
+|------|--------|--------|
+| **Patagonia** | `main.min.js` | NubeSDK (obrigatorio na homologacao) |
+| **Morelia e demais** | `storefront-legacy.min.js` | Script legado ate a plataforma liberar SDK em todos os temas |
 
-- `src/main.tsx`
-  - App NubeSDK: renderiza o CTA na PDP, abre o widget em modal (`Iframe`) e integra com o carrinho via `cart:add`.
-- `src/shared/nuvemshopStorefront.ts`
-  - Configuracao publica da loja, montagem da URL do widget e roteamento roupa vs calçados.
-- `src/widget.tsx` + `src/widget-app/`
-  - Experiencia do provador virtual dentro do iframe.
-- `server.js`
-  - Serve `widget.html` / `widget-footwear.html` e faz proxy dos endpoints de try-on.
+A documentacao oficial do NubeSDK indica que o storefront via SDK funciona no tema **Patagonia**. Lojas em outros temas precisam do bundle legado (sem manipulacao direta no admin — script apontando para o app).
 
-## Roteamento roupa vs calçados
+## NubeSDK (`src/main.tsx`)
 
-O SDK escolhe automaticamente:
+- CTA nos slots `before_product_detail_add_to_cart` / `after_product_detail_add_to_cart`
+- Modal com `Iframe` + `cart:add`
+- Config via `GET /api/storefront/widget-config` na URL publica do app
 
-- `/widget.html` — vestuario e acessorios
-- `/widget-footwear.html` — quando o handle da coleção ou do produto bate com tabelas `footwear` do admin
-
-A deteccao usa a URL da pagina (`/collections/{slug}/...`) e o handle do produto exposto pelo NubeSDK — sem scripts legados no DOM.
-
-## Deploy na Nuvemshop
-
-No Partner Portal, o script da loja deve apontar para:
+URL no Partner Portal (Patagonia):
 
 `https://SEU_DOMINIO/main.min.js`
 
-Ative a flag **Uses NubeSDK** no painel do app.
+## Legado (`src/storefront-legacy.ts`)
 
-## Carrinho
+- Injeta botao na PDP para temas sem suporte ao NubeSDK (ex.: Morelia)
+- Usa `postMessage` e formulario da loja para carrinho
 
-Quando o cliente confirma o tamanho no widget, o iframe envia `omafit-add-to-cart-request` e o app responde com `nube.send("cart:add")`, sem manipular formularios da tema.
+URL no campo de scripts da loja / tema (Morelia):
+
+`https://SEU_DOMINIO/storefront-legacy.min.js`
+
+## Homologacao
+
+Para homologacao Nuvemshop: loja demo com tema **Patagonia** + `main.min.js` + flag **Uses NubeSDK**.
+
+O legado permanece apenas para compatibilidade com temas antigos em producao.

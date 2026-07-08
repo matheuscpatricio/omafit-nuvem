@@ -4,6 +4,7 @@ import {
 	findVariantByRecommendedSize,
 	getStorefrontCtaSlot,
 	resolveWidgetBaseUrl,
+	shouldHideForProduct,
 } from "./nuvemshopStorefront";
 
 describe("nuvemshopStorefront", () => {
@@ -29,6 +30,14 @@ describe("nuvemshopStorefront", () => {
 			"before_product_detail_add_to_cart",
 		);
 		expect(getStorefrontCtaSlot({} as never)).toBe("after_product_detail_add_to_cart");
+	});
+
+	it("hides widget only when disabled or excluded", () => {
+		expect(shouldHideForProduct(null, { widget_enabled: true } as never)).toBe(false);
+		expect(shouldHideForProduct({ categories: ["1"] } as never, {
+			widget_enabled: true,
+			excluded_collections: ["1"],
+		} as never)).toBe(true);
 	});
 
 	it("finds variant by recommended size", () => {

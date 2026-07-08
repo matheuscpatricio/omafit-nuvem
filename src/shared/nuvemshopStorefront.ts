@@ -42,6 +42,19 @@ const DEFAULT_CONFIG: StorefrontConfig = {
 	primary_color: "#810707",
 };
 
+export function getOmafitAppBaseUrl(): string {
+	const fromEnv = String(import.meta.env.VITE_OMAFIT_APP_URL || "").trim();
+	return fromEnv ? fromEnv.replace(/\/$/, "") : "";
+}
+
+export function buildStorefrontConfigEndpoint(storeId: number, storeDomain?: string): string {
+	const query = `store_id=${encodeURIComponent(String(storeId))}&store_domain=${encodeURIComponent(storeDomain || "")}`;
+	const base = getOmafitAppBaseUrl();
+	return base
+		? `${base}/api/storefront/widget-config?${query}`
+		: `/api/storefront/widget-config?${query}`;
+}
+
 export function collectionHandleFromUrl(url: string): string {
 	try {
 		const match = new URL(url).pathname.match(/\/collections\/([^/]+)/i);
@@ -90,7 +103,13 @@ export function getProductHandle(nube: NubeSDK, product: ProductDetails): string
 }
 
 export function shouldHideForProduct(product: ProductDetails | null, config: StorefrontConfig) {
-	if (!product || config.widget_enabled === false) return true;
+	if (config.widget_enabled === false) return true;
+	if (!product) return false;
+	const categoryIds = (product.categories || []).map((categoryId) => String(categoryId));
+	return categoryIds.some((categoryId) => config.excluded_collections.includes(categoryId));
+}
+
+export function isProductExcluded(product: ProductDetails, config: StorefrontConfig) {
 	const categoryIds = (product.categories || []).map((categoryId) => String(categoryId));
 	return categoryIds.some((categoryId) => config.excluded_collections.includes(categoryId));
 }
@@ -282,10 +301,9 @@ export async function loadStorefrontBootstrap(
 	storeId: number,
 	storeDomain?: string,
 ): Promise<StorefrontBootstrap> {
+	const endpoint = buildStorefrontConfigEndpoint(storeId, storeDomain);
 	try {
-		const response = await fetch(
-			`/api/storefront/widget-config?store_id=${encodeURIComponent(String(storeId))}&store_domain=${encodeURIComponent(storeDomain || "")}`,
-		);
+		const response = await fetch(endpoint);
 		if (!response.ok) throw new Error("request failed");
 		const data = (await response.json()) as StorefrontApiResponse;
 		const footwearHandles = Array.isArray(data.footwear_collection_handles)
@@ -305,7 +323,9 @@ export async function loadStorefrontBootstrap(
 	} catch {
 		return {
 			config: DEFAULT_CONFIG,
-			widgetUrl: "/widget.html",
+			widgetUrl: getOmafitAppBaseUrl()
+				? `${getOmafitAppBaseUrl()}/widget.html`
+				: "/widget.html",
 			publicId: "",
 			footwearCollectionHandles: [],
 			billingPlan: "",

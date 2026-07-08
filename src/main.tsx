@@ -7,10 +7,10 @@ import {
 	getCurrentProduct,
 	getProductHandle,
 	getStorefrontCtaSlot,
+	isProductExcluded,
 	loadStorefrontBootstrap,
 	resolveCollectionHandleFromNube,
 	resolveWidgetBaseUrl,
-	shouldHideForProduct,
 	type StorefrontBootstrap,
 	type StorefrontConfig,
 } from "./shared/nuvemshopStorefront";
@@ -123,11 +123,11 @@ function renderStorefrontWidget(
 	nube.clearSlot("after_product_detail_add_to_cart");
 	nube.clearSlot("modal_content");
 
-	if (shouldHideForProduct(product, config)) {
-		return;
-	}
+	if (config.widget_enabled === false) return;
+	if (!product) return;
+	if (isProductExcluded(product, config)) return;
 
-	const productHandle = product ? getProductHandle(nube, product) : "";
+	const productHandle = getProductHandle(nube, product);
 	const collectionHandle = resolveCollectionHandleFromNube(
 		nube,
 		bootstrap.footwearCollectionHandles,
@@ -152,7 +152,7 @@ function renderStorefrontWidget(
 	nube.render(
 		ctaSlot,
 		<Button
-			variant="link"
+			variant={config.cta_type === "button" ? "primary" : "link"}
 			onClick={() => {
 				activeIframe = (
 					<Iframe

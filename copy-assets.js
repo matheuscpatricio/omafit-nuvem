@@ -14,6 +14,8 @@ copyFileSync(join(distDir, "main.min.js"), join(assetsDir, `main-${buildId}.min.
 copyFileSync(join(distDir, "home.min.js"), join(assetsDir, `home-${buildId}.min.js`));
 copyFileSync(join(distDir, "widget.min.js"), join(assetsDir, `widget-${buildId}.min.js`));
 copyFileSync(join(distDir, "widget-footwear.min.js"), join(assetsDir, `widget-footwear-${buildId}.min.js`));
+copyFileSync(join(distDir, "storefront-legacy.min.js"), join(assetsDir, `storefront-legacy-${buildId}.min.js`));
+copyFileSync(join(distDir, "storefront-legacy-footwear.min.js"), join(assetsDir, `storefront-legacy-footwear-${buildId}.min.js`));
 
 // Garantir que o diretorio dist existe
 mkdirSync(distDir, { recursive: true });
