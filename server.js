@@ -30,6 +30,7 @@ import {
 } from "./lib/widget-catalog-search.js";
 import { upsertOmafitOrderAnalytics } from "./lib/order-analytics.js";
 import {
+	handleNuvemshopAppUninstalled,
 	handleStoreRedact,
 	handleCustomerRedact,
 	handleCustomerDataRequest,
@@ -4173,11 +4174,11 @@ async function handleApi(req, res, reqUrl) {
 			const currentSession = getSession(storeId);
 			const shopKey = getCanonicalShopKey(storeId);
 			const storeUrl = normalizeStoreUrl(currentSession?.store?.url || "");
-			await handleStoreRedact({
+			await handleNuvemshopAppUninstalled({
 				storeId,
 				shopKey,
 				storeUrl,
-				supabaseDelete,
+				supabaseRequest,
 				deleteSession,
 				deleteNuvemshopCredential,
 			});
@@ -4280,6 +4281,7 @@ async function handleApi(req, res, reqUrl) {
 					storeId,
 					shopKey,
 					storeUrl,
+					supabaseRequest,
 					supabaseDelete,
 					deleteSession,
 					deleteNuvemshopCredential,
