@@ -18,6 +18,7 @@ export type StorefrontConfig = {
 };
 
 export type StorefrontBootstrap = {
+	ready: boolean;
 	config: StorefrontConfig;
 	widgetUrl: string;
 	publicId: string;
@@ -310,6 +311,7 @@ export async function loadStorefrontBootstrap(
 			? data.footwear_collection_handles.map((handle) => String(handle || "").trim()).filter(Boolean)
 			: [];
 		return {
+			ready: true,
 			config: {
 				...DEFAULT_CONFIG,
 				...(data.config || {}),
@@ -322,6 +324,7 @@ export async function loadStorefrontBootstrap(
 		};
 	} catch {
 		return {
+			ready: false,
 			config: DEFAULT_CONFIG,
 			widgetUrl: getOmafitAppBaseUrl()
 				? `${getOmafitAppBaseUrl()}/widget.html`

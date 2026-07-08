@@ -186,7 +186,10 @@ function renderStorefrontWidget(
 }
 
 export function App(nube: NubeSDK) {
+	let bootToken = 0;
+
 	const boot = async () => {
+		const token = ++bootToken;
 		const state = nube.getState();
 		if (state.location.page.type !== "product") {
 			nube.clearSlot("before_product_detail_add_to_cart");
@@ -196,6 +199,7 @@ export function App(nube: NubeSDK) {
 		}
 
 		const bootstrap = await loadStorefrontBootstrap(state.store.id, state.store.domain);
+		if (token !== bootToken || !bootstrap.ready) return;
 		renderStorefrontWidget(nube, bootstrap.config, bootstrap);
 	};
 
@@ -216,7 +220,6 @@ export function App(nube: NubeSDK) {
 		reply(false, "Nao foi possivel adicionar o produto ao carrinho.");
 	});
 
-	void boot();
 	nube.on("page:loaded", () => {
 		void boot();
 	});

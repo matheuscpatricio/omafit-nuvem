@@ -723,9 +723,18 @@ function applyCtaWrapperSpacing(wrapper: HTMLElement, embedPosition?: string) {
 	}
 }
 
+function isPatagoniaTheme() {
+	return String(window.LS?.theme?.name || "")
+		.trim()
+		.toLowerCase() === "patagonia";
+}
+
 function mountCtaWrapper(wrapper: HTMLElement, embedPosition?: string) {
 	const mount = getEmbedMount();
 	if (!mount) return false;
+	if (wrapper.parentElement) {
+		wrapper.remove();
+	}
 	applyCtaWrapperSpacing(wrapper, embedPosition);
 	const above = embedPosition === "above_buy_buttons";
 	if (above) {
@@ -945,6 +954,10 @@ function renderButton(
 }
 
 async function init() {
+	if (isPatagoniaTheme()) {
+		debugLog("legacy_init_skipped_patagonia", {}, "L0");
+		return;
+	}
 	const store = getStoreContext();
 	const product = getProductContext();
 	attachMessageBridge();
@@ -976,10 +989,13 @@ async function init() {
 	);
 }
 
-if (document.readyState === "loading") {
-	document.addEventListener("DOMContentLoaded", () => {
+if (!(window as Window & { __omafitLegacyInit?: boolean }).__omafitLegacyInit) {
+	(window as Window & { __omafitLegacyInit?: boolean }).__omafitLegacyInit = true;
+	if (document.readyState === "loading") {
+		document.addEventListener("DOMContentLoaded", () => {
+			void init();
+		});
+	} else {
 		void init();
-	});
-} else {
-	void init();
+	}
 }
