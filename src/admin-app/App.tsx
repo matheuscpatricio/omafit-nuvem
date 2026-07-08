@@ -39,6 +39,21 @@ type BillingDebugSnapshot = {
 	};
 };
 
+type WebhookSyncReport = {
+	skipped?: boolean;
+	reason?: string;
+	results?: Array<{ event: string; status: string }>;
+};
+
+type StoreSyncResponse = {
+	ok: boolean;
+	webhookSync?: WebhookSyncReport;
+	session?: {
+		webhooksSyncedAt?: string | null;
+		lastSyncAt?: string | null;
+	};
+};
+
 type StoreBootstrap = {
 	id: string;
 	name: string;
@@ -345,6 +360,26 @@ function AppContent({ nexo, store }: AdminAppProps) {
 		[t, widgetConfig, withStoreQuery],
 	);
 
+	const [syncReport, setSyncReport] = useState<WebhookSyncReport | null>(null);
+
+	const syncStore = useCallback(async () => {
+		setBusyAction("sync");
+		setError(null);
+		try {
+			const response = await fetchJson<StoreSyncResponse>(withStoreQuery("/api/admin/sync"), {
+				method: "POST",
+			});
+			setSyncReport(response.webhookSync || null);
+			await loadContext();
+			setNotice(t("dashboard.syncSuccess"));
+		} catch (requestError) {
+			setSyncReport(null);
+			setError(requestError instanceof Error ? requestError.message : t("feedback.error"));
+		} finally {
+			setBusyAction(null);
+		}
+	}, [loadContext, t, withStoreQuery]);
+
 	const activatePlan = useCallback(
 		async (planId: string) => {
 			setBusyAction(`plan:${planId}`);
@@ -421,6 +456,9 @@ function AppContent({ nexo, store }: AdminAppProps) {
 					<DashboardSection
 						context={context}
 						onSelectSection={setSection}
+						onSyncStore={syncStore}
+						syncBusy={busyAction === "sync"}
+						syncReport={syncReport}
 						onReconnect={() => {
 							if (!context.auth.authUrl) return;
 							if (window.top && window.top !== window) {
@@ -438,6 +476,9 @@ function AppContent({ nexo, store }: AdminAppProps) {
 						onActivatePlan={activatePlan}
 						busyAction={busyAction}
 						withStoreQuery={withStoreQuery}
+						onSyncStore={syncStore}
+						syncBusy={busyAction === "sync"}
+						syncReport={syncReport}
 					/>
 				) : null}
 
@@ -484,14 +525,66 @@ function AppContent({ nexo, store }: AdminAppProps) {
 	);
 }
 
+function WebhookSyncReportView({
+	report,
+	t,
+}: {
+	report: WebhookSyncReport | null;
+	t: (key: string, vars?: Record<string, string | number | null>) => string;
+}) {
+	if (!report) return null;
+	if (report.skipped) {
+		return (
+			<div className="omafit-admin-alert omafit-admin-alert--warning">
+				{t("dashboard.webhookSyncSkipped", { reason: report.reason || "—" })}
+			</div>
+		);
+	}
+	const orderPaid = report.results?.find((row) => row.event === "order/paid");
+	return (
+		<div style={{ display: "grid", gap: 8 }}>
+			<strong>{t("dashboard.webhookSyncTitle")}</strong>
+			<ul style={{ margin: 0, paddingLeft: 18 }}>
+				{(report.results || []).map((row) => (
+					<li key={row.event} style={subtleTextStyle}>
+						{row.event}:{" "}
+						{t(
+							row.status === "created"
+								? "dashboard.webhookStatus.created"
+								: row.status === "existing"
+									? "dashboard.webhookStatus.existing"
+									: "dashboard.webhookStatus.failed",
+						)}
+					</li>
+				))}
+			</ul>
+			{orderPaid?.status === "existing" || orderPaid?.status === "created" ? (
+				<span className="omafit-admin-pill omafit-admin-pill--success">
+					{t("dashboard.orderPaidReady")}
+				</span>
+			) : (
+				<span className="omafit-admin-pill omafit-admin-pill--warning">
+					{t("dashboard.orderPaidMissing")}
+				</span>
+			)}
+		</div>
+	);
+}
+
 function DashboardSection({
 	context,
 	onReconnect,
 	onSelectSection,
+	onSyncStore,
+	syncBusy,
+	syncReport,
 }: {
 	context: OmafitAdminContext;
 	onReconnect: () => void;
 	onSelectSection: (section: SectionId) => void;
+	onSyncStore: () => Promise<void>;
+	syncBusy: boolean;
+	syncReport: WebhookSyncReport | null;
 }) {
 	const { t } = useI18n();
 	const usage = context.billing.usage;
@@ -542,6 +635,21 @@ function DashboardSection({
 							? t("dashboard.connectedDescription")
 							: t("dashboard.reconnectNeeded")}
 					</span>
+					{context.auth.lastSyncAt ? (
+						<span style={subtleTextStyle}>
+							{t("dashboard.lastSync")}: {new Date(context.auth.lastSyncAt).toLocaleString()}
+						</span>
+					) : null}
+					{context.auth.connected ? (
+						<button
+							type="button"
+							className="omafit-admin-btn omafit-admin-btn--primary"
+							onClick={() => void onSyncStore()}
+							disabled={syncBusy}
+						>
+							{syncBusy ? t("common.loading") : t("dashboard.syncStore")}
+						</button>
+					) : null}
 					{!context.auth.connected ? (
 						<button type="button" className="omafit-admin-btn omafit-admin-btn--primary" onClick={onReconnect}>
 							{t("nav.reconnect")}
@@ -549,6 +657,13 @@ function DashboardSection({
 					) : null}
 				</div>
 			</div>
+
+			{syncReport ? (
+				<div style={{ ...cardStyle, display: "grid", gap: 10 }}>
+					<span style={subtleTextStyle}>{t("dashboard.syncHint")}</span>
+					<WebhookSyncReportView report={syncReport} t={t} />
+				</div>
+			) : null}
 
 			{showUsage ? (
 				<div style={{ ...cardStyle, display: "grid", gap: 14 }}>
@@ -592,11 +707,17 @@ function BillingSection({
 	onActivatePlan,
 	busyAction,
 	withStoreQuery,
+	onSyncStore,
+	syncBusy,
+	syncReport,
 }: {
 	context: OmafitAdminContext;
 	onActivatePlan: (planId: string) => Promise<void>;
 	busyAction: string | null;
 	withStoreQuery: (path: string) => string;
+	onSyncStore: () => Promise<void>;
+	syncBusy: boolean;
+	syncReport: WebhookSyncReport | null;
 }) {
 	const { t } = useI18n();
 	const [billingDebug, setBillingDebug] = useState<BillingDebugSnapshot | null>(null);
@@ -635,8 +756,22 @@ function BillingSection({
 					>
 						{billingDebugLoading ? t("common.loading") : t("billing.diagnose")}
 					</button>
+					<button
+						type="button"
+						className="omafit-admin-btn omafit-admin-btn--primary"
+						onClick={() => void onSyncStore()}
+						disabled={syncBusy}
+					>
+						{syncBusy ? t("common.loading") : t("dashboard.syncStore")}
+					</button>
 				</div>
 			</div>
+
+			{syncReport ? (
+				<div style={{ ...cardStyle, display: "grid", gap: 10 }}>
+					<WebhookSyncReportView report={syncReport} t={t} />
+				</div>
+			) : null}
 
 			{billingDebugError ? (
 				<div className="omafit-admin-alert omafit-admin-alert--warning">{billingDebugError}</div>
