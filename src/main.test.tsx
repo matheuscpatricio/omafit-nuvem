@@ -28,6 +28,10 @@ describe("App", () => {
 			on: vi.fn(),
 			render: vi.fn(),
 			clearSlot: vi.fn(),
+			send: vi.fn(),
+			getBrowserAPIs: vi.fn(() => ({
+				postMessageToIframe: vi.fn(),
+			})),
 			getState: vi.fn(
 				() =>
 					({
@@ -60,5 +64,7 @@ describe("App", () => {
 
 		expect(mockNube.on).toHaveBeenCalledWith("page:loaded", expect.any(Function));
 		expect(mockNube.on).toHaveBeenCalledWith("location:updated", expect.any(Function));
+		expect(mockNube.on).toHaveBeenCalledWith("cart:add:success", expect.any(Function));
+		expect(mockNube.on).toHaveBeenCalledWith("cart:add:fail", expect.any(Function));
 	});
 });

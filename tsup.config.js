@@ -74,18 +74,4 @@ export default defineConfig([
     format: ["esm"],
     clean: false,
   },
-  {
-    ...shared,
-    entry: ["src/storefront-legacy.ts"],
-    format: ["iife"],
-    globalName: "OmafitLegacyStorefront",
-    clean: false,
-  },
-  {
-    ...shared,
-    entry: ["src/storefront-legacy-footwear.ts"],
-    format: ["iife"],
-    globalName: "OmafitLegacyFootwearStorefront",
-    clean: false,
-  },
 ]);

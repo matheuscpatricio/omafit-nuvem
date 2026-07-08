@@ -1,316 +1,175 @@
 /** @jsxImportSource @tiendanube/nube-sdk-jsx */
-import type { NubeSDK, ProductDetails } from "@tiendanube/nube-sdk-types";
+import type { NubeSDK } from "@tiendanube/nube-sdk-types";
 import { Button, Column, Iframe, Text } from "@tiendanube/nube-sdk-jsx";
-import { getStorefrontFontFamily, sanitizeFontFamilyForCss } from "./shared/storeFont";
-import { resolveCollectionHandleForStorefront, shouldUseFootwearWidget } from "./shared/widgetFootwearRouting";
+import {
+	buildWidgetUrl,
+	findVariantByRecommendedSize,
+	getCurrentProduct,
+	getProductHandle,
+	getStorefrontCtaSlot,
+	loadStorefrontBootstrap,
+	resolveCollectionHandleFromNube,
+	resolveWidgetBaseUrl,
+	shouldHideForProduct,
+	type StorefrontBootstrap,
+	type StorefrontConfig,
+} from "./shared/nuvemshopStorefront";
 
-type StorefrontConfig = {
-	link_text: string;
-	store_logo?: string | null;
-	primary_color?: string;
-	widget_enabled: boolean;
-	excluded_collections: string[];
+type IframeMessageEvent = {
+	value?: Record<string, unknown>;
 };
 
-function debugLog(message: string, data: Record<string, unknown>, hypothesisId: string) {
-	console.info("[Omafit Storefront Debug]", hypothesisId, message, data);
+let activeIframe: ReturnType<typeof Iframe> | null = null;
+let pendingCartReply:
+	| ((ok: boolean, message: string) => void)
+	| null = null;
+
+function replyToIframe(nube: NubeSDK, ok: boolean, message: string) {
+	if (!activeIframe) return;
+	nube.getBrowserAPIs().postMessageToIframe(activeIframe, {
+		type: "omafit-add-to-cart-result",
+		ok,
+		message,
+	});
 }
 
-function renderDebugMessage(nube: NubeSDK, message: string) {
-	nube.render(
-		"after_product_detail_name",
-		<Text>
-			{message}
-		</Text>,
-	);
-}
+function handleIframeMessage(nube: NubeSDK, event: IframeMessageEvent) {
+	const payload = event.value || {};
+	if (payload.type !== "omafit-add-to-cart-request") return;
 
-function getCurrentProduct(nube: NubeSDK): ProductDetails | null {
-	const page = nube.getState().location.page;
-	if (page.type !== "product") return null;
-	return page.data.product;
-}
-
-/** Slug da coleção quando a página do produto está em `/collections/{slug}/products/...`. */
-function collectionHandleFromStorefrontUrl(url: string): string {
-	try {
-		const m = new URL(url).pathname.match(/\/collections\/([^/]+)/i);
-		if (!m?.[1]) return "";
-		return decodeURIComponent(m[1]).trim().toLowerCase();
-	} catch {
-		return "";
-	}
-}
-
-/** Prefere URL que já contenha `/collections/` (SDK por vezes difere do `window.location` do browser). */
-function resolveStorefrontPageUrl(nube: NubeSDK): string {
-	const state = nube.getState();
-	const fromState = typeof state.location?.url === "string" ? state.location.url : "";
-	const fromWindow =
-		typeof globalThis.location?.href === "string" ? globalThis.location.href : "";
-	const tryHasCollections = (u: string) => {
-		try {
-			return new URL(u).pathname.includes("/collections/") ? u : "";
-		} catch {
-			return "";
-		}
-	};
-	return tryHasCollections(fromState) || tryHasCollections(fromWindow) || fromState || fromWindow;
-}
-
-function buildWidgetUrl(baseUrl: string, nube: NubeSDK, config: StorefrontConfig, collectionHandle: string) {
-	const state = nube.getState();
 	const product = getCurrentProduct(nube);
-	if (!product) return baseUrl;
+	if (!product?.id) {
+		replyToIframe(nube, false, "Produto indisponivel nesta pagina.");
+		return;
+	}
 
-	const selectedVariant = product.variants?.[0] || null;
-	const rawImages = Array.isArray((product as ProductDetails & { images?: Array<{ src?: unknown }> }).images)
-		? (product as ProductDetails & { images?: Array<{ src?: unknown }> }).images
-		: [];
-	const imageUrls = rawImages
-		.map((image) => {
-			const source = image?.src;
-			if (typeof source === "string") return source;
-			if (source && typeof source === "object") {
-				return (
-					(source as Record<string, string | undefined>)[state.store.language] ||
-					(source as Record<string, string | undefined>).pt ||
-					(source as Record<string, string | undefined>).es ||
-					(source as Record<string, string | undefined>).en ||
-					""
-				);
-			}
-			return "";
-		})
-		.filter(Boolean);
-	const widgetUrl = new URL(
-		baseUrl,
-		typeof globalThis.location?.href === "string"
-			? globalThis.location.href
-			: "https://omafit-nuvem-production.up.railway.app/widget.html",
+	const desiredSize = String(
+		(payload.selection as { recommended_size?: string } | undefined)?.recommended_size || "",
+	).trim();
+	const variant =
+		findVariantByRecommendedSize(product, desiredSize) || product.variants?.[0] || null;
+	if (!variant?.id) {
+		replyToIframe(nube, false, "Nao foi possivel identificar a variante do produto.");
+		return;
+	}
+
+	pendingCartReply = (ok, message) => replyToIframe(nube, ok, message);
+	nube.send("cart:add", () => ({
+		cart: {
+			items: [
+				{
+					variant_id: Number(variant.id),
+					product_id: Number(product.id),
+					quantity: 1,
+					properties: {
+						_source: "omafit_tryon",
+					},
+				},
+			],
+		},
+	}));
+}
+
+function pushWidgetContext(nube: NubeSDK, bootstrap: StorefrontBootstrap, widgetUrl: string) {
+	if (!activeIframe) return;
+	const product = getCurrentProduct(nube);
+	if (!product) return;
+	const state = nube.getState();
+	const productHandle = getProductHandle(nube, product);
+	const collectionHandle = resolveCollectionHandleFromNube(
+		nube,
+		bootstrap.footwearCollectionHandles,
+		productHandle,
 	);
-	widgetUrl.searchParams.set("platform", "nuvemshop");
-	widgetUrl.searchParams.set("store_id", String(state.store.id));
-	widgetUrl.searchParams.set("store_domain", state.store.domain);
-	widgetUrl.searchParams.set("product_id", String(product.id));
-	widgetUrl.searchParams.set("product_name", product.name?.[state.store.language] || product.name?.pt || "");
-	widgetUrl.searchParams.set("product_handle", product.handle?.[state.store.language] || product.handle?.pt || "");
-	const resolvedPageUrl = resolveStorefrontPageUrl(nube);
-	if (collectionHandle) {
-		widgetUrl.searchParams.set("collection_handle", collectionHandle);
-	}
-	widgetUrl.searchParams.set("currency", state.store.currency);
-	if (selectedVariant?.id) {
-		widgetUrl.searchParams.set("variant_id", String(selectedVariant.id));
-	}
-	if (imageUrls[0]) {
-		widgetUrl.searchParams.set("product_image", imageUrls[0]);
-	}
-	if (imageUrls.length) {
-		widgetUrl.searchParams.set("product_images", JSON.stringify(imageUrls));
-	}
-	if (config.store_logo) {
-		widgetUrl.searchParams.set("store_logo", config.store_logo);
-	}
-	if (config.primary_color) {
-		widgetUrl.searchParams.set("primary_color", config.primary_color);
-	}
-	const storeFont = sanitizeFontFamilyForCss(getStorefrontFontFamily());
-	if (storeFont) {
-		widgetUrl.searchParams.set("store_font", storeFont);
-	}
-	return widgetUrl.toString();
+	const tryonLayout =
+		bootstrap.config.tryon_layout === "hero" || bootstrap.config.tryon_layout === "sidebar"
+			? bootstrap.config.tryon_layout
+			: "default";
+	const contextPayload = {
+		type: "omafit-context",
+		language: state.store.language || "pt",
+		locale: state.store.language || "pt",
+		storeLanguage: state.store.language || "pt",
+		shopDomain: `nuvemshop/${state.store.id}`,
+		publicId: bootstrap.publicId,
+		productHandle,
+		product_handle: productHandle,
+		collectionHandle,
+		collectionHandles: collectionHandle ? [collectionHandle] : [],
+		tryon_layout: tryonLayout,
+		tryonLayout,
+		billing_plan: bootstrap.billingPlan || null,
+		billingPlan: bootstrap.billingPlan || null,
+		stylist_mode_enabled: bootstrap.stylistModeEnabled,
+		stylistModeEnabled: bootstrap.stylistModeEnabled,
+		primaryColor: bootstrap.config.primary_color || "#810707",
+		widgetUrl,
+	};
+	nube.getBrowserAPIs().postMessageToIframe(activeIframe, contextPayload);
+	nube.getBrowserAPIs().postMessageToIframe(activeIframe, {
+		type: "omafit-config-update",
+		...contextPayload,
+	});
 }
 
-function shouldHideForProduct(product: ProductDetails | null, config: StorefrontConfig) {
-	if (!product || config.widget_enabled === false) return true;
-	const categoryIds = (product.categories || []).map((categoryId) => String(categoryId));
-	return categoryIds.some((categoryId) => config.excluded_collections.includes(categoryId));
-}
-
-function resolveWidgetBaseUrl(
-	baseUrl: string,
-	collectionHandle: string,
-	productHandle: string,
-	footwearHandles: string[],
-) {
-	try {
-		const resolved = new URL(
-			baseUrl,
-			typeof globalThis.location?.href === "string" ? globalThis.location.href : undefined,
-		);
-		resolved.pathname = shouldUseFootwearWidget(collectionHandle, productHandle, footwearHandles)
-			? "/widget-footwear.html"
-			: "/widget.html";
-		return resolved.toString();
-	} catch {
-		return baseUrl;
-	}
-}
-
-async function loadStorefrontConfig(storeId: number, storeDomain?: string) {
-	try {
-		debugLog("load_config_start", { storeId, storeDomain: storeDomain || null }, "H2");
-		const response = await fetch(
-			`/api/storefront/widget-config?store_id=${encodeURIComponent(String(storeId))}&store_domain=${encodeURIComponent(storeDomain || "")}`,
-		);
-		if (!response.ok) throw new Error("request failed");
-		const data = await response.json();
-		debugLog(
-			"load_config_success",
-			{
-				storeId,
-				hasConfig: Boolean(data?.config),
-				widgetEnabled: data?.config?.widget_enabled ?? true,
-				excludedCollections: Array.isArray(data?.config?.excluded_collections)
-					? data.config.excluded_collections
-					: [],
-				widgetUrl: String(data?.widgetUrl || "/widget.html"),
-				publicId: String(data?.publicId || ""),
-				sizeChartsCount: Number(data?.size_charts_count ?? 0) || 0,
-				footwearRowsCount: Number(data?.footwear_rows_count ?? 0) || 0,
-				footwearRowsMissingHandle: Boolean(data?.footwear_rows_missing_handle),
-			},
-			"H2",
-		);
-		const footwearHandles = Array.isArray(data?.footwear_collection_handles)
-			? (data.footwear_collection_handles as unknown[]).map((h) => String(h || "").trim()).filter(Boolean)
-			: [];
-		return {
-			config: (data?.config || {
-				link_text: "Ver meu tamanho ideal",
-				widget_enabled: true,
-				excluded_collections: [],
-				primary_color: "#810707",
-			}) as StorefrontConfig,
-			widgetUrl: String(data?.widgetUrl || "/widget.html"),
-			publicId: String(data?.publicId || ""),
-			footwearCollectionHandles: footwearHandles,
-		};
-	} catch (error) {
-		debugLog(
-			"load_config_error",
-			{
-				storeId,
-				error: error instanceof Error ? error.message : String(error),
-			},
-			"H2",
-		);
-		return {
-			config: {
-				link_text: "Ver meu tamanho ideal",
-				widget_enabled: true,
-				excluded_collections: [],
-				primary_color: "#810707",
-			} as StorefrontConfig,
-			widgetUrl: "/widget.html",
-			publicId: "",
-			footwearCollectionHandles: [] as string[],
-		};
-	}
-}
-
-function renderWidget(
+function renderStorefrontWidget(
 	nube: NubeSDK,
 	config: StorefrontConfig,
-	widgetBaseUrl: string,
-	publicId: string | undefined,
-	footwearCollectionHandles: string[],
+	bootstrap: StorefrontBootstrap,
 ) {
 	const product = getCurrentProduct(nube);
-	const state = nube.getState();
-	const page = state.location.page;
-	const productHandle =
-		product?.handle?.[state.store.language] || product?.handle?.pt || "";
-	const collectionHandle =
-		collectionHandleFromStorefrontUrl(resolveStorefrontPageUrl(nube)) ||
-		resolveCollectionHandleForStorefront(footwearCollectionHandles, productHandle);
-	const categoryIds = (product?.categories || []).map((categoryId) => String(categoryId));
-	debugLog(
-		"render_widget_start",
-		{
-			pageType: page.type,
-			hasProduct: Boolean(product),
-			productId: product?.id || null,
-			categoryIds,
-			widgetEnabled: config.widget_enabled,
-			excludedCollections: config.excluded_collections,
-			widgetBaseUrl,
-		},
-		"H3",
-	);
+	const ctaSlot = getStorefrontCtaSlot(config);
+	nube.clearSlot("before_product_detail_add_to_cart");
+	nube.clearSlot("after_product_detail_add_to_cart");
+	nube.clearSlot("modal_content");
+
 	if (shouldHideForProduct(product, config)) {
-		const reason = !product
-			? "Sem contexto de produto nesta página."
-			: config.widget_enabled === false
-				? "Widget desativado na configuração."
-				: "Produto pertence a uma categoria excluída.";
-		debugLog(
-			"render_widget_hidden",
-			{
-				productId: product?.id || null,
-				reason,
-				collectionHandle,
-				categoryIds,
-				excludedCollections: config.excluded_collections,
-			},
-			"H4",
-		);
-		renderDebugMessage(nube, `Diagnóstico Omafit: ${reason}`);
-		nube.clearSlot("after_product_detail_add_to_cart");
 		return;
 	}
 
-	if (shouldUseFootwearWidget(collectionHandle, productHandle, footwearCollectionHandles)) {
-		debugLog(
-			"render_widget_hidden_footwear",
-			{ productId: product?.id || null, collectionHandle },
-			"H4",
-		);
-		nube.clearSlot("after_product_detail_add_to_cart");
-		return;
-	}
-
+	const productHandle = product ? getProductHandle(nube, product) : "";
+	const collectionHandle = resolveCollectionHandleFromNube(
+		nube,
+		bootstrap.footwearCollectionHandles,
+		productHandle,
+	);
 	const resolvedBaseUrl = resolveWidgetBaseUrl(
-		widgetBaseUrl,
+		bootstrap.widgetUrl,
 		collectionHandle,
 		productHandle,
-		footwearCollectionHandles,
+		bootstrap.footwearCollectionHandles,
 	);
-	const widgetUrl = new URL(buildWidgetUrl(resolvedBaseUrl, nube, config, collectionHandle));
-	if (publicId) {
-		widgetUrl.searchParams.set("public_id", publicId);
-	}
-	debugLog(
-		"render_widget_visible",
-		{
-			productId: product?.id || null,
-			widgetUrl: widgetUrl.toString(),
-		},
-		"H5",
-	);
-	nube.render(
-		"after_product_detail_name",
-		<Text>
-			Omafit ativo para este produto.
-		</Text>,
+	const widgetUrl = buildWidgetUrl(
+		resolvedBaseUrl,
+		nube,
+		config,
+		collectionHandle,
+		bootstrap.publicId,
+		bootstrap.billingPlan,
+		bootstrap.stylistModeEnabled,
 	);
 
 	nube.render(
-		"after_product_detail_add_to_cart",
+		ctaSlot,
 		<Button
 			variant="link"
 			onClick={() => {
+				activeIframe = (
+					<Iframe
+						src={widgetUrl as `https://${string}`}
+						height="640px"
+						onMessage={(event) => handleIframeMessage(nube, event)}
+					/>
+				);
 				nube.render(
 					"modal_content",
 					<Column padding="16px" gap="16px">
-						<Text>
-							Descubra o tamanho ideal com base no contexto real deste produto.
-						</Text>
-						<Iframe src={widgetUrl.toString() as `https://${string}`} height="640px" />
+						<Text>Descubra o tamanho ideal com base no contexto real deste produto.</Text>
+						{activeIframe}
 						<Button
 							variant="secondary"
 							onClick={() => {
+								activeIframe = null;
 								nube.clearSlot("modal_content");
 							}}
 						>
@@ -318,47 +177,44 @@ function renderWidget(
 						</Button>
 					</Column>,
 				);
+				pushWidgetContext(nube, bootstrap, widgetUrl);
 			}}
 		>
 			{config.link_text || "Ver meu tamanho ideal"}
 		</Button>,
-	);
-	debugLog(
-		"render_widget_complete",
-		{
-			productId: product?.id || null,
-			slot: "after_product_detail_add_to_cart",
-		},
-		"H5",
 	);
 }
 
 export function App(nube: NubeSDK) {
 	const boot = async () => {
 		const state = nube.getState();
-		debugLog(
-			"app_boot",
-			{
-				storeId: state.store.id,
-				storeDomain: state.store.domain,
-				pageType: state.location.page.type,
-			},
-			"H1",
-		);
-		if (state.location.page.type === "product") {
-			nube.render(
-				"after_product_detail_name",
-				<Text>
-					Omafit carregado na página do produto.
-				</Text>,
-			);
+		if (state.location.page.type !== "product") {
+			nube.clearSlot("before_product_detail_add_to_cart");
+			nube.clearSlot("after_product_detail_add_to_cart");
+			nube.clearSlot("modal_content");
+			return;
 		}
-		const { config, widgetUrl, publicId, footwearCollectionHandles } = await loadStorefrontConfig(
-			state.store.id,
-			state.store.domain,
-		);
-		renderWidget(nube, config, widgetUrl, publicId, footwearCollectionHandles);
+
+		const bootstrap = await loadStorefrontBootstrap(state.store.id, state.store.domain);
+		renderStorefrontWidget(nube, bootstrap.config, bootstrap);
 	};
+
+	nube.on("cart:add:success", () => {
+		if (!pendingCartReply) return;
+		const reply = pendingCartReply;
+		pendingCartReply = null;
+		reply(
+			true,
+			"Produto adicionado ao carrinho com o tamanho recomendado pelo Omafit.",
+		);
+	});
+
+	nube.on("cart:add:fail", () => {
+		if (!pendingCartReply) return;
+		const reply = pendingCartReply;
+		pendingCartReply = null;
+		reply(false, "Nao foi possivel adicionar o produto ao carrinho.");
+	});
 
 	void boot();
 	nube.on("page:loaded", () => {

@@ -1,20 +1,35 @@
 # Modos da Storefront Omafit
 
-O storefront da Omafit na Nuvemshop agora funciona em dois modos:
+O storefront na Nuvemshop usa **apenas NubeSDK** (`src/main.tsx`), conforme exigido para homologacao a partir de junho/2026.
 
-- `Morelia` e outros temas legados:
-  usa o bundle `src/storefront-legacy.ts`, que injeta o botão abaixo da compra, abre `widget.html` em modal e conversa com a página via `postMessage` para tentar adicionar o item ao carrinho com o tamanho recomendado.
+## Arquitetura
 
-- `Patagonia`:
-  mantém o caminho `src/main.tsx` com `NubeSDK`, mas agora aponta para o mesmo `widget.html`, preservando a experiência do widget exclusivo da Nuvemshop sem depender do widget Shopify.
+- `src/main.tsx`
+  - App NubeSDK: renderiza o CTA na PDP, abre o widget em modal (`Iframe`) e integra com o carrinho via `cart:add`.
+- `src/shared/nuvemshopStorefront.ts`
+  - Configuracao publica da loja, montagem da URL do widget e roteamento roupa vs calçados.
+- `src/widget.tsx` + `src/widget-app/`
+  - Experiencia do provador virtual dentro do iframe.
+- `server.js`
+  - Serve `widget.html` / `widget-footwear.html` e faz proxy dos endpoints de try-on.
 
-O novo widget React fica em `src/widget.tsx` e `src/widget-app/`.
+## Roteamento roupa vs calçados
 
-- `src/widget-app/WidgetPage.tsx`:
-  controla as etapas do fluxo, carrega a configuração pública da loja, usa as tabelas salvas no painel e faz o polling do try-on.
+O SDK escolhe automaticamente:
 
-- `src/widget-app/sizeCalculation.ts`:
-  reaproveita a lógica de recomendação de tamanho para transformar as tabelas do painel em uma sugestão prática para o cliente.
+- `/widget.html` — vestuario e acessorios
+- `/widget-footwear.html` — quando o handle da coleção ou do produto bate com tabelas `footwear` do admin
 
-- `server.js`:
-  expõe `widget.html` e faz o proxy dos endpoints `tryon`, `tryon-status` e `validate-size`, para o widget não depender de chaves públicas no navegador.
+A deteccao usa a URL da pagina (`/collections/{slug}/...`) e o handle do produto exposto pelo NubeSDK — sem scripts legados no DOM.
+
+## Deploy na Nuvemshop
+
+No Partner Portal, o script da loja deve apontar para:
+
+`https://SEU_DOMINIO/main.min.js`
+
+Ative a flag **Uses NubeSDK** no painel do app.
+
+## Carrinho
+
+Quando o cliente confirma o tamanho no widget, o iframe envia `omafit-add-to-cart-request` e o app responde com `nube.send("cart:add")`, sem manipular formularios da tema.

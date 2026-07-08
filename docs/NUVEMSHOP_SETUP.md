@@ -42,6 +42,8 @@
 
 ## URLs sugeridas no Partner Portal
 
+- Script da loja (storefront NubeSDK):
+  - `https://seu-dominio.com/main.min.js`
 - Redirect URL:
   - `https://seu-dominio.com/auth/callback`
 - App URL:
@@ -56,6 +58,8 @@
   - `https://seu-dominio.com/api/webhooks/nuvemshop`
 - Customer data request webhook:
   - `https://seu-dominio.com/api/webhooks/nuvemshop`
+
+Ative a flag **Uses NubeSDK** no Partner Portal. O storefront nao usa mais scripts legados no DOM.
 
 ## Billing no Partner Portal
 

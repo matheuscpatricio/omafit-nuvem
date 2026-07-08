@@ -2,6 +2,8 @@
  * Lê a fonte efetiva da vitrine (página do produto / tema) para replicar no iframe do widget.
  */
 export function getStorefrontFontFamily(): string {
+	if (typeof document === "undefined") return "";
+
 	const readFrom = (el: Element | null | undefined): string => {
 		if (!el || !(el instanceof HTMLElement)) return "";
 		try {
@@ -27,7 +29,7 @@ export function getStorefrontFontFamily(): string {
 	}
 
 	try {
-		const parentBody = window.parent?.document?.body;
+		const parentBody = typeof window !== "undefined" ? window.parent?.document?.body : undefined;
 		const font = readFrom(parentBody);
 		if (font) return font;
 	} catch {
@@ -35,7 +37,7 @@ export function getStorefrontFontFamily(): string {
 	}
 
 	try {
-		const topBody = window.top?.document?.body;
+		const topBody = typeof window !== "undefined" ? window.top?.document?.body : undefined;
 		if (topBody && topBody !== document.body) {
 			const font = readFrom(topBody);
 			if (font) return font;
