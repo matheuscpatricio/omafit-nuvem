@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { cardStyle, subtleTextStyle } from "./adminUi";
 
+const META_WHATSAPP_MANAGER_URL = "https://business.facebook.com/wa/manage/home/";
+
 type Props = {
 	withStoreQuery: (path: string) => string;
 	collections: Array<{ handle: string; title: string }>;
@@ -140,6 +142,15 @@ export function TryOnMarketingSection({
 						? `Conectado: ${connection.display_phone || "WABA ativo"}`
 						: "Conecte seu número WhatsApp Business (WABA)."}
 				</span>
+				<a
+					href={META_WHATSAPP_MANAGER_URL}
+					target="_blank"
+					rel="noopener noreferrer"
+					className="omafit-admin-btn omafit-admin-btn--secondary"
+					style={{ textAlign: "center", textDecoration: "none" }}
+				>
+					Abrir Meta Business Manager (WhatsApp)
+				</a>
 				<label>
 					Phone Number ID
 					<input className="omafit-admin-input" value={phoneNumberId} onChange={(e) => setPhoneNumberId(e.target.value)} />
