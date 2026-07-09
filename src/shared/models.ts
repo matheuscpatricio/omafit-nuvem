@@ -63,6 +63,7 @@ export type OmafitAdminContext = {
 		usage: OmafitUsageSummary;
 		plans: OmafitPlanDefinition[];
 		stripe?: OmafitStripeBillingSummary;
+		whatsapp_marketing_enabled?: boolean;
 	};
 };
 

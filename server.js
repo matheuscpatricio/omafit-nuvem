@@ -35,6 +35,12 @@ import {
 } from "./lib/self-billing-usage.js";
 import { applySelfBillingPlan } from "./lib/self-billing-plan.js";
 import { getCanonicalShopKey } from "./lib/nuvemshop-shop-keys.js";
+import { forwardWhatsappAdminRequest } from "./lib/whatsapp-proxy.js";
+import {
+	isStoreWhatsappPilotAllowed,
+	isWhatsappPilotRestrictionActive,
+	whatsappMarketingAccessDeniedHint,
+} from "./lib/whatsapp-pilot-access.js";
 import {
 	isStripeConfigured,
 	planRequiresStripeCheckout,
@@ -412,6 +418,26 @@ function getSupportEmail() {
 
 function getAppName() {
 	return process.env.OMAFIT_APP_NAME || "Omafit";
+}
+
+function isStorefrontSdkWhitelisted(storeId) {
+	const raw = String(process.env.OMAFIT_STOREFRONT_SDK_STORE_IDS || "").trim();
+	if (!raw) return false;
+	const normalizedStoreId = String(storeId || "").trim();
+	if (!normalizedStoreId) return false;
+	return raw
+		.split(",")
+		.map((entry) => entry.trim())
+		.filter(Boolean)
+		.includes(normalizedStoreId);
+}
+
+function resolveStorefrontSdkEnabled(theme, storeId) {
+	const normalizedTheme = String(theme || "").trim().toLowerCase();
+	if (normalizedTheme) {
+		return normalizedTheme === "patagonia";
+	}
+	return isStorefrontSdkWhitelisted(storeId);
 }
 
 function getNuvemshopAppId() {
@@ -3483,6 +3509,15 @@ async function getAnalyticsSummary(storeId, storeUrl = "", days = 30) {
 	};
 }
 
+function resolveWhatsappMarketingEnabled(storeRecord, storeId) {
+	const plan = String(storeRecord?.plan || "ondemand").toLowerCase();
+	const storeKey = storeId ? getCanonicalShopKey(storeId) : null;
+	if (isWhatsappPilotRestrictionActive()) {
+		return isStoreWhatsappPilotAllowed(storeKey);
+	}
+	return hasStylistConsultantAccess(plan);
+}
+
 function buildAdminContext(storeContext, session, storeRecord) {
 	const billing = storeRecord ? toUsageSummary(storeRecord) : toUsageSummary({ plan: "ondemand" });
 	return {
@@ -3513,6 +3548,10 @@ function buildAdminContext(storeContext, session, storeRecord) {
 			usage: billing,
 			plans: getPlanCatalog(),
 			stripe: buildStripeBillingSummary(storeRecord),
+			whatsapp_marketing_enabled: resolveWhatsappMarketingEnabled(
+				storeRecord,
+				storeContext.storeId || session?.storeId || storeRecord?.store_id || null,
+			),
 		},
 	};
 }
@@ -3798,6 +3837,43 @@ async function handleApi(req, res, reqUrl) {
 		return true;
 	}
 
+	if (pathname.startsWith("/api/whatsapp/")) {
+		if (!session || !storeContext.storeId) {
+			sendJson(res, 401, { error: "unauthorized" });
+			return true;
+		}
+		const shopRecord = await loadLegacyShopRecord(storeContext.storeId, storeContext.storeUrl);
+		const storeKey = getCanonicalShopKey(storeContext.storeId);
+		const allowed = isWhatsappPilotRestrictionActive()
+			? isStoreWhatsappPilotAllowed(storeKey)
+			: hasStylistConsultantAccess(normalizePlanId(shopRecord?.plan || "ondemand"));
+		if (!allowed) {
+			sendJson(res, 403, {
+				error: "plan_required",
+				hint: whatsappMarketingAccessDeniedHint(),
+			});
+			return true;
+		}
+		try {
+			const subPath = pathname.replace(/^\/api\/whatsapp\/?/, "") || "connection";
+			let bodyText = null;
+			if (method !== "GET" && method !== "HEAD") {
+				const payload = await readJsonBody(req);
+				bodyText = payload != null ? JSON.stringify(payload) : "";
+			}
+			const { status, json } = await forwardWhatsappAdminRequest({
+				storeKey: getCanonicalShopKey(storeContext.storeId),
+				method,
+				pathname: `/${subPath}`,
+				body: bodyText,
+			});
+			sendJson(res, status, json);
+		} catch (error) {
+			sendJson(res, 500, { error: error.message || "whatsapp_proxy_failed" });
+		}
+		return true;
+	}
+
 	if (pathname === "/api/widget-config") {
 		if (!storeContext.storeId) {
 			sendJson(res, 400, { error: "store_id is required" });
@@ -3967,11 +4043,17 @@ async function handleApi(req, res, reqUrl) {
 	}
 
 	if (pathname === "/api/storefront/widget-config") {
+		const theme = reqUrl.searchParams.get("theme");
+		const storefront_sdk_enabled = resolveStorefrontSdkEnabled(
+			theme,
+			storeContext.storeId,
+		);
 		if (!storeContext.storeId) {
 			sendJson(res, 200, {
 				config: null,
 				widgetUrl: getWidgetBaseUrl(req),
 				publicId: "",
+				storefront_sdk_enabled: false,
 				footwear_collection_handles: [],
 				size_charts_count: 0,
 				footwear_rows_count: 0,
@@ -4009,6 +4091,7 @@ async function handleApi(req, res, reqUrl) {
 			},
 			widgetUrl: getWidgetBaseUrl(req),
 			publicId,
+			storefront_sdk_enabled,
 			billing_plan: billingPlan,
 			stylist_mode_enabled: hasStylistConsultantAccess(billingPlan),
 			hero_layout_enabled: hasGrowthPlusPlan(billingPlan),

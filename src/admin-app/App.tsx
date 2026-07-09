@@ -8,11 +8,10 @@ import { useCallback, useEffect, useMemo, useState, type CSSProperties, type Rea
 import { I18nProvider, useI18n } from "./i18n";
 import { OmafitBrandBanner } from "./OmafitBrandBanner";
 import { SizeChartsSection } from "./SizeChartsSection";
+import { TryOnMarketingSection } from "./TryOnMarketingSection";
 import { WidgetSection } from "./WidgetSection";
-import {
-	cardStyle,
-	subtleTextStyle,
-} from "./adminUi";
+import { hasWhatsappMarketingAccess } from "./planAccess";
+import { cardStyle, subtleTextStyle } from "./adminUi";
 import "./omafit-brand.css";
 import type {
 	OmafitAdminContext,
@@ -21,7 +20,7 @@ import type {
 	OmafitWidgetConfig,
 } from "../shared/models";
 
-type SectionId = "dashboard" | "billing" | "widget" | "size-charts" | "analytics";
+type SectionId = "dashboard" | "billing" | "widget" | "size-charts" | "analytics" | "try-on-marketing";
 
 type BillingDebugSnapshot = {
 	effectiveConceptCode?: string;
@@ -88,6 +87,7 @@ function getInitialSection(): SectionId {
 	if (section === "widget") return "widget";
 	if (section === "size-charts") return "size-charts";
 	if (section === "analytics") return "analytics";
+	if (section === "try-on-marketing") return "try-on-marketing";
 	return "dashboard";
 }
 
@@ -189,7 +189,13 @@ function AppContent({ nexo, store }: AdminAppProps) {
 			syncPathname(nexo, `/${nextSection}`);
 			navigateHeader(nexo, {
 				text: `Omafit · ${t(
-					`nav.${nextSection === "size-charts" ? "sizeCharts" : nextSection}`,
+					`nav.${
+						nextSection === "size-charts"
+							? "sizeCharts"
+							: nextSection === "try-on-marketing"
+								? "tryOnMarketing"
+								: nextSection
+					}`,
 				)}`,
 			});
 		},
@@ -276,7 +282,8 @@ function AppContent({ nexo, store }: AdminAppProps) {
 	useEffect(() => {
 		const unsubscribe = nexo.suscribe(ACTION_NAVIGATE_SYNC, (payload: { path?: string }) => {
 			const path = String(payload?.path || "");
-			if (path.includes("analytics")) setSection("analytics");
+			if (path.includes("try-on-marketing") || path.includes("marketing")) setSection("try-on-marketing");
+			else if (path.includes("analytics")) setSection("analytics");
 			else if (path.includes("size")) setSection("size-charts");
 			else if (path.includes("widget")) setSection("widget");
 			else if (path.includes("billing")) setSection("billing");
@@ -470,6 +477,12 @@ function AppContent({ nexo, store }: AdminAppProps) {
 		);
 	}
 
+	const whatsappMarketingEnabled = hasWhatsappMarketingAccess(
+		context?.billing.plan,
+		context?.billing.status,
+		context?.store.id ? `nuvemshop/${context.store.id}` : null,
+	);
+
 	return (
 		<div className="omafit-brand-shell omafit-admin">
 			<div className="omafit-brand-shell__content omafit-admin__shell">
@@ -483,6 +496,9 @@ function AppContent({ nexo, store }: AdminAppProps) {
 							["widget", t("nav.widget")],
 							["size-charts", t("nav.sizeCharts")],
 							["analytics", t("nav.analytics")],
+							...(whatsappMarketingEnabled
+								? ([["try-on-marketing", t("nav.tryOnMarketing")]] as Array<[SectionId, string]>)
+								: []),
 						] as Array<[SectionId, string]>
 					).map(([id, label]) => (
 						<button
@@ -571,6 +587,22 @@ function AppContent({ nexo, store }: AdminAppProps) {
 						onReload={loadAnalytics}
 						busy={busyAction === "analytics"}
 						data={analytics}
+					/>
+				) : null}
+
+				{section === "try-on-marketing" ? (
+					<TryOnMarketingSection
+						collections={collections}
+						withStoreQuery={withStoreQuery}
+						planLocked={!whatsappMarketingEnabled}
+						onUpgrade={() => setSection("billing")}
+						onNotice={(message) => {
+							setNotice(message);
+							setError(null);
+						}}
+						onError={(message) => {
+							setError(message);
+						}}
 					/>
 				) : null}
 			</div>
