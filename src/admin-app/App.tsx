@@ -4,13 +4,12 @@ import {
 	syncPathname,
 	type NexoClient,
 } from "../lib/nexo";
-import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode, Component } from "react";
 import { I18nProvider, useI18n } from "./i18n";
 import { OmafitBrandBanner } from "./OmafitBrandBanner";
 import { SizeChartsSection } from "./SizeChartsSection";
 import { TryOnMarketingSection } from "./TryOnMarketingSection";
 import { WidgetSection } from "./WidgetSection";
-import { hasWhatsappMarketingAccess } from "./planAccess";
 import { cardStyle, subtleTextStyle } from "./adminUi";
 import "./omafit-brand.css";
 import type {
@@ -477,11 +476,7 @@ function AppContent({ nexo, store }: AdminAppProps) {
 		);
 	}
 
-	const whatsappMarketingEnabled = hasWhatsappMarketingAccess(
-		context?.billing.plan,
-		context?.billing.status,
-		context?.store.id ? `nuvemshop/${context.store.id}` : null,
-	);
+	const whatsappMarketingEnabled = context?.billing.whatsapp_marketing_enabled === true;
 
 	return (
 		<div className="omafit-brand-shell omafit-admin">
@@ -1409,8 +1404,56 @@ function StatusPill({
 
 export function OmafitAdminApp(props: AdminAppProps) {
 	return (
-		<I18nProvider locale={props.store.language}>
-			<AppContent {...props} />
-		</I18nProvider>
+		<AdminErrorBoundary>
+			<I18nProvider locale={props.store.language}>
+				<AppContent {...props} />
+			</I18nProvider>
+		</AdminErrorBoundary>
 	);
+}
+
+class AdminErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+	state = { error: null as Error | null };
+
+	static getDerivedStateFromError(error: Error) {
+		return { error };
+	}
+
+	componentDidCatch(error: Error) {
+		console.error("[Omafit Admin] Render error:", error);
+	}
+
+	render() {
+		if (this.state.error) {
+			return (
+				<div style={{ minHeight: "100vh", padding: 32, fontFamily: "Inter, system-ui, sans-serif" }}>
+					<div
+						style={{
+							maxWidth: 720,
+							margin: "0 auto",
+							background: "#fff",
+							border: "1px solid #e5e7eb",
+							borderRadius: 18,
+							padding: 24,
+						}}
+					>
+						<h1 style={{ marginTop: 0 }}>Omafit</h1>
+						<p>Nao foi possivel renderizar o painel.</p>
+						<pre
+							style={{
+								whiteSpace: "pre-wrap",
+								wordBreak: "break-word",
+								background: "#f8fafc",
+								padding: 12,
+								borderRadius: 12,
+							}}
+						>
+							{this.state.error.message}
+						</pre>
+					</div>
+				</div>
+			);
+		}
+		return this.props.children;
+	}
 }

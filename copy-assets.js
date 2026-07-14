@@ -75,6 +75,18 @@ const appHtml = `<!DOCTYPE html>
       clientId: new URLSearchParams(window.location.search).get("client_id") || new URLSearchParams(window.location.search).get("clientId") || null,
     }, "H1");
 
+    const showAdminFailure = (title, detail) => {
+      const root = document.getElementById("app");
+      if (!root) return;
+      root.innerHTML = [
+        "<div style=\\"max-width:720px;margin:32px auto;padding:24px;border:1px solid #e5e7eb;border-radius:18px;background:#fff;font-family:Inter,Arial,sans-serif;\\">",
+        "<h1 style=\\"margin:0 0 12px;\\">Omafit</h1>",
+        "<p style=\\"margin:0;\\">" + title + "</p>",
+        detail ? "<pre style=\\"margin-top:12px;white-space:pre-wrap;word-break:break-word;background:#f8fafc;padding:12px;border-radius:12px;\\">" + detail + "</pre>" : "",
+        "</div>",
+      ].join("");
+    };
+
     window.addEventListener("error", (event) => {
       omafitDebugLog("window_error", {
         message: event.message,
@@ -82,12 +94,15 @@ const appHtml = `<!DOCTYPE html>
         lineno: event.lineno,
         colno: event.colno,
       }, "H3");
+      showAdminFailure("Erro ao executar o painel.", event.message || "Erro desconhecido.");
     });
 
     window.addEventListener("unhandledrejection", (event) => {
+      const reason = event.reason instanceof Error ? event.reason.message : String(event.reason);
       omafitDebugLog("unhandled_rejection", {
-        reason: String(event.reason),
+        reason,
       }, "H3");
+      showAdminFailure("Erro ao executar o painel.", reason);
     });
 
     import(homeModuleUrl)
@@ -103,16 +118,7 @@ const appHtml = `<!DOCTYPE html>
           message,
           stack: error instanceof Error ? error.stack : null,
         }, "H2");
-        const root = document.getElementById("app");
-        if (root) {
-          root.innerHTML = [
-            "<div style=\\"max-width:720px;margin:32px auto;padding:24px;border:1px solid #e5e7eb;border-radius:18px;background:#fff;font-family:Inter,Arial,sans-serif;\\">",
-            "<h1 style=\\"margin:0 0 12px;\\">Omafit</h1>",
-            "<p style=\\"margin:0;\\">Nao foi possivel carregar o painel do app.</p>",
-            "<pre style=\\"margin-top:12px;white-space:pre-wrap;word-break:break-word;background:#f8fafc;padding:12px;border-radius:12px;\\">" + message + "</pre>",
-            "</div>",
-          ].join("");
-        }
+        showAdminFailure("Nao foi possivel carregar o painel do app.", message);
       });
   </script>
 </body>
