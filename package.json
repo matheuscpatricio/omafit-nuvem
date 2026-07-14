@@ -10,6 +10,7 @@
 		"dev:public": "concurrently -k -n BUILD,SERVE,EXPOSE -c blue,green,yellow \"node ./node_modules/tsup/dist/cli-default.js --sourcemap inline --watch\" \"node server.js\" \"node expose.js\"",
 		"postbuild": "node copy-assets.js",
 		"build": "node ./node_modules/tsup/dist/cli-default.js && node copy-assets.js",
+		"stripe:catalog": "node scripts/create-stripe-catalog.mjs",
 		"test": "vitest run",
 		"test:watch": "vitest watch",
 		"test:coverage": "vitest run --coverage",

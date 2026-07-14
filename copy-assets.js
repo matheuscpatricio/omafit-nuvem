@@ -97,11 +97,22 @@ const appHtml = `<!DOCTYPE html>
         }, "H1");
       })
       .catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
         omafitDebugLog("home_module_import_failure", {
           homeModuleUrl,
-          message: error instanceof Error ? error.message : String(error),
+          message,
           stack: error instanceof Error ? error.stack : null,
         }, "H2");
+        const root = document.getElementById("app");
+        if (root) {
+          root.innerHTML = [
+            "<div style=\\"max-width:720px;margin:32px auto;padding:24px;border:1px solid #e5e7eb;border-radius:18px;background:#fff;font-family:Inter,Arial,sans-serif;\\">",
+            "<h1 style=\\"margin:0 0 12px;\\">Omafit</h1>",
+            "<p style=\\"margin:0;\\">Nao foi possivel carregar o painel do app.</p>",
+            "<pre style=\\"margin-top:12px;white-space:pre-wrap;word-break:break-word;background:#f8fafc;padding:12px;border-radius:12px;\\">" + message + "</pre>",
+            "</div>",
+          ].join("");
+        }
       });
   </script>
 </body>

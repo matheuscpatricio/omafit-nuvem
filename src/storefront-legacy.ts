@@ -50,6 +50,9 @@ declare global {
 				url?: string;
 				custom_url?: string;
 			};
+			theme?: {
+				name?: string;
+			};
 		};
 		OMAFIT_COLLECTION_HANDLE?: string;
 	}
@@ -131,7 +134,9 @@ function getProductContext(): LegacyProductContext | null {
 
 async function loadConfig(appBaseUrl: string, storeId: string) {
 	const store = getStoreContext();
-	const endpoint = `${appBaseUrl}/api/storefront/widget-config?store_id=${encodeURIComponent(storeId)}&store_domain=${encodeURIComponent(store?.domain || "")}`;
+	const themeName = String(window.LS?.theme?.name || "").trim();
+	const themeQuery = themeName ? `&theme=${encodeURIComponent(themeName)}` : "";
+	const endpoint = `${appBaseUrl}/api/storefront/widget-config?store_id=${encodeURIComponent(storeId)}&store_domain=${encodeURIComponent(store?.domain || "")}${themeQuery}`;
 	try {
 		debugLog("load_config_start", { endpoint, storeId }, "L1");
 		const response = await fetch(endpoint, { mode: "cors" });

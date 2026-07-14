@@ -1,13 +1,19 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi, afterEach } from "vitest";
 import {
+	buildStorefrontConfigEndpoint,
 	collectionHandleFromUrl,
 	findVariantByRecommendedSize,
 	getStorefrontCtaSlot,
+	loadStorefrontBootstrap,
 	resolveWidgetBaseUrl,
 	shouldHideForProduct,
 } from "./nuvemshopStorefront";
 
 describe("nuvemshopStorefront", () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
 	it("extracts collection handle from storefront URL", () => {
 		expect(
 			collectionHandleFromUrl("https://loja.com/collections/tenis-classico/products/tenis"),
@@ -52,5 +58,45 @@ describe("nuvemshopStorefront", () => {
 			"M",
 		);
 		expect(variant?.id).toBe(11);
+	});
+
+	it("includes theme in storefront config endpoint when provided", () => {
+		const endpoint = buildStorefrontConfigEndpoint(123, "loja.nuvemshop.com.br", "Morelia");
+		expect(endpoint).toContain("store_id=123");
+		expect(endpoint).toContain("theme=Morelia");
+	});
+
+	it("maps storefront_sdk_enabled from widget-config response", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn().mockResolvedValue({
+				ok: true,
+				json: async () => ({
+					config: { widget_enabled: true, excluded_collections: [] },
+					widgetUrl: "/widget.html",
+					storefront_sdk_enabled: false,
+				}),
+			}),
+		);
+
+		const bootstrap = await loadStorefrontBootstrap(6994912, "loja.nuvemshop.com.br");
+		expect(bootstrap.ready).toBe(true);
+		expect(bootstrap.storefront_sdk_enabled).toBe(false);
+	});
+
+	it("defaults storefront_sdk_enabled to false when missing", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn().mockResolvedValue({
+				ok: true,
+				json: async () => ({
+					config: { widget_enabled: true, excluded_collections: [] },
+					widgetUrl: "/widget.html",
+				}),
+			}),
+		);
+
+		const bootstrap = await loadStorefrontBootstrap(123, "loja.nuvemshop.com.br");
+		expect(bootstrap.storefront_sdk_enabled).toBe(false);
 	});
 });

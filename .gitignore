@@ -3,6 +3,7 @@ dist/
 .omafit-data/
 .env
 .env.local
+.stripe-catalog.env
 .vite/
 coverage/
 

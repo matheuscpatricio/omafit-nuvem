@@ -224,10 +224,10 @@ async function bootstrap() {
 
 	renderBootState("nexo:connect", "Aguardando handshake com o admin da Nuvemshop...");
 	debugLog("before_connect", { clientIdLength: clientId.length }, "H4");
-	await withTimeout(connect(instance), 4000, "connect");
+	await withTimeout(connect(instance), 8000, "connect");
 	debugLog("after_connect", { clientIdLength: clientId.length }, "H4");
 	renderBootState("store:info", "Conexao estabelecida. Buscando dados da loja...");
-	const storeInfo = await withTimeout(getStoreInfo(instance), 4000, "getStoreInfo");
+	const storeInfo = await withTimeout(getStoreInfo(instance), 8000, "getStoreInfo");
 	debugLog(
 		"store_info_loaded",
 		{

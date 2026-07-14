@@ -12,17 +12,27 @@ Apenas lojas Nuvemshop (`shop_domain = nuvemshop/{storeId}`, `platform = nuvemsh
 
 ## 2. Produtos e preços no Stripe
 
-No [Dashboard Stripe](https://dashboard.stripe.com/products), crie **um produto por plano** com preço recorrente mensal em **BRL**:
+Os valores seguem a **landing omafit-widget** (`Pricing.tsx`), em **USD**:
 
-| Plano   | Variável de ambiente           | Sugestão |
-|---------|--------------------------------|----------|
-| Growth  | `STRIPE_PRICE_GROWTH_BRL`      | R$ 89/mês |
-| Pro     | `STRIPE_PRICE_PRO_BRL`         | R$ 300/mês |
-| On demand | `STRIPE_PRICE_ONDEMAND_BRL` | Grátis (opcional) |
+| Plano | Mensalidade | Try-ons incluídos | Extra / sessão | Variável Railway |
+|-------|-------------|-------------------|----------------|------------------|
+| On-Demand | US$ 0 | 50 grátis | US$ 0,18 | `STRIPE_PRICE_ONDEMAND` |
+| Growth | US$ 89 | 700/mês | US$ 0,12 | `STRIPE_PRICE_GROWTH` |
+| Pro | US$ 300 | 3.000/mês | US$ 0,08 | `STRIPE_PRICE_PRO` |
+| Enterprise | US$ 600 | Ilimitado | — | `STRIPE_PRICE_ENTERPRISE` |
 
-Copie o **Price ID** (`price_...`) de cada preço.
+### Criar automaticamente no Stripe
 
-> **Enterprise** não usa checkout automático — ative manualmente no admin.
+Com sua chave de teste ou live:
+
+```bash
+STRIPE_SECRET_KEY=sk_test_... npm run stripe:catalog
+```
+
+O script cria produtos com `metadata.omafit_plan` e preços mensais recorrentes em USD.  
+Gera o arquivo `.stripe-catalog.env` com os Price IDs para colar no Railway.
+
+> Excedente de try-on é cobrado via **invoice item em BRL** (conversão `USD_TO_BRL_RATE`), após assinatura ativa com cartão salvo.
 
 ## 3. Variáveis de ambiente
 
@@ -32,11 +42,10 @@ Adicione no Railway / Netlify (nunca no frontend):
 STRIPE_SECRET_KEY=sk_test_...
 STRIPE_WEBHOOK_SECRET=whsec_...
 
-STRIPE_PRICE_GROWTH_BRL=price_...
-STRIPE_PRICE_PRO_BRL=price_...
-# Opcional — ondemand é grátis e ativa direto no Supabase
-STRIPE_PRICE_ONDEMAND_BRL=
-STRIPE_PRICE_ENTERPRISE_BRL=
+STRIPE_PRICE_GROWTH=price_...
+STRIPE_PRICE_PRO=price_...
+STRIPE_PRICE_ONDEMAND=price_...
+STRIPE_PRICE_ENTERPRISE=price_...
 ```
 
 Chaves públicas **não** são necessárias no cliente — o checkout é hospedado pelo Stripe.

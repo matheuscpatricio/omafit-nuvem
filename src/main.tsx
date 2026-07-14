@@ -112,6 +112,12 @@ function pushWidgetContext(nube: NubeSDK, bootstrap: StorefrontBootstrap, widget
 	});
 }
 
+function clearProductSlots(nube: NubeSDK) {
+	nube.clearSlot("before_product_detail_add_to_cart");
+	nube.clearSlot("after_product_detail_add_to_cart");
+	nube.clearSlot("modal_content");
+}
+
 function renderStorefrontWidget(
 	nube: NubeSDK,
 	config: StorefrontConfig,
@@ -119,9 +125,7 @@ function renderStorefrontWidget(
 ) {
 	const product = getCurrentProduct(nube);
 	const ctaSlot = getStorefrontCtaSlot(config);
-	nube.clearSlot("before_product_detail_add_to_cart");
-	nube.clearSlot("after_product_detail_add_to_cart");
-	nube.clearSlot("modal_content");
+	clearProductSlots(nube);
 
 	if (config.widget_enabled === false) return;
 	if (!product) return;
@@ -187,19 +191,22 @@ function renderStorefrontWidget(
 
 export function App(nube: NubeSDK) {
 	let bootToken = 0;
+	clearProductSlots(nube);
 
 	const boot = async () => {
 		const token = ++bootToken;
 		const state = nube.getState();
 		if (state.location.page.type !== "product") {
-			nube.clearSlot("before_product_detail_add_to_cart");
-			nube.clearSlot("after_product_detail_add_to_cart");
-			nube.clearSlot("modal_content");
+			clearProductSlots(nube);
 			return;
 		}
 
 		const bootstrap = await loadStorefrontBootstrap(state.store.id, state.store.domain);
-		if (token !== bootToken || !bootstrap.ready) return;
+		if (token !== bootToken) return;
+		if (!bootstrap.ready || bootstrap.storefront_sdk_enabled === false) {
+			clearProductSlots(nube);
+			return;
+		}
 		renderStorefrontWidget(nube, bootstrap.config, bootstrap);
 	};
 

@@ -33,3 +33,15 @@ URL no campo de scripts da loja / tema (Morelia):
 Para homologacao Nuvemshop: loja demo com tema **Patagonia** + `main.min.js` + flag **Uses NubeSDK**.
 
 O legado permanece apenas para compatibilidade com temas antigos em producao.
+
+## `storefront_sdk_enabled`
+
+`GET /api/storefront/widget-config` retorna `storefront_sdk_enabled` para o cliente NubeSDK (`main.min.js`) saber se deve renderizar o CTA:
+
+| Parametro `theme` | Resultado |
+|-------------------|-----------|
+| `patagonia` (case-insensitive) | `true` |
+| qualquer outro tema (ex.: `morelia`) | `false` |
+| ausente | `false`, exceto lojas em `OMAFIT_STOREFRONT_SDK_STORE_IDS` (whitelist de homolog) |
+
+O script legado envia `theme` via `window.LS.theme.name`. O `main.min.js` limpa os slots do NubeSDK e nao renderiza o CTA quando `storefront_sdk_enabled` e `false`, evitando botao duplicado em temas como Morelia.

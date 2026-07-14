@@ -35,6 +35,10 @@ import {
 } from "./lib/self-billing-usage.js";
 import { applySelfBillingPlan } from "./lib/self-billing-plan.js";
 import { getCanonicalShopKey } from "./lib/nuvemshop-shop-keys.js";
+import {
+	buildShopRecordLoadQueries,
+	normalizeLoadedShopRecord,
+} from "./lib/nuvemshop-store-records.js";
 import { forwardWhatsappAdminRequest } from "./lib/whatsapp-proxy.js";
 import {
 	isStoreWhatsappPilotAllowed,
@@ -1294,25 +1298,11 @@ async function recordCompletedTryonUsage(storeId, storeUrl, predictionId) {
 }
 
 async function loadLegacyShopRecord(storeId, storeUrl = "") {
-	const shopKey = getCanonicalShopKey(storeId);
-	const normalizedUrl = normalizeStoreUrl(storeUrl);
-	const candidates = [
-		`platform_shops?store_id=eq.${encodeURIComponent(storeId)}&select=*`,
-		`platform_shops?shop_key=eq.${encodeURIComponent(shopKey)}&select=*`,
-		`nuvemshop_shops?store_id=eq.${encodeURIComponent(storeId)}&select=*`,
-		`shopify_shops?shop_domain=eq.${encodeURIComponent(shopKey)}&platform=eq.nuvemshop&select=*`,
-		`shopify_shops?shop_domain=eq.${encodeURIComponent(shopKey)}&select=*`,
-	];
-	if (normalizedUrl) {
-		candidates.unshift(
-			`platform_shops?store_url=eq.${encodeURIComponent(normalizedUrl)}&select=*`,
-			`nuvemshop_shops?store_url=eq.${encodeURIComponent(normalizedUrl)}&select=*`,
-		);
-	}
-	for (const candidate of candidates) {
+	for (const candidate of buildShopRecordLoadQueries(storeId, storeUrl)) {
 		try {
 			const row = await supabaseSelectFirst(candidate);
-			if (row) return row;
+			const normalized = normalizeLoadedShopRecord(row, storeId);
+			if (normalized) return normalized;
 		} catch (_error) {
 			// keep trying compatible tables
 		}
@@ -1396,31 +1386,36 @@ async function upsertStoreRecord(session, storeData = {}) {
 		updated_at: new Date().toISOString(),
 	};
 
+	const storeName = toLocalizedValue(
+		storeData.name,
+		storeData.admin_language || storeData.main_language || "pt",
+	);
 	const attempts = [
 		{
-			table: "platform_shops",
+			table: "nuvemshop_stores",
+			onConflict: "store_id",
 			payload: [
 				{
-					...baseRecord,
-					id: storeData.record_id || undefined,
-				},
-			],
-		},
-		{
-			table: "nuvemshop_shops",
-			payload: [
-				{
-					...baseRecord,
+					store_id: Number(storeId),
+					store_name: storeName || session?.store?.name || "Loja Nuvemshop",
+					store_url: normalizedDomain,
+					plan: baseRecord.plan,
+					billing_status: baseRecord.billing_status,
+					images_included: baseRecord.images_included,
+					images_used_month: baseRecord.images_used_month,
+					currency: baseRecord.currency,
+					is_active: storeData.is_active !== false,
+					installed_at: storeData.installed_at || session?.createdAt || baseRecord.updated_at,
+					updated_at: baseRecord.updated_at,
 				},
 			],
 		},
 		{
 			table: "shopify_shops",
+			onConflict: "shop_domain",
 			payload: [
 				{
 					shop_domain: shopKey,
-					user_id: storeId,
-					store_url: normalizedDomain,
 					plan: baseRecord.plan,
 					billing_status: baseRecord.billing_status,
 					images_included: baseRecord.images_included,
@@ -1443,8 +1438,14 @@ async function upsertStoreRecord(session, storeData = {}) {
 
 	for (const attempt of attempts) {
 		try {
-			const rows = await supabaseUpsert(attempt.table, attempt.payload);
-			if (Array.isArray(rows) && rows[0]) return rows[0];
+			const rows = await supabaseUpsert(attempt.table, attempt.payload, {
+				onConflict: attempt.onConflict,
+			});
+			const normalized = normalizeLoadedShopRecord(
+				Array.isArray(rows) ? rows[0] : null,
+				storeId,
+			);
+			if (normalized) return normalized;
 		} catch (_error) {
 			// try next compatible table
 		}

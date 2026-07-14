@@ -25,6 +25,7 @@ export type StorefrontBootstrap = {
 	footwearCollectionHandles: string[];
 	billingPlan: string;
 	stylistModeEnabled: boolean;
+	storefront_sdk_enabled: boolean;
 };
 
 type StorefrontApiResponse = {
@@ -34,6 +35,7 @@ type StorefrontApiResponse = {
 	footwear_collection_handles?: string[];
 	billing_plan?: string | null;
 	stylist_mode_enabled?: boolean;
+	storefront_sdk_enabled?: boolean;
 };
 
 const DEFAULT_CONFIG: StorefrontConfig = {
@@ -48,8 +50,20 @@ export function getOmafitAppBaseUrl(): string {
 	return fromEnv ? fromEnv.replace(/\/$/, "") : "";
 }
 
-export function buildStorefrontConfigEndpoint(storeId: number, storeDomain?: string): string {
-	const query = `store_id=${encodeURIComponent(String(storeId))}&store_domain=${encodeURIComponent(storeDomain || "")}`;
+export function buildStorefrontConfigEndpoint(
+	storeId: number,
+	storeDomain?: string,
+	theme?: string,
+): string {
+	const params = new URLSearchParams({
+		store_id: String(storeId),
+		store_domain: storeDomain || "",
+	});
+	const normalizedTheme = String(theme || "").trim();
+	if (normalizedTheme) {
+		params.set("theme", normalizedTheme);
+	}
+	const query = params.toString();
 	const base = getOmafitAppBaseUrl();
 	return base
 		? `${base}/api/storefront/widget-config?${query}`
@@ -301,8 +315,9 @@ export function buildWidgetUrl(
 export async function loadStorefrontBootstrap(
 	storeId: number,
 	storeDomain?: string,
+	theme?: string,
 ): Promise<StorefrontBootstrap> {
-	const endpoint = buildStorefrontConfigEndpoint(storeId, storeDomain);
+	const endpoint = buildStorefrontConfigEndpoint(storeId, storeDomain, theme);
 	try {
 		const response = await fetch(endpoint);
 		if (!response.ok) throw new Error("request failed");
@@ -321,6 +336,7 @@ export async function loadStorefrontBootstrap(
 			footwearCollectionHandles: footwearHandles,
 			billingPlan: String(data.billing_plan || ""),
 			stylistModeEnabled: Boolean(data.stylist_mode_enabled),
+			storefront_sdk_enabled: data.storefront_sdk_enabled === true,
 		};
 	} catch {
 		return {
@@ -333,6 +349,7 @@ export async function loadStorefrontBootstrap(
 			footwearCollectionHandles: [],
 			billingPlan: "",
 			stylistModeEnabled: false,
+			storefront_sdk_enabled: false,
 		};
 	}
 }
