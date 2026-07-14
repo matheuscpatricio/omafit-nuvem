@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { cardStyle, subtleTextStyle } from "./adminUi";
 import { useI18n } from "./i18n";
 
 const META_WHATSAPP_MANAGER_URL = "https://business.facebook.com/wa/manage/home/";
+const WHATSAPP_MESSAGE_PRICE_USD = 0.07;
 
 type Props = {
 	withStoreQuery: (path: string) => string;
@@ -49,6 +50,7 @@ export function TryOnMarketingSection({
 	const [campaignMode, setCampaignMode] = useState<CampaignMode>("personalized_tryon");
 	const [collectionHandle, setCollectionHandle] = useState("");
 	const [preview, setPreview] = useState<PreviewResponse | null>(null);
+	const [messageCount, setMessageCount] = useState(1);
 	const [showConnectionForm, setShowConnectionForm] = useState(false);
 	const [showAdvancedConnection, setShowAdvancedConnection] = useState(false);
 
@@ -112,6 +114,20 @@ export function TryOnMarketingSection({
 	};
 
 	const isExistingPhotoMode = campaignMode === "existing_tryon";
+	const capturedCustomers = metrics?.opt_in_count ?? 0;
+	const maxMessageCount = useMemo(() => {
+		if (preview == null) return 0;
+		return Math.min(Math.max(0, preview.count ?? 0), capturedCustomers);
+	}, [preview, capturedCustomers]);
+	const selectedMessageCost = useMemo(
+		() => (Number(messageCount) || 0) * WHATSAPP_MESSAGE_PRICE_USD,
+		[messageCount],
+	);
+
+	useEffect(() => {
+		if (preview == null || maxMessageCount < 1) return;
+		setMessageCount(maxMessageCount);
+	}, [preview, maxMessageCount]);
 
 	const buildCampaignPayload = () => ({
 		filter_json: {
@@ -146,6 +162,19 @@ export function TryOnMarketingSection({
 			onError(t("tryOnMarketing.selectCollectionError"));
 			return;
 		}
+		if (!preview) {
+			onError(t("tryOnMarketing.previewRequired"));
+			return;
+		}
+		const count = Number(messageCount);
+		if (!Number.isFinite(count) || count < 1) {
+			onError(t("tryOnMarketing.messageCountRequired"));
+			return;
+		}
+		if (count > maxMessageCount) {
+			onError(t("tryOnMarketing.messageCountExceeded", { max: maxMessageCount }));
+			return;
+		}
 		try {
 			const seg = await fetchJson<{ segment: { id: string } }>(withStoreQuery("/api/whatsapp/segments"), {
 				method: "POST",
@@ -169,6 +198,7 @@ export function TryOnMarketingSection({
 					segment_id: seg.segment.id,
 					promoted_collection_handles: collectionHandle ? [collectionHandle] : [],
 					generation_mode: campaignMode,
+					max_recipients: count,
 					materialize: true,
 					confirm: true,
 				}),
@@ -176,6 +206,7 @@ export function TryOnMarketingSection({
 			onNotice(t("tryOnMarketing.campaignCreated"));
 			setCampaignName("");
 			setPreview(null);
+			setMessageCount(1);
 			await load();
 		} catch (error) {
 			onError(error instanceof Error ? error.message : t("feedback.error"));
@@ -298,6 +329,7 @@ export function TryOnMarketingSection({
 						onChange={(e) => {
 							setCampaignMode(e.target.value as CampaignMode);
 							setPreview(null);
+							setMessageCount(1);
 						}}
 					>
 						<option value="personalized_tryon">{t("tryOnMarketing.campaignTypeNewCollection")}</option>
@@ -312,6 +344,7 @@ export function TryOnMarketingSection({
 						onChange={(e) => {
 							setCollectionHandle(e.target.value);
 							setPreview(null);
+							setMessageCount(1);
 						}}
 					>
 						<option value="">
@@ -332,24 +365,47 @@ export function TryOnMarketingSection({
 					value={campaignName}
 					onChange={(e) => setCampaignName(e.target.value)}
 				/>
+				<button type="button" className="omafit-admin-btn omafit-admin-btn--secondary" onClick={() => void handlePreview()}>
+					{t("tryOnMarketing.previewAudience")}
+				</button>
+				{preview != null ? (
+					maxMessageCount > 0 ? (
+						<label>
+							{t("tryOnMarketing.messageCount")} ({messageCount})
+							<span style={{ display: "block", fontSize: 12, opacity: 0.75 }}>
+								{t("tryOnMarketing.messageCountHelp", {
+									max: capturedCustomers,
+									eligible: preview.count ?? 0,
+								})}
+							</span>
+							<input
+								type="range"
+								min={1}
+								max={maxMessageCount}
+								value={Math.min(Math.max(1, messageCount), maxMessageCount)}
+								onChange={(e) => setMessageCount(Number(e.target.value))}
+								style={{ width: "100%" }}
+							/>
+							<span style={subtleTextStyle}>
+								{t(
+									isExistingPhotoMode ? "tryOnMarketing.previewCostExisting" : "tryOnMarketing.previewCost",
+									{ cost: selectedMessageCost.toFixed(2) },
+								)}
+							</span>
+						</label>
+					) : (
+						<span style={subtleTextStyle}>{t("tryOnMarketing.noEligibleCustomers")}</span>
+					)
+				) : (
+					<span style={subtleTextStyle}>{t("tryOnMarketing.messageCountHint", { max: capturedCustomers })}</span>
+				)}
 				<div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
-					<button type="button" className="omafit-admin-btn omafit-admin-btn--secondary" onClick={() => void handlePreview()}>
-						{t("tryOnMarketing.previewAudience")}
-					</button>
-					{preview != null ? (
-						<span style={subtleTextStyle}>
-							{t("tryOnMarketing.eligible", { count: preview.count ?? 0 })} ·{" "}
-							{t(
-								preview.generation_mode === "existing_tryon" || isExistingPhotoMode
-									? "tryOnMarketing.previewCostExisting"
-									: "tryOnMarketing.previewCost",
-								{
-									cost: Number(preview.estimated_cost_usd ?? 0).toFixed(2),
-								},
-							)}
-						</span>
-					) : null}
-					<button type="button" className="omafit-admin-btn omafit-admin-btn--primary" onClick={() => void createCampaign()}>
+					<button
+						type="button"
+						className="omafit-admin-btn omafit-admin-btn--primary"
+						onClick={() => void createCampaign()}
+						disabled={!preview || maxMessageCount < 1}
+					>
 						{t("tryOnMarketing.createCampaign")}
 					</button>
 				</div>
