@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { cardStyle, subtleTextStyle } from "./adminUi";
+import { useI18n } from "./i18n";
 
 const META_WHATSAPP_MANAGER_URL = "https://business.facebook.com/wa/manage/home/";
 
@@ -11,6 +12,14 @@ type Props = {
 	planLocked?: boolean;
 	onUpgrade?: () => void;
 };
+
+type PreviewResponse = {
+	count?: number;
+	estimated_cost_usd?: number;
+	generation_mode?: string;
+};
+
+type CampaignMode = "personalized_tryon" | "existing_tryon";
 
 async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
 	const response = await fetch(url, options);
@@ -29,6 +38,7 @@ export function TryOnMarketingSection({
 	planLocked = false,
 	onUpgrade,
 }: Props) {
+	const { t } = useI18n();
 	const [loading, setLoading] = useState(true);
 	const [connection, setConnection] = useState<{ connected?: boolean; display_phone?: string } | null>(null);
 	const [metrics, setMetrics] = useState<Record<string, number> | null>(null);
@@ -36,7 +46,11 @@ export function TryOnMarketingSection({
 	const [accessToken, setAccessToken] = useState("");
 	const [wabaId, setWabaId] = useState("");
 	const [campaignName, setCampaignName] = useState("");
+	const [campaignMode, setCampaignMode] = useState<CampaignMode>("personalized_tryon");
 	const [collectionHandle, setCollectionHandle] = useState("");
+	const [preview, setPreview] = useState<PreviewResponse | null>(null);
+	const [showConnectionForm, setShowConnectionForm] = useState(false);
+	const [showAdvancedConnection, setShowAdvancedConnection] = useState(false);
 
 	const load = useCallback(async () => {
 		setLoading(true);
@@ -48,26 +62,30 @@ export function TryOnMarketingSection({
 			setConnection(conn);
 			setMetrics(met);
 		} catch (error) {
-			onError(error instanceof Error ? error.message : "Erro ao carregar Try On Marketing");
+			onError(error instanceof Error ? error.message : t("tryOnMarketing.loadError"));
 		} finally {
 			setLoading(false);
 		}
-	}, [onError, withStoreQuery]);
+	}, [onError, t, withStoreQuery]);
 
 	useEffect(() => {
 		if (!planLocked) void load();
 	}, [load, planLocked]);
 
+	useEffect(() => {
+		if (!connection?.connected) {
+			setShowConnectionForm(true);
+		}
+	}, [connection?.connected]);
+
 	if (planLocked) {
 		return (
 			<div style={{ ...cardStyle, display: "grid", gap: 12 }}>
-				<strong>Try On Marketing — WhatsApp</strong>
-				<span style={subtleTextStyle}>
-					Disponível apenas no plano Growth ou superior. Faça upgrade para conectar WABA e enviar campanhas.
-				</span>
+				<strong>{t("tryOnMarketing.title")}</strong>
+				<span style={subtleTextStyle}>{t("tryOnMarketing.planLocked")}</span>
 				{onUpgrade ? (
 					<button type="button" className="omafit-admin-btn omafit-admin-btn--primary" onClick={onUpgrade}>
-						Ver planos
+						{t("tryOnMarketing.viewPlans")}
 					</button>
 				) : null}
 			</div>
@@ -85,16 +103,47 @@ export function TryOnMarketingSection({
 					waba_id: wabaId || null,
 				}),
 			});
-			onNotice("WhatsApp conectado.");
+			onNotice(t("tryOnMarketing.connectSuccess"));
+			setShowConnectionForm(false);
 			await load();
 		} catch (error) {
-			onError(error instanceof Error ? error.message : "Falha ao conectar");
+			onError(error instanceof Error ? error.message : t("feedback.error"));
+		}
+	};
+
+	const isExistingPhotoMode = campaignMode === "existing_tryon";
+
+	const buildCampaignPayload = () => ({
+		filter_json: {
+			has_marketing_consent: true,
+			has_photo_consent: !isExistingPhotoMode,
+			tryon_since_days: 30,
+			product_handles: [],
+		},
+		promoted_collection_handles: collectionHandle ? [collectionHandle] : [],
+		generation_mode: campaignMode,
+	});
+
+	const handlePreview = async () => {
+		if (!isExistingPhotoMode && !collectionHandle) {
+			onError(t("tryOnMarketing.selectCollectionError"));
+			return;
+		}
+		try {
+			const res = await fetchJson<PreviewResponse>(withStoreQuery("/api/whatsapp/segments/preview"), {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(buildCampaignPayload()),
+			});
+			setPreview(res);
+		} catch (error) {
+			onError(error instanceof Error ? error.message : t("feedback.error"));
 		}
 	};
 
 	const createCampaign = async () => {
-		if (!collectionHandle) {
-			onError("Selecione uma coleção — cada destinatário recebe um try-on personalizado.");
+		if (!isExistingPhotoMode && !collectionHandle) {
+			onError(t("tryOnMarketing.selectCollectionError"));
 			return;
 		}
 		try {
@@ -102,10 +151,12 @@ export function TryOnMarketingSection({
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
-					name: "Opt-in + foto (30 dias)",
+					name: isExistingPhotoMode
+						? t("tryOnMarketing.segmentDefaultNameExisting")
+						: t("tryOnMarketing.segmentDefaultName"),
 					filter_json: {
 						has_marketing_consent: true,
-						has_photo_consent: true,
+						has_photo_consent: !isExistingPhotoMode,
 						tryon_since_days: 30,
 					},
 				}),
@@ -114,92 +165,194 @@ export function TryOnMarketingSection({
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
-					name: campaignName || "Campanha Try On",
+					name: campaignName || t("tryOnMarketing.newCampaignTitle"),
 					segment_id: seg.segment.id,
-					promoted_collection_handles: [collectionHandle],
+					promoted_collection_handles: collectionHandle ? [collectionHandle] : [],
+					generation_mode: campaignMode,
 					materialize: true,
 					confirm: true,
 				}),
 			});
-			onNotice("Campanha criada.");
+			onNotice(t("tryOnMarketing.campaignCreated"));
 			setCampaignName("");
+			setPreview(null);
 			await load();
 		} catch (error) {
-			onError(error instanceof Error ? error.message : "Falha ao criar campanha");
+			onError(error instanceof Error ? error.message : t("feedback.error"));
 		}
 	};
 
 	if (loading) {
-		return <div style={cardStyle}>Carregando Try On Marketing…</div>;
+		return <div style={cardStyle}>{t("tryOnMarketing.loading")}</div>;
 	}
 
 	return (
 		<div style={{ display: "grid", gap: 16 }}>
 			<div style={{ ...cardStyle, display: "grid", gap: 12 }}>
-				<strong>Try On Marketing — WhatsApp</strong>
-				<span style={subtleTextStyle}>
-					{connection?.connected
-						? `Conectado: ${connection.display_phone || "WABA ativo"}`
-						: "Conecte seu número WhatsApp Business (WABA)."}
+				<strong>{t("tryOnMarketing.title")}</strong>
+				<span style={subtleTextStyle}>{t("tryOnMarketing.subtitle")}</span>
+				<span style={{ ...subtleTextStyle, padding: "10px 12px", borderRadius: 10, background: "rgba(0,0,0,0.04)" }}>
+					{t("tryOnMarketing.introHelp")}
 				</span>
-				<a
-					href={META_WHATSAPP_MANAGER_URL}
-					target="_blank"
-					rel="noopener noreferrer"
-					className="omafit-admin-btn omafit-admin-btn--secondary"
-					style={{ textAlign: "center", textDecoration: "none" }}
-				>
-					Abrir Meta Business Manager (WhatsApp)
-				</a>
-				<label>
-					Phone Number ID
-					<input className="omafit-admin-input" value={phoneNumberId} onChange={(e) => setPhoneNumberId(e.target.value)} />
-				</label>
-				<label>
-					WABA ID
-					<input className="omafit-admin-input" value={wabaId} onChange={(e) => setWabaId(e.target.value)} />
-				</label>
-				<label>
-					Access Token
-					<input className="omafit-admin-input" type="password" value={accessToken} onChange={(e) => setAccessToken(e.target.value)} />
-				</label>
-				<button type="button" className="omafit-admin-btn omafit-admin-btn--primary" onClick={() => void connect()}>
-					Salvar conexão
-				</button>
-			</div>
-
-			<div style={{ ...cardStyle, display: "grid", gap: 8 }}>
-				<strong>Métricas</strong>
-				<span style={subtleTextStyle}>Opt-ins: {metrics?.opt_in_count ?? 0}</span>
-				<span style={subtleTextStyle}>Entregues: {metrics?.messages_delivered ?? 0}</span>
 			</div>
 
 			<div style={{ ...cardStyle, display: "grid", gap: 12 }}>
-				<strong>Nova campanha</strong>
+				<strong>{t("tryOnMarketing.connectionTitle")}</strong>
+				{connection?.connected ? (
+					<span style={{ ...subtleTextStyle, color: "#1a7f37" }}>
+						{t("tryOnMarketing.connected", { phone: connection.display_phone || "WhatsApp" })}
+					</span>
+				) : (
+					<span style={subtleTextStyle}>{t("tryOnMarketing.connectHint")}</span>
+				)}
+				{connection?.connected && !showConnectionForm ? (
+					<button
+						type="button"
+						className="omafit-admin-btn omafit-admin-btn--secondary"
+						onClick={() => setShowConnectionForm(true)}
+					>
+						{t("tryOnMarketing.changeConnection")}
+					</button>
+				) : (
+					<>
+						<a
+							href={META_WHATSAPP_MANAGER_URL}
+							target="_blank"
+							rel="noopener noreferrer"
+							className="omafit-admin-btn omafit-admin-btn--secondary"
+							style={{ textAlign: "center", textDecoration: "none" }}
+						>
+							{t("tryOnMarketing.openMeta")}
+						</a>
+						<ol style={{ margin: 0, paddingLeft: 20, ...subtleTextStyle }}>
+							<li>{t("tryOnMarketing.connectionStep1")}</li>
+							<li>{t("tryOnMarketing.connectionStep2")}</li>
+							<li>{t("tryOnMarketing.connectionStep3")}</li>
+						</ol>
+						<label>
+							{t("tryOnMarketing.metaPhoneId")}
+							<span style={{ display: "block", fontSize: 12, opacity: 0.75 }}>
+								{t("tryOnMarketing.metaPhoneIdHelp")}
+							</span>
+							<input
+								className="omafit-admin-input"
+								value={phoneNumberId}
+								onChange={(e) => setPhoneNumberId(e.target.value)}
+							/>
+						</label>
+						<label>
+							{t("tryOnMarketing.metaAccessToken")}
+							<span style={{ display: "block", fontSize: 12, opacity: 0.75 }}>
+								{t("tryOnMarketing.metaAccessTokenHelp")}
+							</span>
+							<input
+								className="omafit-admin-input"
+								type="password"
+								value={accessToken}
+								onChange={(e) => setAccessToken(e.target.value)}
+							/>
+						</label>
+						<button
+							type="button"
+							className="omafit-admin-btn omafit-admin-btn--secondary"
+							onClick={() => setShowAdvancedConnection((open) => !open)}
+						>
+							{t("tryOnMarketing.advancedSettings")} {showAdvancedConnection ? "▲" : "▼"}
+						</button>
+						{showAdvancedConnection ? (
+							<label>
+								{t("tryOnMarketing.wabaId")}
+								<span style={{ display: "block", fontSize: 12, opacity: 0.75 }}>
+									{t("tryOnMarketing.wabaIdHelp")}
+								</span>
+								<input className="omafit-admin-input" value={wabaId} onChange={(e) => setWabaId(e.target.value)} />
+							</label>
+						) : null}
+						<button type="button" className="omafit-admin-btn omafit-admin-btn--primary" onClick={() => void connect()}>
+							{t("tryOnMarketing.saveConnection")}
+						</button>
+					</>
+				)}
+			</div>
+
+			<div style={{ ...cardStyle, display: "grid", gap: 8 }}>
+				<strong>{t("tryOnMarketing.metricsTitle")}</strong>
 				<span style={subtleTextStyle}>
-					Cada destinatário recebe um try-on personalizado (foto + peça da coleção) no WhatsApp.
+					{t("tryOnMarketing.metricsCustomers")}: {metrics?.opt_in_count ?? 0}
 				</span>
-				<input
-					className="omafit-admin-input"
-					placeholder="Nome da campanha"
-					value={campaignName}
-					onChange={(e) => setCampaignName(e.target.value)}
-				/>
-				<select
-					className="omafit-admin-select"
-					value={collectionHandle}
-					onChange={(e) => setCollectionHandle(e.target.value)}
-				>
-					<option value="">Selecione a coleção (obrigatório)</option>
+				<span style={subtleTextStyle}>
+					{t("tryOnMarketing.metricsDelivered")}: {metrics?.messages_delivered ?? 0}
+				</span>
+			</div>
+
+			<div style={{ ...cardStyle, display: "grid", gap: 12 }}>
+				<strong>{t("tryOnMarketing.newCampaignTitle")}</strong>
+				<span style={subtleTextStyle}>
+					{isExistingPhotoMode ? t("tryOnMarketing.campaignHintExisting") : t("tryOnMarketing.campaignHint")}
+				</span>
+				<label>
+					{t("tryOnMarketing.campaignType")}
+					<select
+						className="omafit-admin-select"
+						value={campaignMode}
+						onChange={(e) => {
+							setCampaignMode(e.target.value as CampaignMode);
+							setPreview(null);
+						}}
+					>
+						<option value="personalized_tryon">{t("tryOnMarketing.campaignTypeNewCollection")}</option>
+						<option value="existing_tryon">{t("tryOnMarketing.campaignTypeExisting")}</option>
+					</select>
+				</label>
+				<label>
+					{isExistingPhotoMode ? t("tryOnMarketing.collectionFilterOptional") : t("tryOnMarketing.collection")}
+					<select
+						className="omafit-admin-select"
+						value={collectionHandle}
+						onChange={(e) => {
+							setCollectionHandle(e.target.value);
+							setPreview(null);
+						}}
+					>
+						<option value="">
+							{isExistingPhotoMode
+								? t("tryOnMarketing.selectCollectionOptional")
+								: t("tryOnMarketing.selectCollection")}
+						</option>
 					{collections.map((c) => (
 						<option key={c.handle} value={c.handle}>
 							{c.title || c.handle}
 						</option>
 					))}
-				</select>
-				<button type="button" className="omafit-admin-btn omafit-admin-btn--primary" onClick={() => void createCampaign()}>
-					Criar campanha
-				</button>
+					</select>
+				</label>
+				<input
+					className="omafit-admin-input"
+					placeholder={t("tryOnMarketing.campaignNamePlaceholder")}
+					value={campaignName}
+					onChange={(e) => setCampaignName(e.target.value)}
+				/>
+				<div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+					<button type="button" className="omafit-admin-btn omafit-admin-btn--secondary" onClick={() => void handlePreview()}>
+						{t("tryOnMarketing.previewAudience")}
+					</button>
+					{preview != null ? (
+						<span style={subtleTextStyle}>
+							{t("tryOnMarketing.eligible", { count: preview.count ?? 0 })} ·{" "}
+							{t(
+								preview.generation_mode === "existing_tryon" || isExistingPhotoMode
+									? "tryOnMarketing.previewCostExisting"
+									: "tryOnMarketing.previewCost",
+								{
+									cost: Number(preview.estimated_cost_usd ?? 0).toFixed(2),
+								},
+							)}
+						</span>
+					) : null}
+					<button type="button" className="omafit-admin-btn omafit-admin-btn--primary" onClick={() => void createCampaign()}>
+						{t("tryOnMarketing.createCampaign")}
+					</button>
+				</div>
 			</div>
 		</div>
 	);
