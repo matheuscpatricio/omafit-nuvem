@@ -59,7 +59,11 @@
 - Customer data request webhook:
   - `https://seu-dominio.com/api/webhooks/nuvemshop`
 
-Ative a flag **Uses NubeSDK** no Partner Portal. O storefront nao usa mais scripts legados no DOM.
+Ative a flag **Uses NubeSDK** no Partner Portal.
+
+Para homologação e publicação, siga o checklist completo em [HOMOLOGACAO_NUVEMSHOP.md](./HOMOLOGACAO_NUVEMSHOP.md).
+
+Em produção, lojas com temas que não suportam NubeSDK (ex.: Morelia) usam `storefront-legacy.min.js` — ver [storefront-modes.md](./storefront-modes.md).
 
 ## Billing no Partner Portal
 

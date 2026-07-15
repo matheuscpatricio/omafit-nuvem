@@ -3615,9 +3615,17 @@ async function handleApi(req, res, reqUrl) {
 	}
 
 	if (pathname === "/api/admin/context") {
-		const storeRecord = storeContext.storeId
+		let storeRecord = storeContext.storeId
 			? await loadLegacyShopRecord(storeContext.storeId, storeContext.storeUrl)
 			: null;
+		if (!storeRecord && session?.accessToken && storeContext.storeId) {
+			try {
+				const storeData = await fetchStoreInfo(session);
+				storeRecord = await upsertStoreRecord(session, storeData);
+			} catch (_error) {
+				// Admin still loads; user can use Sincronizar loja manually.
+			}
+		}
 		sendJson(res, 200, buildAdminContext(storeContext, session, storeRecord));
 		return true;
 	}
