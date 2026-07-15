@@ -10,7 +10,7 @@ import { OmafitBrandBanner } from "./OmafitBrandBanner";
 import { SizeChartsSection } from "./SizeChartsSection";
 import { TryOnMarketingSection } from "./TryOnMarketingSection";
 import { WidgetSection } from "./WidgetSection";
-import { cardStyle, subtleTextStyle } from "./adminUi";
+import { cardStyle, navigateOutOfAdminIframe, subtleTextStyle } from "./adminUi";
 import "./omafit-brand.css";
 import type {
 	OmafitAdminContext,
@@ -432,7 +432,7 @@ function AppContent({ nexo, store }: AdminAppProps) {
 				});
 				if (response.checkoutRequired && response.checkoutUrl) {
 					setNotice(t("billing.checkoutRedirect"));
-					window.location.href = response.checkoutUrl;
+					navigateOutOfAdminIframe(response.checkoutUrl);
 					return;
 				}
 				await loadContext();
@@ -455,7 +455,7 @@ function AppContent({ nexo, store }: AdminAppProps) {
 				{ method: "POST" },
 			);
 			if (response.portalUrl) {
-				window.location.href = response.portalUrl;
+				navigateOutOfAdminIframe(response.portalUrl);
 				return;
 			}
 			setError(t("feedback.error"));
@@ -524,11 +524,7 @@ function AppContent({ nexo, store }: AdminAppProps) {
 						syncReport={syncReport}
 						onReconnect={() => {
 							if (!context.auth.authUrl) return;
-							if (window.top && window.top !== window) {
-								window.top.location.href = context.auth.authUrl;
-								return;
-							}
-							window.location.href = context.auth.authUrl;
+							navigateOutOfAdminIframe(context.auth.authUrl);
 						}}
 					/>
 				) : null}

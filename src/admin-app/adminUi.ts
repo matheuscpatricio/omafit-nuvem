@@ -127,3 +127,18 @@ export const statValueStyle: CSSProperties = {
 	color: brandColors.accentDark,
 	letterSpacing: "-0.02em",
 };
+
+/** Stripe Checkout e OAuth precisam sair do iframe do admin Nuvemshop. */
+export function navigateOutOfAdminIframe(url: string) {
+	const target = String(url || "").trim();
+	if (!target) return;
+	try {
+		if (window.top && window.top !== window) {
+			window.top.location.href = target;
+			return;
+		}
+	} catch (_error) {
+		// iframe sandboxed — tenta abrir na mesma janela abaixo
+	}
+	window.location.href = target;
+}
