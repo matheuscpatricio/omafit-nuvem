@@ -12,7 +12,11 @@ import {
 import { widgetTranslations, detectWidgetLanguage, type WidgetTranslationKey } from './widget-translations';
 import { useMediaPipePose } from './useMediaPipePose';
 import { resolveShopifyProductIdFromPage } from './utils/shopifyProductId';
-import { parseTryonLayoutFromLocation, type TryonLayoutMode } from './utils/parseTryonLayoutFromUrl';
+import {
+  parseTryonLayoutFromLocation,
+  shouldAllowStoreLayoutOverride,
+  type TryonLayoutMode,
+} from './utils/parseTryonLayoutFromUrl';
 import { isTryonWidgetEmbedded } from './utils/isTryonWidgetEmbedded';
 import { TryonLayoutPendingSplash } from './tryon/TryonLayoutPendingSplash';
 import { TryOnLayoutShellSidebar } from './tryon/TryOnLayoutShellSidebar';
@@ -44,7 +48,13 @@ import {
   parseCollectionHandlesFromMessage,
 } from './utils/mergeShopifyCollectionHandles';
 import { buildWidgetFontStyleBlock } from './utils/widgetFont';
+import {
+  catalogHasNamedSizeGrade,
+  guardAssistantSizeClaims,
+  resolveAlgorithmSizeForCatalog,
+} from './utils/productCatalogSizing';
 import { buildStylistBrief, formatCatalogPrice } from './utils/stylistContext';
+import { resolveAnchorProductPrice } from './utils/resolveAnchorProductPrice';
 import { evaluateStylistClarification } from './utils/stylistClarification';
 import {
   fallbackStoreProfile,
@@ -62,12 +72,36 @@ import {
   safeDecodeGarmentImage,
 } from './utils/productImageGallery';
 import { hasGrowthPlusPlan } from './utils/shopifyPlanAccess';
+import { ShopperProfilePrompt } from './ShopperProfilePrompt';
+import { ShopperWhatsAppOptInPrompt } from './ShopperWhatsAppOptInPrompt';
+import { useShopperProfileTryOn } from './hooks/useShopperProfileTryOn';
+import { setShopperDeviceIdFromParent } from './utils/shopperProfile';
 
 function appWidgetApiBase() {
   if (typeof window !== 'undefined' && window.location?.origin) {
     return window.location.origin.replace(/\/$/, '');
   }
-  return String(import.meta.env.VITE_OMAFIT_APP_URL || '').replace(/\/$/, '');
+  return String(
+    (typeof import.meta !== 'undefined' && import.meta.env?.VITE_OMAFIT_APP_URL) || '',
+  ).replace(/\/$/, '');
+}
+
+function resolveTryonStoreId(shopDomain: string): string {
+  const trimmed = String(shopDomain || '').trim();
+  if (trimmed.startsWith('nuvemshop/')) {
+    return trimmed.slice('nuvemshop/'.length).split('/')[0]?.trim() || '';
+  }
+  return '';
+}
+
+function buildTryonStatusUrl(predictionId: string, shopDomain: string): string {
+  const url = new URL(
+    `${appWidgetApiBase()}/api/widget/tryon-status/${encodeURIComponent(predictionId)}`,
+  );
+  const storeId = resolveTryonStoreId(shopDomain);
+  if (storeId) url.searchParams.set('store_id', storeId);
+  if (shopDomain) url.searchParams.set('shop_domain', shopDomain);
+  return url.toString();
 }
 
 /** Até o primeiro fetch ao Supabase (ou cache), não renderizar layout default/sidebar para evitar flash. */
@@ -93,6 +127,27 @@ function writeTryonLayoutToSession(shopDomain: string, layout: TryonLayoutMode) 
   } catch {
     /* ignore */
   }
+}
+
+function resolveTryonLayoutFromMessage(raw: unknown): TryonLayoutMode | null {
+  const tl = String(raw ?? '').trim().toLowerCase();
+  if (tl === 'hero' || tl === 'sidebar' || tl === 'default') return tl;
+  return null;
+}
+
+function applyTryonLayoutFromStore(
+  rawLayout: unknown,
+  shopDomainHint: string,
+  layoutFromUrl: TryonLayoutMode | undefined,
+  tryonLayoutOverride: TryonLayoutMode | undefined,
+  setTryonLayout: React.Dispatch<React.SetStateAction<TryonLayoutState>>
+) {
+  if (!shouldAllowStoreLayoutOverride(layoutFromUrl, tryonLayoutOverride)) return;
+  const resolved = resolveTryonLayoutFromMessage(rawLayout);
+  if (!resolved) return;
+  setTryonLayout(resolved);
+  const sd = shopDomainHint.trim();
+  if (sd) writeTryonLayoutToSession(sd, resolved);
 }
 
 interface TryOnWidgetProps {
@@ -133,6 +188,8 @@ interface TryOnWidgetProps {
   onTryonLayoutChange?: (layout: TryonLayoutMode) => void;
   /** Consultor stylist (chat pós provador, sugestões, catalog-search): plano Growth ou superior. */
   stylistModeEnabled?: boolean;
+  /** Device ID persistido no domínio da loja (SDK Nuvemshop). */
+  shopperDeviceId?: string;
 }
 
 interface ProductCatalog {
@@ -681,6 +738,7 @@ export function TryOnWidget({
   tryonLayoutBackgroundImage,
   onTryonLayoutChange,
   stylistModeEnabled = false,
+  shopperDeviceId: shopperDeviceIdProp = '',
 }: TryOnWidgetProps) {
   const [stylistPlanFromDb, setStylistPlanFromDb] = useState<boolean | null>(null);
   const stylistEnabled = stylistModeEnabled === true || stylistPlanFromDb === true;
@@ -953,6 +1011,8 @@ export function TryOnWidget({
   const preparedPoseAnalysisRef = useRef<PreparedPoseAnalysis | null>(null);
   const modelImagePreparationPromiseRef = useRef<Promise<OptimizedModelImage | null> | null>(null);
   const modelImageUploadPromiseRef = useRef<Promise<string | null> | null>(null);
+  const sessionModelImageUrlRef = useRef<string | null>(null);
+  const shopperProfileLoaderRef = useRef<(() => void) | null>(null);
   const posePreparationPromiseRef = useRef<Promise<PreparedPoseAnalysis | null> | null>(null);
   const activeModelImageJobRef = useRef(0);
   /** Após «Continuar sem foto»: quando `loadSizeChart` terminar, calcular tamanho e ir para `result`. */
@@ -1034,6 +1094,7 @@ export function TryOnWidget({
   const [heroBackgroundResolved, setHeroBackgroundResolved] = useState<boolean>(
     Boolean(tryonLayoutBackgroundImage && tryonLayoutBackgroundImage.trim() !== ''),
   );
+  const [heroPresentationReady, setHeroPresentationReady] = useState(false);
   const effectiveShopDomain = (localShopDomain || shopDomain || '').trim();
 
   React.useEffect(() => {
@@ -1285,6 +1346,58 @@ export function TryOnWidget({
       previewObjectUrlRef.current = null;
     }
   };
+
+  const handleCalculatorContinueWithoutPhoto = React.useCallback((data: SizeCalculatorData) => {
+    const cleanData: SizeCalculatorData = {
+      gender: data.gender,
+      height: data.height,
+      weight: data.weight,
+      bodyType: data.bodyType,
+      fit: data.fit,
+      bodyTypeIndex: data.bodyTypeIndex,
+      fitIndex: data.fitIndex,
+    };
+    skipFormOnlySizingPayloadRef.current = cleanData;
+    formOnlySizingAfterChartRef.current = true;
+    invalidatePreparedModelAssets();
+    revokePreviewObjectUrl();
+    setModelImage(null);
+    setImagePreview(null);
+    setFinalBodyMeasurements(null);
+    setResult(null);
+    anchorPdpGarmentDisplayRef.current = null;
+    tryOnSubmitMetaRef.current = null;
+    setPredictionId(null);
+    setError('');
+    setLoading(false);
+    setSizeData(cleanData);
+  }, []);
+
+  const shopper = useShopperProfileTryOn({
+    effectiveShopDomain,
+    publicId: publicId || '',
+    publicIdRef,
+    shopperDeviceIdProp,
+    step,
+    setStep,
+    sizeData,
+    setSizeData,
+    tryOnEnabled,
+    chartGenderScope,
+    defaultGender,
+    handleCalculatorContinueWithoutPhoto,
+    result,
+    recommendedSize,
+    calculatedSize,
+    analyticsSessionId: analyticsSessionId || '',
+    localProductHandle,
+    productHandle,
+    sessionModelImageUrlRef,
+    stylistEnabled,
+    t,
+    setError,
+  });
+  shopperProfileLoaderRef.current = shopper.loadShopperProfileRef.current;
 
   const getPollingDelayMs = (attempt: number, status?: string, stage?: string) => {
     const normalizedStatus = String(status || '').trim().toLowerCase();
@@ -1820,6 +1933,14 @@ export function TryOnWidget({
         const incomingShopDomain = (event.data.shopDomain || event.data.shop_domain || '').trim();
         if (incomingShopDomain) {
           setLocalShopDomain(incomingShopDomain);
+          shopperProfileLoaderRef.current?.();
+        }
+
+        const incomingDeviceId = String(
+          event.data.omafitDeviceId || event.data.omafit_device_id || event.data.shopperDeviceId || '',
+        ).trim();
+        if (incomingDeviceId && setShopperDeviceIdFromParent(incomingDeviceId)) {
+          shopperProfileLoaderRef.current?.();
         }
 
         const billingPlanCtx = event.data.billing_plan ?? event.data.billingPlan;
@@ -1846,6 +1967,20 @@ export function TryOnWidget({
         }
         if (event.data.fontFamily) {
           setLocalFontFamily(String(event.data.fontFamily).trim());
+        }
+
+        applyTryonLayoutFromStore(
+          event.data.tryon_layout ?? event.data.tryonLayout,
+          String(event.data.shopDomain || event.data.shop_domain || localShopDomain || shopDomain || ''),
+          layoutFromUrl,
+          tryonLayoutOverride,
+          setTryonLayout
+        );
+
+        const heroBgCtx = event.data.tryon_layout_background_image ?? event.data.tryonLayoutBackgroundImage;
+        if (typeof heroBgCtx === 'string') {
+          setLocalHeroBackgroundImage(heroBgCtx.trim());
+          setHeroBackgroundResolved(true);
         }
 
         // Atualizar productName e productDescription via omafit-context
@@ -1931,19 +2066,13 @@ export function TryOnWidget({
           setLocalPrimaryColor(String(event.data.primaryColor).trim());
         }
 
-        if (layoutFromUrl === undefined && tryonLayoutOverride === undefined) {
-          const tl = event.data.tryon_layout ?? event.data.tryonLayout;
-          if (tl === 'hero' || tl === 'sidebar' || tl === 'default') {
-            setTryonLayout(tl);
-            const sd = (
-              (event.data.shopDomain as string | undefined) ||
-              localShopDomain ||
-              shopDomain ||
-              ''
-            ).trim();
-            if (sd) writeTryonLayoutToSession(sd, tl);
-          }
-        }
+        applyTryonLayoutFromStore(
+          event.data.tryon_layout ?? event.data.tryonLayout,
+          String(event.data.shopDomain || event.data.shop_domain || localShopDomain || shopDomain || ''),
+          layoutFromUrl,
+          tryonLayoutOverride,
+          setTryonLayout
+        );
 
         const heroBg = event.data.tryon_layout_background_image ?? event.data.tryonLayoutBackgroundImage;
         if (typeof heroBg === 'string') {
@@ -2189,12 +2318,13 @@ export function TryOnWidget({
             setLocalPrimaryColor(config.primary_color);
           }
 
-          if (layoutFromUrl === undefined && tryonLayoutOverride === undefined) {
-            const rawLayout = (config as { tryon_layout?: string }).tryon_layout;
-            const resolved: TryonLayoutMode = rawLayout === 'hero' ? 'hero' : rawLayout === 'sidebar' ? 'sidebar' : 'default';
-            setTryonLayout(resolved);
-            writeTryonLayoutToSession(effectiveShopDomain, resolved);
-          }
+          applyTryonLayoutFromStore(
+            (config as { tryon_layout?: string }).tryon_layout,
+            effectiveShopDomain,
+            layoutFromUrl,
+            tryonLayoutOverride,
+            setTryonLayout
+          );
 
           const heroBg = (config as { tryon_layout_background_image?: string }).tryon_layout_background_image;
           if (typeof heroBg === 'string') {
@@ -2208,7 +2338,7 @@ export function TryOnWidget({
             console.log('🌍 Idioma definido via widget_configurations.admin_locale:', adminLocale);
             setCurrentLanguage(adminLocale);
           }
-        } else if (layoutFromUrl === undefined && tryonLayoutOverride === undefined) {
+        } else if (shouldAllowStoreLayoutOverride(layoutFromUrl, tryonLayoutOverride)) {
           setTryonLayout('default');
           writeTryonLayoutToSession(effectiveShopDomain, 'default');
         }
@@ -3055,32 +3185,6 @@ export function TryOnWidget({
     };
   };
 
-  const handleCalculatorContinueWithoutPhoto = (data: SizeCalculatorData) => {
-    const cleanData: SizeCalculatorData = {
-      gender: data.gender,
-      height: data.height,
-      weight: data.weight,
-      bodyType: data.bodyType,
-      fit: data.fit,
-      bodyTypeIndex: data.bodyTypeIndex,
-      fitIndex: data.fitIndex,
-    };
-    skipFormOnlySizingPayloadRef.current = cleanData;
-    formOnlySizingAfterChartRef.current = true;
-    invalidatePreparedModelAssets();
-    revokePreviewObjectUrl();
-    setModelImage(null);
-    setImagePreview(null);
-    setFinalBodyMeasurements(null);
-    setResult(null);
-    anchorPdpGarmentDisplayRef.current = null;
-    tryOnSubmitMetaRef.current = null;
-    setPredictionId(null);
-    setError('');
-    setLoading(false);
-    setSizeData(cleanData);
-  };
-
   useEffect(() => {
     const loadSizeChart = async () => {
       console.log('🔍 ===== TRYON WIDGET: CARREGANDO SIZE CHART =====');
@@ -3092,8 +3196,8 @@ export function TryOnWidget({
         skipFormOnlySizingPayloadRef.current = null;
         if (!payload?.gender) return;
         const sizeResult = chartRows.length > 0 ? calculateRecommendedSize(payload, chartRows) : null;
-        const size = sizeResult?.size ?? 'M';
-        tryOnAlgorithmSizeRef.current = size;
+        const size = resolveAlgorithmSizeForCatalog(sizeResult?.size ?? null, productCatalogRef.current);
+        tryOnAlgorithmSizeRef.current = size || '';
         setRecommendedSize(size);
         setCalculatedSize(size);
         setStep('result');
@@ -3860,13 +3964,14 @@ const handleSubmit = async (
       });
     }
 
-    const provisionalSize =
+    const rawProvisionalSize =
       recommendedSize ||
       calculatedSize ||
       (sizeChart.length > 0 ? calculateRecommendedSize(measurementsForProvisionalCalc as any, sizeChart)?.size : null) ||
-      'M';
+      null;
+    const provisionalSize = resolveAlgorithmSizeForCatalog(rawProvisionalSize, productCatalogRef.current);
 
-    tryOnAlgorithmSizeRef.current = String(provisionalSize || 'M').trim() || 'M';
+    tryOnAlgorithmSizeRef.current = String(provisionalSize || '').trim();
 
     if (!recommendedSize && !calculatedSize && provisionalSize) {
       setRecommendedSize(provisionalSize);
@@ -3874,6 +3979,9 @@ const handleSubmit = async (
     }
 
     const uploadedModelImageUrl = await modelImageUploadPromise;
+    if (uploadedModelImageUrl) {
+      sessionModelImageUrlRef.current = uploadedModelImageUrl;
+    }
 
     const trackGarmentMediapipeSession = async () => {
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
@@ -3946,8 +4054,10 @@ const handleSubmit = async (
 
     setProcessingMessage(t('creatingTryOn'));
     const optimizedGarmentImageUrl = getOptimizedRemoteTryOnImageUrl(resolvedGarmentImageUrlRaw);
+    const tryonStoreId = resolveTryonStoreId(effectiveShopDomain);
     const payload = {
       shop_domain: effectiveShopDomain,
+      store_id: tryonStoreId || undefined,
       // Hint explícito para o backend escolher o modelo correto do try-on.
       // upper/lower/full (do nosso UI) deve virar tops/bottoms/one-pieces no backend.
       collection_type: resolvedCollectionType,
@@ -3997,6 +4107,7 @@ const handleSubmit = async (
       const formData = new FormData();
       formData.append('model_image_file', optimizedImage.blob, modelFile.name || 'tryon-model.jpg');
       formData.append('shop_domain', payload.shop_domain);
+      if (tryonStoreId) formData.append('store_id', tryonStoreId);
       formData.append('collection_type', String(payload.collection_type || 'upper'));
       formData.append('garment_image', payload.garment_image);
       formData.append('product_name', payload.product_name);
@@ -4115,12 +4226,16 @@ const handleSubmit = async (
         const sizeResult = calculateRecommendedSize(realMeasurements as any, sizeChart);
         console.log('');
         if (sizeResult) {
-          tryOnAlgorithmSizeRef.current =
-            String(sizeResult.size || '').trim() || tryOnAlgorithmSizeRef.current;
-          setRecommendedSize(sizeResult.size);
-          setCalculatedSize(sizeResult.size);
-          console.log('✅ TAMANHO CALCULADO COM SUCESSO:', sizeResult.size);
-          console.log('   Match score:', sizeResult.matchScore?.toFixed(1) + '%');
+          const resolvedSize = resolveAlgorithmSizeForCatalog(sizeResult.size, productCatalogRef.current);
+          tryOnAlgorithmSizeRef.current = String(resolvedSize || '').trim();
+          setRecommendedSize(resolvedSize);
+          setCalculatedSize(resolvedSize);
+          if (resolvedSize) {
+            console.log('✅ TAMANHO CALCULADO COM SUCESSO:', resolvedSize);
+            console.log('   Match score:', sizeResult.matchScore?.toFixed(1) + '%');
+          } else {
+            console.log('ℹ️ Produto sem grade de tamanho — recomendação algorítmica omitida.');
+          }
         } else {
           console.log('❌ ERRO: calculateRecommendedSize retornou null');
         }
@@ -4190,7 +4305,7 @@ const handleSubmit = async (
 
       try {
         const statusResponse = await fetch(
-          `${appWidgetApiBase()}/api/widget/tryon-status/${predictionId}`,
+          buildTryonStatusUrl(predictionId, effectiveShopDomainRef.current || effectiveShopDomain),
           {
             headers: {
               'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
@@ -4516,6 +4631,19 @@ const handleSubmit = async (
     pendingEmbedTryOnChatCompletionRef.current = false;
     setTryOnLoadingInChat(false);
   };
+
+  const productSessionKeyRef = useRef('');
+  useEffect(() => {
+    const nextKey = `${String(productId || '').trim()}::${String(localProductHandle || productHandle || '').trim().toLowerCase()}`;
+    if (!nextKey || nextKey === '::') return;
+    if (!productSessionKeyRef.current) {
+      productSessionKeyRef.current = nextKey;
+      return;
+    }
+    if (productSessionKeyRef.current === nextKey) return;
+    productSessionKeyRef.current = nextKey;
+    resetWidget();
+  }, [productId, productHandle, localProductHandle]);
 
   useEffect(() => {
     return () => {
@@ -5015,6 +5143,13 @@ const handleSubmit = async (
         }
         if (searchRes.candidates.length) {
           candidate_products = searchRes.candidates;
+        } else if (
+          stylistEnabled &&
+          intention === 'custom' &&
+          searchRes.error &&
+          searchRes.error !== 'no_session'
+        ) {
+          console.warn('[Omafit catalog-search] sem candidatos para pedido custom:', searchRes);
         }
         if (searchRes.error && searchRes.error !== 'no_session') {
           console.warn('[Omafit catalog-search]', searchRes.error, searchRes.diagnostic || '');
@@ -5120,6 +5255,16 @@ const handleSubmit = async (
         console.log('🛍️ Omafit candidatos para o consultor:', nOmafitCandidates);
       }
 
+      const anchorPrice = resolveAnchorProductPrice(productCatalog, selectedVariantId);
+      const previouslySuggestedProducts = lastStylistSuggestionsRef.current
+        .map((s) => ({
+          handle: s.handle,
+          title: s.title,
+          price_amount: s.price_amount ?? null,
+          currency_code: s.currency_code ?? null,
+        }))
+        .filter((s) => s.handle);
+
       const payload = {
         altura_cm: sizeData.height,
         peso_kg: sizeData.weight,
@@ -5133,7 +5278,14 @@ const handleSubmit = async (
         elasticidade: localCollectionElasticity || 'light_flex',
         categoria: localCollectionType || 'upper',
         tamanho_calculado_algoritmo:
-          String(tryOnAlgorithmSizeRef.current || calculatedSize || recommendedSize || 'M').trim() || 'M',
+          String(
+            resolveAlgorithmSizeForCatalog(
+              tryOnAlgorithmSizeRef.current || calculatedSize || recommendedSize || '',
+              productCatalog,
+            ) || '',
+          ).trim(),
+        product_has_size_variants: catalogHasNamedSizeGrade(productCatalog),
+        single_size_product: !catalogHasNamedSizeGrade(productCatalog),
         intencao_usuario: intencaoForPayload,
         custom_message: customMessageForPayload,
         session_id: analyticsSessionId || sessionId,
@@ -5171,6 +5323,15 @@ const handleSubmit = async (
           return base;
         })(),
         ...(candidate_products ? { candidate_products } : {}),
+        ...(anchorPrice.price_amount != null
+          ? {
+              anchor_product_price_amount: anchorPrice.price_amount,
+              anchor_product_currency_code: anchorPrice.currency_code || undefined,
+            }
+          : {}),
+        ...(previouslySuggestedProducts.length
+          ? { previously_suggested_products: previouslySuggestedProducts }
+          : {}),
         ...(stylistEnabled && canOmafitSearch
           ? {
               stylist_brief: buildStylistBriefForSearch(
@@ -5220,9 +5381,17 @@ const handleSubmit = async (
         const data = result.data;
         const should_end_conversation = Boolean(data.should_end_conversation);
         const suggested_products = data.suggested_products;
-        const tamanhoFinal = String(data.tamanho_final ?? '').trim();
+        let tamanhoFinal = String(data.tamanho_final ?? '').trim();
         const allowOpeningExtras = !stylistOpeningExtrasConsumedRef.current;
         let explicacao = typeof data.explicacao === 'string' ? data.explicacao.trim() : '';
+        const guarded = guardAssistantSizeClaims({
+          tamanhoFinal,
+          explicacao,
+          catalog: productCatalogRef.current,
+          language: currentLanguage === 'es' ? 'es' : currentLanguage === 'en' ? 'en' : 'pt',
+        });
+        tamanhoFinal = guarded.tamanhoFinal;
+        explicacao = guarded.explicacao;
         if (!explicacao && tamanhoFinal && allowOpeningExtras) {
           const sizeFallback = {
             pt: `Tamanho sugerido: ${tamanhoFinal}. Veja o espelho virtual e adicione ao carrinho se quiser.`,
@@ -5350,13 +5519,6 @@ const handleSubmit = async (
         }
 
         if (requestSeq !== gptAssistSeqRef.current) return;
-        if (
-          chatMessagesRef.current.some(
-            (m) => m.role === 'assistant' && m.tryOnResultVariant === 'suggested'
-          )
-        ) {
-          return;
-        }
         setChatMessages((prev) => [
           ...prev,
           {
@@ -5593,8 +5755,6 @@ const handleSubmit = async (
   const heroPresentationGateActive =
     Boolean(product) && tryonLayout !== 'pending' && tryonLayout === 'hero' && step !== 'result';
 
-  const [heroPresentationReady, setHeroPresentationReady] = useState(false);
-
   useEffect(() => {
     if (!heroPresentationGateActive) {
       setHeroPresentationReady(false);
@@ -5704,6 +5864,7 @@ const handleSubmit = async (
   const heroChromeActive = isHeroLayout && step !== 'result';
 
   return (
+    <>
     <motion.div
       className={`omafit-tryon-root w-full min-h-0${
         embed ? ' flex h-full min-h-0 w-full flex-1 flex-col' : ''
@@ -6508,6 +6669,23 @@ const handleSubmit = async (
             </motion.div>
 
             <motion.div variants={tryonTextStaggerChild} className={isHeroLayout ? 'w-full max-w-sm' : ''}>
+              {shopper.shopperProfileLoading ? (
+                <div className="omafit-shopper-restore-loading flex w-full items-center justify-center gap-2 rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-600">
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                  <span>{t('shopperProfileLoading')}</span>
+                </div>
+              ) : shopper.showRestorePrompt ? (
+                <ShopperProfilePrompt
+                  mode="restore"
+                  primaryColor={localPrimaryColor}
+                  contrastText={contrastTextOnHex(localPrimaryColor)}
+                  t={t}
+                  onContinue={shopper.handleAcceptShopperRestore}
+                  onUpdateMeasurements={shopper.handleUpdateShopperMeasurements}
+                  onForget={() => void shopper.handleForgetShopperProfile()}
+                  forgetting={shopper.shopperForgetting}
+                />
+              ) : (
               <button
                 type="button"
                 onClick={() => setStep('calculator')}
@@ -6520,14 +6698,8 @@ const handleSubmit = async (
                 {t('startNow')}
                 <ArrowRight className="h-5 w-5 md:h-6 md:w-6" />
               </button>
+              )}
             </motion.div>
-
-            <motion.p
-              variants={tryonTextStaggerChild}
-              className={`text-center text-gray-500 ${isHeroLayout ? 'max-w-sm text-xs leading-snug' : 'text-sm'}`}
-            >
-              {t('privacyNote')}
-            </motion.p>
           </motion.div>
             </div>
             {embed && (
@@ -6566,6 +6738,23 @@ const handleSubmit = async (
                     </h3>
                     <p className="text-sm text-gray-700 sm:text-base">{t('visualExperienceDesc')}</p>
                   </div>
+                  {shopper.shopperProfileLoading ? (
+                    <div className="omafit-shopper-restore-loading flex w-full items-center justify-center gap-2 rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-600">
+                      <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                      <span>{t('shopperProfileLoading')}</span>
+                    </div>
+                  ) : shopper.showRestorePrompt ? (
+                    <ShopperProfilePrompt
+                      mode="restore"
+                      primaryColor={localPrimaryColor}
+                      contrastText={contrastTextOnHex(localPrimaryColor)}
+                      t={t}
+                      onContinue={shopper.handleAcceptShopperRestore}
+                      onUpdateMeasurements={shopper.handleUpdateShopperMeasurements}
+                      onForget={() => void shopper.handleForgetShopperProfile()}
+                      forgetting={shopper.shopperForgetting}
+                    />
+                  ) : (
                   <button
                     type="button"
                     onClick={() => setStep('calculator')}
@@ -6578,11 +6767,7 @@ const handleSubmit = async (
                     {t('startNow')}
                     <ArrowRight className="h-5 w-5" />
                   </button>
-                  <p
-                    className={`text-xs text-gray-500 sm:text-sm${isHeroLayout ? ' text-left' : ' text-center'}`}
-                  >
-                    {t('privacyNote')}
-                  </p>
+                  )}
                 </motion.div>
               </motion.div>
             )}
@@ -6801,6 +6986,7 @@ const handleSubmit = async (
                   className="hidden"
                 />
               </motion.div>
+              <p className="text-center text-xs text-gray-500 sm:text-sm">{t('privacyNote')}</p>
             </div>
 
             {(!embed || (embed && isHeroLayout)) && (
@@ -6944,6 +7130,7 @@ const handleSubmit = async (
                     className="hidden"
                   />
                 </motion.div>
+                <p className="text-center text-xs text-gray-500 sm:text-sm">{t('privacyNote')}</p>
               </div>
             </div>
             )}
@@ -7065,6 +7252,9 @@ const handleSubmit = async (
                         className="hidden"
                       />
                     </motion.div>
+                    <p className="text-center text-[9px] leading-snug text-gray-500 sm:text-[10px]">
+                      {t('privacyNote')}
+                    </p>
                   </div>
                 </div>
               </div>
@@ -7114,6 +7304,21 @@ const handleSubmit = async (
                 {t('estimatedTime')}
               </p>
             </motion.div>
+            {shopper.shouldShowShopperSavePrompt ? (
+              <motion.div variants={tryonTextStaggerChild}>
+                <ShopperProfilePrompt
+                  mode="save-compact"
+                  primaryColor={localPrimaryColor}
+                  t={t}
+                  consentChecked={shopper.shopperSaveConsent}
+                  onConsentChange={shopper.handleShopperSaveConsentChange}
+                  onDismiss={shopper.handleDismissShopperSave}
+                  saving={shopper.shopperProfileSaving}
+                  saved={shopper.shopperSavePromptShowsSaved}
+                  saveError={shopper.shopperSaveError}
+                />
+              </motion.div>
+            ) : null}
           </motion.div>
         )}
 
@@ -7132,5 +7337,24 @@ const handleSubmit = async (
         </div>
       </div>
     </motion.div>
+    {shopper.shouldShowWhatsappOptIn ? (
+      <ShopperWhatsAppOptInPrompt
+        primaryColor={localPrimaryColor}
+        t={t}
+        phone={shopper.whatsappPhone}
+        onPhoneChange={shopper.setWhatsappPhone}
+        consentChecked={shopper.whatsappConsent}
+        onConsentChange={shopper.setWhatsappConsent}
+        showPhotoConsent={Boolean(sessionModelImageUrlRef.current?.startsWith('http'))}
+        photoConsentChecked={shopper.whatsappPhotoConsent}
+        onPhotoConsentChange={shopper.setWhatsappPhotoConsent}
+        onSubmit={() => void shopper.handleSaveWhatsappOptIn()}
+        onDismiss={() => shopper.setWhatsappDismissed(true)}
+        saving={shopper.whatsappSaving}
+        saved={shopper.whatsappSaved}
+        error={shopper.whatsappError}
+      />
+    ) : null}
+    </>
   );
 }

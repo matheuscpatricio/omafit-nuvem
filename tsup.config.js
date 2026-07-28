@@ -23,7 +23,7 @@ function viteEnvDefines() {
 			process.env.VITE_OMAFIT_APP_URL ||
 				process.env.NUVEMSHOP_APP_URL ||
 				process.env.OMAFIT_APP_URL ||
-				"",
+				"https://omafit-nuvem-production.up.railway.app",
 		),
 		"import.meta.env.VITE_OMAFIT_WIDGET_HMAC_SECRET": json(
 			process.env.VITE_OMAFIT_WIDGET_HMAC_SECRET ||

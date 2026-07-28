@@ -1284,7 +1284,6 @@ export function WidgetPage() {
 										{config?.link_text || t("startNow")}
 										<ArrowRight className="w-5 h-5 md:w-6 md:h-6" />
 									</button>
-									<p className="text-sm md:text-base text-center text-gray-500">{t("privacyNote")}</p>
 								</div>
 							) : null}
 
@@ -1515,6 +1514,7 @@ export function WidgetPage() {
 											)}
 											<input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageChange} className="hidden" />
 										</div>
+										<p className="text-sm md:text-base text-center text-gray-500">{t("privacyNote")}</p>
 									</div>
 
 									<div className="hidden md:flex md:gap-6">
@@ -1575,6 +1575,7 @@ export function WidgetPage() {
 												)}
 												<input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageChange} className="hidden" />
 											</div>
+											<p className="text-sm text-center text-gray-500">{t("privacyNote")}</p>
 										</div>
 									</div>
 

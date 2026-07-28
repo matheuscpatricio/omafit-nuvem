@@ -123,6 +123,32 @@ export const widgetTranslations = {
     suggestedProductLoadError: 'Não foi possível carregar este produto. Tente outra sugestão.',
     embeddedSuggestionTryOnCaption:
       'Adorei como {suggestedProduct} combina com {anchorProduct}: proporções harmônicas e um conjunto coeso no espelho virtual. Se faz sentido para o seu estilo, siga para adicionar ao carrinho e finalize o pedido.',
+    shopperProfileWelcomeBack: 'Bem-vindo de volta!',
+    shopperProfileWelcomeBackDesc: 'Encontramos suas medidas salvas nesta loja. Quer continuar de onde parou?',
+    shopperProfileContinue: 'Continuar com meu perfil',
+    shopperProfileUpdateMeasurements: 'Atualizar medidas',
+    shopperProfileForget: 'Esquecer meus dados nesta loja',
+    shopperProfileSaveCompactTitle: 'Salvar medidas para a próxima vez?',
+    shopperProfileSaveCompactConsent: 'Concordo em guardar nesta loja.',
+    shopperProfileSavedCompact: 'Medidas salvas',
+    shopperProfileLoading: 'Verificando seu perfil…',
+    shopperProfileSaveError: 'Não foi possível salvar. Tente novamente.',
+    shopperProfileDeleteError: 'Não foi possível apagar seus dados. Tente novamente.',
+    shopperProfileSaveDismiss: 'Agora não',
+    shopperWhatsAppTitle: 'Quer receber no WhatsApp?',
+    shopperWhatsAppDesc: 'A loja pode te enviar ofertas do que você provou aqui.',
+    shopperWhatsAppPhoneLabel: 'Seu WhatsApp',
+    shopperWhatsAppPhonePlaceholder: '(11) 99999-9999',
+    shopperWhatsAppConsent:
+      'Concordo em receber mensagens de marketing desta loja no WhatsApp. Posso cancelar a qualquer momento.',
+    shopperWhatsAppPhotoConsent:
+      'Autorizo o uso da minha foto de try-on em campanhas personalizadas no WhatsApp.',
+    shopperWhatsAppSubmit: 'Cadastrar',
+    shopperWhatsAppDismiss: 'Agora não',
+    shopperWhatsAppSaved: 'Pronto! Você vai receber no WhatsApp.',
+    shopperWhatsAppError: 'Não foi possível salvar. Tente de novo.',
+    shopperWhatsAppEncryptionError:
+      'Serviço temporariamente indisponível. Tente novamente em alguns minutos.',
   },
   es: {
     // Loading
@@ -247,6 +273,32 @@ export const widgetTranslations = {
     suggestedProductLoadError: 'No se pudo cargar este producto. Prueba otra sugerencia.',
     embeddedSuggestionTryOnCaption:
       'Me encanta cómo {suggestedProduct} funciona con {anchorProduct}: proporciones equilibradas y un conjunto muy armónico en el probador. Si te convence, añádelo al carrito y termina tu compra.',
+    shopperProfileWelcomeBack: '¡Bienvenido de nuevo!',
+    shopperProfileWelcomeBackDesc: 'Encontramos tus medidas guardadas en esta tienda. ¿Quieres continuar donde lo dejaste?',
+    shopperProfileContinue: 'Continuar con mi perfil',
+    shopperProfileUpdateMeasurements: 'Actualizar medidas',
+    shopperProfileForget: 'Olvidar mis datos en esta tienda',
+    shopperProfileSaveCompactTitle: '¿Guardar medidas para la próxima vez?',
+    shopperProfileSaveCompactConsent: 'Acepto guardar en esta tienda.',
+    shopperProfileSavedCompact: 'Medidas guardadas',
+    shopperProfileLoading: 'Comprobando tu perfil…',
+    shopperProfileSaveError: 'No se pudo guardar. Inténtalo de nuevo.',
+    shopperProfileDeleteError: 'No se pudieron borrar tus datos. Inténtalo de nuevo.',
+    shopperProfileSaveDismiss: 'Ahora no',
+    shopperWhatsAppTitle: '¿Recibes en WhatsApp?',
+    shopperWhatsAppDesc: 'La tienda puede enviarte ofertas de lo que probaste aquí.',
+    shopperWhatsAppPhoneLabel: 'Tu WhatsApp',
+    shopperWhatsAppPhonePlaceholder: '+34 600 000 000',
+    shopperWhatsAppConsent:
+      'Acepto recibir mensajes de marketing de esta tienda por WhatsApp. Puedo cancelar en cualquier momento.',
+    shopperWhatsAppPhotoConsent:
+      'Autorizo el uso de mi foto de try-on en campañas personalizadas por WhatsApp.',
+    shopperWhatsAppSubmit: 'Registrar',
+    shopperWhatsAppDismiss: 'Ahora no',
+    shopperWhatsAppSaved: '¡Listo! Recibirás mensajes en WhatsApp.',
+    shopperWhatsAppError: 'No se pudo guardar. Inténtalo de nuevo.',
+    shopperWhatsAppEncryptionError:
+      'Servicio temporalmente no disponible. Inténtalo de nuevo en unos minutos.',
   },
   en: {
     // Loading
@@ -371,6 +423,32 @@ export const widgetTranslations = {
     suggestedProductLoadError: 'Could not load this product. Try another suggestion.',
     embeddedSuggestionTryOnCaption:
       'I love how {suggestedProduct} pairs with {anchorProduct} — balanced proportions and a cohesive outfit in the mirror. If it feels right, add to cart and complete your order.',
+    shopperProfileWelcomeBack: 'Welcome back!',
+    shopperProfileWelcomeBackDesc: 'We found your saved measurements for this store. Continue where you left off?',
+    shopperProfileContinue: 'Continue with my profile',
+    shopperProfileUpdateMeasurements: 'Update measurements',
+    shopperProfileForget: 'Forget my data in this store',
+    shopperProfileSaveCompactTitle: 'Save measurements for next time?',
+    shopperProfileSaveCompactConsent: 'I agree to save in this store.',
+    shopperProfileSavedCompact: 'Measurements saved',
+    shopperProfileLoading: 'Checking your profile…',
+    shopperProfileSaveError: 'Could not save. Please try again.',
+    shopperProfileDeleteError: 'Could not delete your data. Please try again.',
+    shopperProfileSaveDismiss: 'Not now',
+    shopperWhatsAppTitle: 'Get WhatsApp updates?',
+    shopperWhatsAppDesc: 'The store can send you offers for items you tried on here.',
+    shopperWhatsAppPhoneLabel: 'Your WhatsApp',
+    shopperWhatsAppPhonePlaceholder: '+1 555 000 0000',
+    shopperWhatsAppConsent:
+      'I agree to receive marketing messages from this store on WhatsApp. I can opt out anytime.',
+    shopperWhatsAppPhotoConsent:
+      'I authorize using my try-on photo in personalized WhatsApp campaigns.',
+    shopperWhatsAppSubmit: 'Sign up',
+    shopperWhatsAppDismiss: 'Not now',
+    shopperWhatsAppSaved: 'Done! You will get WhatsApp messages.',
+    shopperWhatsAppError: 'Could not save. Please try again.',
+    shopperWhatsAppEncryptionError:
+      'Service temporarily unavailable. Please try again in a few minutes.',
   },
 };
 

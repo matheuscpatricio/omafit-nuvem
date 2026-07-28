@@ -35,3 +35,17 @@ export function parseTryonLayoutFromConfigParam(): TryonLayoutMode | undefined {
 export function parseTryonLayoutFromLocation(): TryonLayoutMode | undefined {
   return parseTryonLayoutFromUrl() ?? parseTryonLayoutFromConfigParam();
 }
+
+/**
+ * A vitrine sempre envia `tryon_layout=default` na URL quando o layout é minimalista.
+ * Nesse caso o layout salvo no admin (postMessage / Supabase) deve poder substituir a URL.
+ * Só trava quando a URL pede explicitamente sidebar ou hero (preview / deep-link).
+ */
+export function shouldAllowStoreLayoutOverride(
+  layoutFromUrl: TryonLayoutMode | undefined,
+  tryonLayoutOverride: TryonLayoutMode | undefined
+): boolean {
+  if (tryonLayoutOverride !== undefined) return false;
+  if (layoutFromUrl === 'hero' || layoutFromUrl === 'sidebar') return false;
+  return true;
+}

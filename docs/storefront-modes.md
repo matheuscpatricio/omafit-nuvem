@@ -41,7 +41,10 @@ O legado permanece apenas para compatibilidade com temas antigos em producao.
 | Parametro `theme` | Resultado |
 |-------------------|-----------|
 | `patagonia` (case-insensitive) | `true` |
-| qualquer outro tema (ex.: `morelia`) | `false` |
-| ausente | `false`, exceto lojas em `OMAFIT_STOREFRONT_SDK_STORE_IDS` (whitelist de homolog) |
+| loja em `OMAFIT_STOREFRONT_SDK_STORE_IDS` | `true` apenas se `theme` vier **vazio** na requisição |
+| qualquer outro tema (ex.: `morelia`) | `false` — o script legado injeta o CTA com a config do admin |
+| ausente | `false`, exceto lojas em `OMAFIT_STOREFRONT_SDK_STORE_IDS` |
 
-O script legado envia `theme` via `window.LS.theme.name`. O `main.min.js` limpa os slots do NubeSDK e nao renderiza o CTA quando `storefront_sdk_enabled` e `false`, evitando botao duplicado em temas como Morelia.
+O `main.min.js` envia `theme` via `window.LS.theme.name`. O legado só deixa de injetar quando `storefront_sdk_enabled` e `true` **e** o tema no browser e Patagonia.
+
+No cliente, o SDK (`main.min.js`) so renderiza CTA em tema **Patagonia**; em Morelia nao remove o botao legado. A whitelist **nao** desativa o legado em temas como Morelia: nesses temas o NubeSDK nao expõe slots na PDP, entao o botao correto vem do `storefront-legacy.min.js`.

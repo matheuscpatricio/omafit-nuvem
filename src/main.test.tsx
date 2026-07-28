@@ -111,4 +111,32 @@ describe("App", () => {
 		expect(mockNube.clearSlot).toHaveBeenCalledWith("after_product_detail_add_to_cart");
 		expect(mockNube.clearSlot).toHaveBeenCalledWith("modal_content");
 	});
+
+	it("renders SDK CTA on Morelia when API enables SDK", async () => {
+		vi.stubGlobal("window", {
+			LS: { theme: { name: "morelia" } },
+		});
+		vi.stubGlobal("self", { __APP_DATA__: { id: "omafit-test" } });
+		const fetchMock = vi.fn().mockResolvedValue({
+			ok: true,
+			json: async () => ({
+				config: {
+					link_text: "Assistente inteligente",
+					widget_enabled: true,
+					excluded_collections: [],
+					cta_type: "button",
+				},
+				widgetUrl: "https://omafit-nuvem-production.up.railway.app/widget.html",
+				storefront_sdk_enabled: true,
+			}),
+		});
+		const { mockNube, triggerPageLoaded } = createMockNube(fetchMock);
+
+		await triggerPageLoaded();
+
+		expect(fetchMock).toHaveBeenCalled();
+		const configUrl = String(fetchMock.mock.calls[0]?.[0] || "");
+		expect(configUrl).toContain("theme=morelia");
+		expect(configUrl).toContain("/api/storefront/widget-config");
+	});
 });

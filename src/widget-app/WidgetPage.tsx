@@ -491,6 +491,7 @@ export function WidgetPage() {
   );
   const [tryonLayoutBackgroundImage, setTryonLayoutBackgroundImage] = useState<string>('');
   const [stylistModeEnabled, setStylistModeEnabled] = useState(false);
+  const [shopperDeviceId, setShopperDeviceId] = useState('');
 
   const tryonIframeSidebar = false;
   /** Sidebar ativa (URL ou config vinda do TryOnWidget) — iframe sem margens para o layout encaixar. */
@@ -560,6 +561,7 @@ export function WidgetPage() {
       params.get('lang') ||
       params.get('storeLanguage') ||
       params.get('locale');
+    const deviceIdParam = pickQ('omafit_device_id', 'omafitDeviceId', 'shopperDeviceId');
 
     console.log('🔍 ===== WIDGETPAGE: PARÂMETROS DA URL =====');
     console.log('   - shopName/shop_name:', shopNameParam);
@@ -638,6 +640,10 @@ export function WidgetPage() {
 
     if (pubId) {
       setPublicId(pubId);
+    }
+
+    if (deviceIdParam) {
+      setShopperDeviceId(deviceIdParam.trim());
     }
 
     if (shop) {
@@ -831,6 +837,9 @@ export function WidgetPage() {
           console.log('📸 Imagens do produto no contexto:', next.length);
           setProductImages((prev) => mergeProductImageGallery(hero, prev, next));
         }
+        if (hero) {
+          setProductImage(hero);
+        }
         if (event.data.defaultGender) {
           console.log('✅ Default Gender do contexto:', event.data.defaultGender);
           setDefaultGender(event.data.defaultGender);
@@ -853,6 +862,15 @@ export function WidgetPage() {
           console.log('🏪 Shop Domain do contexto:', event.data.shopDomain);
           setShopDomain(event.data.shopDomain);
         }
+        const contextDeviceId = String(
+          event.data.omafitDeviceId ||
+            event.data.omafit_device_id ||
+            event.data.shopperDeviceId ||
+            '',
+        ).trim();
+        if (contextDeviceId) {
+          setShopperDeviceId(contextDeviceId);
+        }
         const billingPlanCtx = event.data.billing_plan ?? event.data.billingPlan;
         if (billingPlanCtx != null && String(billingPlanCtx).trim() !== '') {
           setStylistModeEnabled(hasGrowthPlusPlan(String(billingPlanCtx)));
@@ -871,6 +889,10 @@ export function WidgetPage() {
           const handle = String(event.data.productHandle || event.data.product_handle || '').trim();
           console.log('📦 Product Handle do contexto:', handle);
           setProductHandle(handle);
+        }
+        const contextProductId = String(event.data.productId || event.data.product_id || '').trim();
+        if (contextProductId) {
+          setProductId(contextProductId);
         }
         const contextLanguage = normalizeWidgetLanguage(event.data.adminLocale || event.data.admin_locale || event.data.language);
         if (contextLanguage) {
@@ -953,6 +975,10 @@ export function WidgetPage() {
           const handle = String(event.data.productHandle || event.data.product_handle || '').trim();
           console.log('📦 Product Handle do config:', handle);
           setProductHandle(handle);
+        }
+        const configProductId = String(event.data.productId || event.data.product_id || '').trim();
+        if (configProductId) {
+          setProductId(configProductId);
         }
         if (event.data.defaultGender) {
           console.log('👤 Default Gender do config:', event.data.defaultGender);
@@ -1040,8 +1066,8 @@ export function WidgetPage() {
           setTryonLayoutBackgroundImage(heroBg.trim());
         }
         const layout = String(config.tryon_layout ?? config.tryonLayout ?? '').trim().toLowerCase();
-        if (layout === 'hero' || layout === 'sidebar') {
-          setTryonSidebarChrome(true);
+        if (layout === 'hero' || layout === 'sidebar' || layout === 'default') {
+          setTryonSidebarChrome(layout === 'sidebar' || layout === 'hero');
         }
         if (typeof config.tryon_enabled === 'boolean') {
           setTryonEnabledOverride(config.tryon_enabled);
@@ -1485,6 +1511,7 @@ export function WidgetPage() {
           tryonLayoutBackgroundImage={tryonLayoutBackgroundImage}
           onTryonLayoutChange={handleTryonLayoutChange}
           stylistModeEnabled={stylistModeEnabled}
+          shopperDeviceId={shopperDeviceId}
         />
       </div>
     </div>

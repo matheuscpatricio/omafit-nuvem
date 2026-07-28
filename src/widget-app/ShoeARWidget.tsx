@@ -84,7 +84,7 @@ const copy = {
 		imageFormats: "JPG, PNG ou WEBP (máx. 5MB)",
 		analyzing: "Analisando sua foto...",
 		footPhotoLabel: "Foto do pé",
-		privacyNote: "Sua foto é usada só para estimar o tamanho e não é compartilhada.",
+		privacyNote: "Suas fotos são processadas de forma segura e não são compartilhadas.",
 	},
 } as const;
 
@@ -759,7 +759,6 @@ export function ShoeARWidget(props: ShoeARWidgetProps) {
 								{replaceStoreName(ui.welcomeTitle, storeName)}
 							</h3>
 							<p className="text-gray-700 text-lg md:text-xl leading-relaxed">{ui.infoBody}</p>
-							<p className="text-sm text-gray-500">{ui.privacyNote}</p>
 						</div>
 						<button
 							type="button"
@@ -823,6 +822,7 @@ export function ShoeARWidget(props: ShoeARWidgetProps) {
 							)}
 						</button>
 						<input ref={fileInputRef} type="file" accept="image/*" capture="environment" onChange={handleSelectFootPhoto} className="hidden" />
+						<p className="mt-3 text-center text-sm text-gray-500">{ui.privacyNote}</p>
 					</div>
 				</div>
 			) : null}

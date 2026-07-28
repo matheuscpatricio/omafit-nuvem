@@ -1,5 +1,18 @@
 ﻿import { getStorefrontFontFamily, sanitizeFontFamilyForCss } from "./shared/storeFont";
+import {
+	OMAFIT_LEGACY_CTA_BUTTON_ID,
+	OMAFIT_LEGACY_CTA_WRAPPER_ID,
+	readLegacyCtaCache,
+	startLegacyCtaFlashGuard,
+	markLegacyCtaReady,
+	writeLegacyCtaCache,
+} from "./shared/storefrontCta";
 import { resolveCollectionHandleForStorefront, shouldUseFootwearWidget } from "./shared/widgetFootwearRouting";
+import { getOrCreateShopperDeviceId } from "./shared/shopperDeviceId";
+import { getLegacyStorefrontAppBaseUrl } from "./shared/omafitAppBaseUrl";
+import { isCategoryExcluded } from "./shared/categoryExclusion";
+
+startLegacyCtaFlashGuard();
 
 type LegacyStorefrontConfig = {
 	link_text: string;
@@ -26,6 +39,7 @@ type LegacyStorefrontResponse = {
 	footwear_rows_missing_handle?: boolean;
 	billing_plan?: string | null;
 	stylist_mode_enabled?: boolean;
+	storefront_sdk_enabled?: boolean;
 };
 
 type LegacyStoreContext = {
@@ -53,33 +67,118 @@ declare global {
 			theme?: {
 				name?: string;
 			};
+			product?: {
+				id?: number | string;
+				categories?: Array<number | string | { id?: number | string }>;
+				variants?: Array<Record<string, unknown>>;
+			};
 		};
 		OMAFIT_COLLECTION_HANDLE?: string;
 	}
 }
 
-const DEFAULT_APP_BASE = "https://omafit-nuvem-production.up.railway.app";
-const CTA_WRAPPER_ID = "omafit-legacy-wrapper";
-const CTA_BUTTON_ID = "omafit-legacy-button";
+const CTA_WRAPPER_ID = OMAFIT_LEGACY_CTA_WRAPPER_ID;
+const CTA_BUTTON_ID = OMAFIT_LEGACY_CTA_BUTTON_ID;
 const MODAL_ID = "omafit-legacy-modal";
 const STYLE_ID = "omafit-legacy-style";
+
+type LegacyRenderSnapshot = {
+	store: LegacyStoreContext;
+	config: LegacyStorefrontConfig;
+	widgetBaseUrl: string;
+	publicId: string;
+	footwearCollectionHandles: string[];
+	billingPlan: string;
+	stylistModeEnabled: boolean;
+};
+
+let lastLegacyRenderSnapshot: LegacyRenderSnapshot | null = null;
+let legacyInitChain: Promise<void> = Promise.resolve();
+let legacyRemountTimer: number | null = null;
+let legacyPersistenceStarted = false;
+const legacyProductCategoryCache = new Map<string, string[]>();
+
+function readProductCategoryIdsFromDom(): string[] {
+	const ids = new Set<string>();
+	const lsCategories = window.LS?.product?.categories;
+	if (Array.isArray(lsCategories)) {
+		for (const entry of lsCategories) {
+			if (typeof entry === "number" || typeof entry === "string") {
+				const text = String(entry).trim();
+				if (text) ids.add(text);
+				continue;
+			}
+			if (entry && typeof entry === "object" && entry.id != null) {
+				const text = String(entry.id).trim();
+				if (text) ids.add(text);
+			}
+		}
+	}
+
+	for (const element of Array.from(
+		document.querySelectorAll("[data-product-category-id],[data-category-id]"),
+	)) {
+		const raw =
+			element.getAttribute("data-product-category-id") || element.getAttribute("data-category-id");
+		for (const part of String(raw || "")
+			.split(",")
+			.map((value) => value.trim())
+			.filter(Boolean)) {
+			ids.add(part);
+		}
+	}
+
+	return Array.from(ids);
+}
+
+async function resolveLegacyProductCategoryIds(
+	store: LegacyStoreContext,
+	productHandle: string,
+): Promise<string[]> {
+	const cacheKey = `${store.id}:${productHandle}`;
+	if (legacyProductCategoryCache.has(cacheKey)) {
+		return legacyProductCategoryCache.get(cacheKey) || [];
+	}
+
+	const fromDom = readProductCategoryIdsFromDom();
+	if (fromDom.length) {
+		legacyProductCategoryCache.set(cacheKey, fromDom);
+		return fromDom;
+	}
+
+	try {
+		const endpoint = `${getAppBaseUrl()}/api/storefront/product-categories?store_id=${encodeURIComponent(store.id)}&product_handle=${encodeURIComponent(productHandle)}`;
+		const response = await fetch(endpoint, { mode: "cors" });
+		if (!response.ok) {
+			legacyProductCategoryCache.set(cacheKey, []);
+			return [];
+		}
+		const data = (await response.json()) as { category_ids?: string[] };
+		const categoryIds = Array.isArray(data.category_ids)
+			? data.category_ids.map((value) => String(value)).filter(Boolean)
+			: [];
+		legacyProductCategoryCache.set(cacheKey, categoryIds);
+		return categoryIds;
+	} catch {
+		legacyProductCategoryCache.set(cacheKey, []);
+		return [];
+	}
+}
+
+function shouldHideLegacyProduct(
+	categoryIds: string[],
+	config: LegacyStorefrontConfig | null | undefined,
+): boolean {
+	if (!config || config.widget_enabled === false) return true;
+	return isCategoryExcluded(categoryIds, config.excluded_collections);
+}
 
 function debugLog(message: string, data: Record<string, unknown>, hypothesisId: string) {
 	console.info("[Omafit Legacy Debug]", hypothesisId, message, data);
 }
 
 function getAppBaseUrl(): string {
-	const currentScript = document.currentScript as HTMLScriptElement | null;
-	if (currentScript?.src) {
-		return new URL(currentScript.src).origin;
-	}
-	const script = Array.from(document.scripts).find((item) =>
-		(item as HTMLScriptElement).src.includes("legacy-storefront.min.js"),
-	) as HTMLScriptElement | undefined;
-	if (script?.src) {
-		return new URL(script.src).origin;
-	}
-	return DEFAULT_APP_BASE;
+	return getLegacyStorefrontAppBaseUrl();
 }
 
 function getStoreContext(): LegacyStoreContext | null {
@@ -142,12 +241,19 @@ async function loadConfig(appBaseUrl: string, storeId: string) {
 		const response = await fetch(endpoint, { mode: "cors" });
 		if (!response.ok) throw new Error(`request failed: ${response.status}`);
 		const data = (await response.json()) as LegacyStorefrontResponse;
-		const config = data.config || {
-			link_text: "Ver meu tamanho ideal",
-			widget_enabled: true,
-			excluded_collections: [],
-			primary_color: "#810707",
-		};
+		const config = data.config;
+		if (!config) {
+			return {
+				config: null,
+				configLoaded: true,
+				widgetUrl: String(data.widgetUrl || `${appBaseUrl}/widget.html`),
+				publicId: String(data.publicId || ""),
+				footwearCollectionHandles: [] as string[],
+				billingPlan: String(data.billing_plan || ""),
+				stylistModeEnabled: Boolean(data.stylist_mode_enabled),
+				storefrontSdkEnabled: data.storefront_sdk_enabled === true,
+			};
+		}
 		const footwearHandles = Array.isArray(data.footwear_collection_handles)
 			? data.footwear_collection_handles.map((h) => String(h || "").trim()).filter(Boolean)
 			: [];
@@ -176,11 +282,13 @@ async function loadConfig(appBaseUrl: string, storeId: string) {
 		);
 		return {
 			config,
+			configLoaded: true,
 			widgetUrl: String(data.widgetUrl || `${appBaseUrl}/widget.html`),
 			publicId: String(data.publicId || ""),
 			footwearCollectionHandles: footwearHandles,
 			billingPlan: String(data.billing_plan || ""),
 			stylistModeEnabled: Boolean(data.stylist_mode_enabled),
+			storefrontSdkEnabled: data.storefront_sdk_enabled === true,
 		};
 	} catch (error) {
 		debugLog(
@@ -192,17 +300,14 @@ async function loadConfig(appBaseUrl: string, storeId: string) {
 			"L1",
 		);
 		return {
-			config: {
-				link_text: "Ver meu tamanho ideal",
-				widget_enabled: true,
-				excluded_collections: [],
-				primary_color: "#810707",
-			},
+			config: null,
+			configLoaded: false,
 			widgetUrl: `${appBaseUrl}/widget.html`,
 			publicId: "",
 			footwearCollectionHandles: [] as string[],
 			billingPlan: "",
 			stylistModeEnabled: false,
+			storefrontSdkEnabled: false,
 		};
 	}
 }
@@ -238,6 +343,10 @@ function buildProductVariantCatalog() {
 	const sizes = new Set<string>();
 	const colors = new Set<string>();
 	const variants: Array<Record<string, unknown>> = [];
+	const lsProduct = window.LS?.product;
+	const currencyCode = String(
+		(window as Window & { LS?: { currency?: { code?: string } } }).LS?.currency?.code || "BRL",
+	).trim();
 
 	if (form) {
 		for (const select of Array.from(form.querySelectorAll<HTMLSelectElement>("select"))) {
@@ -263,9 +372,34 @@ function buildProductVariantCatalog() {
 		}
 	}
 
+	if (Array.isArray(lsProduct?.variants)) {
+		for (const variant of lsProduct.variants) {
+			const values = Array.isArray(variant.values)
+				? variant.values.map((value) => String(value || "").trim()).filter(Boolean)
+				: [];
+			for (const value of values) {
+				if (/^\d+$/.test(value) || /^[a-z]{1,3}$/i.test(value)) {
+					sizes.add(value);
+				} else if (value) {
+					colors.add(value);
+				}
+			}
+		}
+	}
+
 	const variantId = getCurrentVariantId();
 	if (variantId) {
-		variants.push({ id: variantId, available: true });
+		const lsVariant = Array.isArray(lsProduct?.variants)
+			? lsProduct!.variants!.find((v) => String(v?.id ?? "").trim() === variantId)
+			: null;
+		const priceRaw = lsVariant?.price_number ?? lsVariant?.price;
+		const priceAmount =
+			priceRaw != null && Number.isFinite(Number(priceRaw)) ? Number(priceRaw) : null;
+		variants.push({
+			id: variantId,
+			available: true,
+			...(priceAmount != null ? { price_amount: priceAmount, currency_code: currencyCode } : {}),
+		});
 	}
 
 	return {
@@ -322,6 +456,8 @@ function postWidgetContextToIframe(iframe: HTMLIFrameElement, ctx: WidgetIframeC
 		product_images: product.imageUrls,
 		productHandle: product.handle,
 		product_handle: product.handle,
+		productId: product.productId,
+		product_id: product.productId,
 		productCatalog,
 		product_catalog: productCatalog,
 		selectedVariantId,
@@ -432,6 +568,7 @@ function buildWidgetUrl(
 	const widgetUrl = new URL(baseUrl);
 	const shopDomain = `nuvemshop/${store.id}`;
 	const storeName = deriveStoreDisplayName(store.domain);
+	const shopperDeviceId = getOrCreateShopperDeviceId();
 	const tryonLayout =
 		config.tryon_layout === "hero" || config.tryon_layout === "sidebar"
 			? config.tryon_layout
@@ -489,6 +626,10 @@ function buildWidgetUrl(
 	if (config.store_logo) widgetUrl.searchParams.set("store_logo", String(config.store_logo));
 	if (config.primary_color) widgetUrl.searchParams.set("primary_color", String(config.primary_color));
 	if (fontFamily) widgetUrl.searchParams.set("store_font", fontFamily);
+	if (shopperDeviceId) {
+		widgetUrl.searchParams.set("omafit_device_id", shopperDeviceId);
+		widgetUrl.searchParams.set("shopperDeviceId", shopperDeviceId);
+	}
 
 	return widgetUrl.toString();
 }
@@ -710,11 +851,143 @@ function ensureStyles(primaryColor: string) {
 	document.head.appendChild(style);
 }
 
+const BUY_CONTAINER_SELECTORS = [
+	".js-buy-button-container",
+	".js-product-buy-container",
+	'[data-store="product-buy-button"]',
+	".product-buy-container",
+];
+
 function getEmbedMount() {
-	const buyContainer = document.querySelector<HTMLElement>(".js-buy-button-container");
-	if (!buyContainer) return null;
+	let buyContainer: HTMLElement | null = null;
+	for (const selector of BUY_CONTAINER_SELECTORS) {
+		buyContainer = document.querySelector<HTMLElement>(selector);
+		if (buyContainer) break;
+	}
+	if (!buyContainer) {
+		const productForm =
+			document.querySelector<HTMLElement>(".js-product-form") ||
+			document.querySelector<HTMLElement>('[data-store^="product-form-"]');
+		if (!productForm) return null;
+		return {
+			buyContainer: productForm,
+			row: productForm.closest(".row") || productForm,
+		};
+	}
 	const row = buyContainer.closest(".row") || buyContainer;
 	return { buyContainer, row };
+}
+
+function isLegacyCtaReady() {
+	const wrapper = document.getElementById(CTA_WRAPPER_ID);
+	return Boolean(
+		wrapper?.isConnected &&
+			wrapper.classList.contains("omafit-legacy-ready") &&
+			wrapper.querySelector(`#${CTA_BUTTON_ID}`),
+	);
+}
+
+function rememberLegacyRenderSnapshot(
+	store: LegacyStoreContext,
+	config: LegacyStorefrontConfig,
+	widgetBaseUrl: string,
+	publicId: string | null | undefined,
+	footwearCollectionHandles: string[],
+	billingPlan: string,
+	stylistModeEnabled: boolean,
+) {
+	lastLegacyRenderSnapshot = {
+		store,
+		config,
+		widgetBaseUrl,
+		publicId: String(publicId || ""),
+		footwearCollectionHandles,
+		billingPlan,
+		stylistModeEnabled,
+	};
+}
+
+function remountLegacyCtaFromSnapshot(reason: string) {
+	const snapshot = lastLegacyRenderSnapshot;
+	if (!snapshot) return false;
+	const product = getProductContext();
+	if (!product) return false;
+	if (snapshot.config.widget_enabled === false) return false;
+	const cacheKey = `${snapshot.store.id}:${product.handle}`;
+	const categoryIds = legacyProductCategoryCache.get(cacheKey) || [];
+	if (shouldHideLegacyProduct(categoryIds, snapshot.config)) {
+		removeLegacyCtaIfPresent();
+		return false;
+	}
+	debugLog("legacy_cta_remount", { reason, productHandle: product.handle }, "L4");
+	return renderButton(
+		snapshot.store,
+		product,
+		snapshot.config,
+		snapshot.widgetBaseUrl,
+		snapshot.publicId,
+		snapshot.footwearCollectionHandles,
+		snapshot.billingPlan,
+		snapshot.stylistModeEnabled,
+		categoryIds,
+	);
+}
+
+function scheduleLegacyRemount(reason: string) {
+	if (!lastLegacyRenderSnapshot) return;
+	if (legacyRemountTimer != null) {
+		window.clearTimeout(legacyRemountTimer);
+	}
+	legacyRemountTimer = window.setTimeout(() => {
+		legacyRemountTimer = null;
+		if (isLegacyCtaReady()) return;
+		remountLegacyCtaFromSnapshot(reason);
+	}, 150);
+}
+
+function startLegacyCtaPersistence() {
+	if (legacyPersistenceStarted) return;
+	legacyPersistenceStarted = true;
+
+	const root =
+		document.querySelector(".js-product-container") ||
+		document.querySelector(".js-product-form") ||
+		document.querySelector('[data-store^="product-form-"]') ||
+		document.body;
+
+	if (typeof MutationObserver !== "undefined" && root) {
+		const observer = new MutationObserver(() => {
+			if (!getProductContext() || !lastLegacyRenderSnapshot) return;
+			if (!isLegacyCtaReady()) {
+				scheduleLegacyRemount("dom_mutation");
+			}
+		});
+		observer.observe(root, { childList: true, subtree: true });
+	}
+
+	window.setInterval(() => {
+		if (!getProductContext() || !lastLegacyRenderSnapshot) return;
+		if (!isLegacyCtaReady()) {
+			scheduleLegacyRemount("interval_check");
+		}
+	}, 2000);
+
+	document.addEventListener(
+		"change",
+		(event) => {
+			const target = event.target;
+			if (!(target instanceof HTMLElement)) return;
+			if (
+				target.closest(".js-product-form") ||
+				target.closest(".js-product-variants-group") ||
+				target.closest('[data-store^="product-form-"]') ||
+				target.closest(".js-buy-button-container")
+			) {
+				scheduleLegacyRemount("product_form_change");
+			}
+		},
+		true,
+	);
 }
 
 function applyCtaWrapperSpacing(wrapper: HTMLElement, embedPosition?: string) {
@@ -728,10 +1001,8 @@ function applyCtaWrapperSpacing(wrapper: HTMLElement, embedPosition?: string) {
 	}
 }
 
-function isPatagoniaTheme() {
-	return String(window.LS?.theme?.name || "")
-		.trim()
-		.toLowerCase() === "patagonia";
+function removeLegacyCtaIfPresent() {
+	document.getElementById(CTA_WRAPPER_ID)?.remove();
 }
 
 function mountCtaWrapper(wrapper: HTMLElement, embedPosition?: string) {
@@ -745,19 +1016,19 @@ function mountCtaWrapper(wrapper: HTMLElement, embedPosition?: string) {
 	if (above) {
 		mount.buyContainer.insertAdjacentElement("beforebegin", wrapper);
 	} else {
-		mount.row.insertAdjacentElement("afterend", wrapper);
+		mount.buyContainer.insertAdjacentElement("afterend", wrapper);
 	}
 	return true;
 }
 
 function createStorefrontCta(config: LegacyStorefrontConfig, onOpen: () => void) {
 	const primaryColor = config.primary_color || "#810707";
-	const label = config.link_text || "Ver meu tamanho ideal";
+	const label = String(config.link_text || "").trim();
+	if (!label) return null;
 	const isButton = config.cta_type === "button";
 	const radius = Number.isFinite(Number(config.cta_button_border_radius))
 		? Math.max(0, Math.min(40, Number(config.cta_button_border_radius)))
 		: 40;
-	const logoUrl = config.store_logo ? String(config.store_logo) : "";
 
 	if (isButton) {
 		const button = document.createElement("button");
@@ -778,16 +1049,6 @@ function createStorefrontCta(config: LegacyStorefrontConfig, onOpen: () => void)
 		button.style.fontWeight = "600";
 		button.style.lineHeight = "1.25";
 		button.style.boxShadow = "0 1px 3px rgba(0,0,0,0.08)";
-		if (logoUrl) {
-			const img = document.createElement("img");
-			img.src = logoUrl;
-			img.alt = "";
-			img.style.width = "32px";
-			img.style.height = "32px";
-			img.style.objectFit = "contain";
-			img.style.borderRadius = "6px";
-			button.appendChild(img);
-		}
 		const span = document.createElement("span");
 		span.textContent = label;
 		button.appendChild(span);
@@ -838,6 +1099,9 @@ function ensureModal(widgetUrl: string, iframeContext?: WidgetIframeContext | nu
 	}
 	const iframe = modal.querySelector("iframe");
 	if (iframe instanceof HTMLIFrameElement) {
+		if (iframe.src !== widgetUrl) {
+			iframe.src = "about:blank";
+		}
 		iframe.src = widgetUrl;
 		if (iframeContext) {
 			lastWidgetIframeContext = iframeContext;
@@ -861,10 +1125,23 @@ function renderButton(
 	footwearCollectionHandles: string[],
 	billingPlan: string,
 	stylistModeEnabled: boolean,
-) {
+	categoryIds: string[] = [],
+): boolean {
 	if (config.widget_enabled === false) {
 		debugLog("render_skipped_disabled", { storeId: store.id }, "L2");
-		return;
+		lastLegacyRenderSnapshot = null;
+		removeLegacyCtaIfPresent();
+		return false;
+	}
+	if (shouldHideLegacyProduct(categoryIds, config)) {
+		debugLog(
+			"render_skipped_excluded_category",
+			{ storeId: store.id, productHandle: product.handle, categoryIds },
+			"L2",
+		);
+		lastLegacyRenderSnapshot = null;
+		removeLegacyCtaIfPresent();
+		return false;
 	}
 	const currentCollectionHandle = resolveCollectionHandleForStorefront(
 		footwearCollectionHandles,
@@ -889,8 +1166,12 @@ function renderButton(
 	);
 	const mount = getEmbedMount();
 	if (!mount) {
-		debugLog("render_missing_mount", { selector: ".js-buy-button-container" }, "L2");
-		return;
+		debugLog(
+			"render_missing_mount",
+			{ selectors: BUY_CONTAINER_SELECTORS },
+			"L2",
+		);
+		return false;
 	}
 	const resolvedBaseUrl = resolveWidgetBaseUrl(
 		widgetBaseUrl,
@@ -938,14 +1219,36 @@ function renderButton(
 		const modal = ensureModal(widgetUrl, iframeContext);
 		modal.hidden = false;
 	};
+	const ctaNode = createStorefrontCta(config, openWidget);
+	if (!ctaNode) {
+		if (isLegacyCtaReady()) {
+			debugLog("render_kept_existing_cta", { storeId: store.id }, "L2");
+			return true;
+		}
+		removeLegacyCtaIfPresent();
+		return false;
+	}
 	let wrapper = document.getElementById(CTA_WRAPPER_ID);
 	if (!wrapper) {
 		wrapper = document.createElement("div");
 		wrapper.id = CTA_WRAPPER_ID;
 		wrapper.style.width = "100%";
 	}
-	if (!mountCtaWrapper(wrapper, config.embed_position)) return;
-	wrapper.replaceChildren(createStorefrontCta(config, openWidget));
+	wrapper.replaceChildren(ctaNode);
+	if (!mountCtaWrapper(wrapper, config.embed_position)) {
+		debugLog("render_mount_failed", { storeId: store.id }, "L2");
+		return isLegacyCtaReady();
+	}
+	markLegacyCtaReady(wrapper);
+	rememberLegacyRenderSnapshot(
+		store,
+		config,
+		widgetBaseUrl,
+		publicId,
+		footwearCollectionHandles,
+		billingPlan,
+		stylistModeEnabled,
+	);
 	debugLog(
 		"render_button_complete",
 		{
@@ -956,13 +1259,10 @@ function renderButton(
 		},
 		"L2",
 	);
+	return true;
 }
 
 async function init() {
-	if (isPatagoniaTheme()) {
-		debugLog("legacy_init_skipped_patagonia", {}, "L0");
-		return;
-	}
 	const store = getStoreContext();
 	const product = getProductContext();
 	attachMessageBridge();
@@ -973,15 +1273,97 @@ async function init() {
 			storeId: store?.id || null,
 			storeDomain: store?.domain || null,
 			productHandle: product?.handle || null,
+			themeName: String(window.LS?.theme?.name || "").trim() || null,
+			appBaseUrl: getAppBaseUrl(),
 			hasProductForm: Boolean(document.querySelector(".js-product-form")),
 			hasBuyContainer: Boolean(document.querySelector(".js-buy-button-container")),
 		},
 		"L0",
 	);
 	if (!store || !product) return;
+	const categoryIds = await resolveLegacyProductCategoryIds(store, product.handle);
 	const appBaseUrl = getAppBaseUrl();
-	const { config, widgetUrl, publicId, footwearCollectionHandles, billingPlan, stylistModeEnabled } =
-		await loadConfig(appBaseUrl, store.id);
+	const {
+		config,
+		configLoaded,
+		widgetUrl,
+		publicId,
+		footwearCollectionHandles,
+		billingPlan,
+		stylistModeEnabled,
+		storefrontSdkEnabled,
+	} = await loadConfig(appBaseUrl, store.id);
+	if (storefrontSdkEnabled) {
+		lastLegacyRenderSnapshot = null;
+		removeLegacyCtaIfPresent();
+		debugLog(
+			"legacy_init_skipped_sdk_enabled",
+			{ storeId: store.id, themeName: String(window.LS?.theme?.name || "").trim() || null },
+			"L0",
+		);
+		return;
+	}
+	if (config && shouldHideLegacyProduct(categoryIds, config)) {
+		lastLegacyRenderSnapshot = null;
+		removeLegacyCtaIfPresent();
+		debugLog(
+			"legacy_init_excluded_category",
+			{ storeId: store.id, productHandle: product.handle, categoryIds },
+			"L0",
+		);
+		return;
+	}
+	const cachedConfig = readLegacyCtaCache(store.id);
+	let renderedFromCache = false;
+	if (cachedConfig?.widget_enabled && config) {
+		renderedFromCache = renderButton(
+			store,
+			product,
+			{
+				link_text: cachedConfig.link_text,
+				store_logo: cachedConfig.store_logo,
+				primary_color: cachedConfig.primary_color,
+				widget_enabled: true,
+				excluded_collections: config.excluded_collections || [],
+				embed_position: cachedConfig.embed_position,
+				cta_type: cachedConfig.cta_type,
+				cta_button_border_radius: cachedConfig.cta_button_border_radius,
+				tryon_layout: cachedConfig.tryon_layout,
+				tryon_layout_background_image: cachedConfig.tryon_layout_background_image,
+			},
+			`${appBaseUrl}/widget.html`,
+			publicId,
+			footwearCollectionHandles,
+			billingPlan,
+			stylistModeEnabled,
+			categoryIds,
+		);
+	}
+	if (!configLoaded) {
+		if (!renderedFromCache && !isLegacyCtaReady() && !lastLegacyRenderSnapshot) {
+			removeLegacyCtaIfPresent();
+		} else {
+			scheduleLegacyRemount("config_unavailable");
+		}
+		debugLog("legacy_init_config_unavailable", { storeId: store.id }, "L0");
+		return;
+	}
+	if (!config) {
+		if (isLegacyCtaReady() || lastLegacyRenderSnapshot) {
+			scheduleLegacyRemount("config_missing");
+		} else {
+			removeLegacyCtaIfPresent();
+		}
+		debugLog("legacy_init_config_missing", { storeId: store.id }, "L0");
+		return;
+	}
+	if (config.widget_enabled === false) {
+		lastLegacyRenderSnapshot = null;
+		removeLegacyCtaIfPresent();
+		debugLog("legacy_init_widget_disabled", { storeId: store.id }, "L0");
+		return;
+	}
+	writeLegacyCtaCache(store.id, config);
 	renderButton(
 		store,
 		product,
@@ -991,16 +1373,39 @@ async function init() {
 		footwearCollectionHandles,
 		billingPlan,
 		stylistModeEnabled,
+		categoryIds,
 	);
+}
+
+function enqueueLegacyInit(attempt = 0) {
+	legacyInitChain = legacyInitChain
+		.then(async () => {
+			await init();
+			if (getProductContext() && !isLegacyCtaReady() && attempt < 24) {
+				await new Promise<void>((resolve) => {
+					window.setTimeout(resolve, 250);
+				});
+				enqueueLegacyInit(attempt + 1);
+			}
+		})
+		.catch((error) => {
+			debugLog(
+				"legacy_init_chain_error",
+				{ error: error instanceof Error ? error.message : String(error) },
+				"L0",
+			);
+		});
 }
 
 if (!(window as Window & { __omafitLegacyInit?: boolean }).__omafitLegacyInit) {
 	(window as Window & { __omafitLegacyInit?: boolean }).__omafitLegacyInit = true;
+	startLegacyCtaPersistence();
+	const bootstrap = () => {
+		enqueueLegacyInit(0);
+	};
 	if (document.readyState === "loading") {
-		document.addEventListener("DOMContentLoaded", () => {
-			void init();
-		});
+		document.addEventListener("DOMContentLoaded", bootstrap, { once: true });
 	} else {
-		void init();
+		bootstrap();
 	}
 }

@@ -10,16 +10,17 @@ export function getOmafitCatalogRuntimeConfig(): {
   isReady: boolean;
 } {
   const baseUrl = String(
-    import.meta.env.VITE_OMAFIT_APP_URL ||
+    (typeof import.meta !== 'undefined' && import.meta.env?.VITE_OMAFIT_APP_URL) ||
       (typeof window !== 'undefined' ? window.location.origin : '') ||
       '',
   )
     .trim()
     .replace(/\/$/, '');
   const secret = String(
-    import.meta.env.VITE_OMAFIT_WIDGET_HMAC_SECRET ||
-      import.meta.env.VITE_WIDGET_CATALOG_HMAC_SECRET ||
-      ''
+    (typeof import.meta !== 'undefined' &&
+      (import.meta.env?.VITE_OMAFIT_WIDGET_HMAC_SECRET ||
+        import.meta.env?.VITE_WIDGET_CATALOG_HMAC_SECRET)) ||
+      '',
   ).trim();
 
   return {

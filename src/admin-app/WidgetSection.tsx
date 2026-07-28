@@ -262,6 +262,7 @@ export function WidgetSection({
 
 					<div style={{ display: "grid", gap: 8 }}>
 						<span style={{ ...labelStyle, gap: 0 }}>{t("widget.logoUrl")}</span>
+						<span style={subtleTextStyle}>{t("widget.logoUrlHelp")}</span>
 						<input
 							type="file"
 							accept="image/png,image/jpeg,image/webp,image/svg+xml"
@@ -373,13 +374,6 @@ export function WidgetSection({
 									maxWidth: "100%",
 								}}
 							>
-								{config.store_logo ? (
-									<img
-										src={config.store_logo}
-										alt=""
-										style={{ width: 32, height: 32, objectFit: "contain", borderRadius: 6 }}
-									/>
-								) : null}
 								<span>{previewText}</span>
 							</button>
 						) : (

@@ -4,9 +4,11 @@ import {
 	collectionHandleFromUrl,
 	findVariantByRecommendedSize,
 	getStorefrontCtaSlot,
+	isPatagoniaStorefrontTheme,
 	loadStorefrontBootstrap,
 	resolveWidgetBaseUrl,
 	shouldHideForProduct,
+	shouldUseStorefrontSdk,
 } from "./nuvemshopStorefront";
 
 describe("nuvemshopStorefront", () => {
@@ -98,5 +100,15 @@ describe("nuvemshopStorefront", () => {
 
 		const bootstrap = await loadStorefrontBootstrap(123, "loja.nuvemshop.com.br");
 		expect(bootstrap.storefront_sdk_enabled).toBe(false);
+	});
+
+	it("uses SDK whenever storefront_sdk_enabled is true", () => {
+		const bootstrap = {
+			ready: true,
+			storefront_sdk_enabled: true,
+		};
+		expect(shouldUseStorefrontSdk(bootstrap)).toBe(true);
+		expect(shouldUseStorefrontSdk({ ...bootstrap, storefront_sdk_enabled: false })).toBe(false);
+		expect(isPatagoniaStorefrontTheme("Patagonia")).toBe(true);
 	});
 });

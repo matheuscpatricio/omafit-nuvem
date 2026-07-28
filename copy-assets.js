@@ -1,4 +1,4 @@
-import { copyFileSync, mkdirSync, writeFileSync } from "fs";
+import { copyFileSync, mkdirSync, writeFileSync, existsSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 
@@ -16,11 +16,13 @@ copyFileSync(join(distDir, "widget.min.js"), join(assetsDir, `widget-${buildId}.
 copyFileSync(join(distDir, "widget-footwear.min.js"), join(assetsDir, `widget-footwear-${buildId}.min.js`));
 copyFileSync(join(distDir, "storefront-legacy.min.js"), join(assetsDir, `storefront-legacy-${buildId}.min.js`));
 copyFileSync(join(distDir, "storefront-legacy-footwear.min.js"), join(assetsDir, `storefront-legacy-footwear-${buildId}.min.js`));
+const loaderSource = join(__dirname, "public", "storefront-legacy-loader.min.js");
+if (existsSync(loaderSource)) {
+	copyFileSync(loaderSource, join(distDir, "storefront-legacy-loader.min.js"));
+}
 
-// Garantir que o diretorio dist existe
 mkdirSync(distDir, { recursive: true });
 
-// Copiar index.html (storefront/local preview)
 const indexHtml = `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -42,7 +44,6 @@ const indexHtml = `<!DOCTYPE html>
 
 writeFileSync(join(distDir, "index.html"), indexHtml);
 
-// Pagina da home do app no Admin.
 const appHtml = `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -200,11 +201,10 @@ const widgetFootwearHtml = `<!DOCTYPE html>
 
 writeFileSync(join(distDir, "widget-footwear.html"), widgetFootwearHtml);
 
-// Criar um manifest.json valido e simples para evitar erros.
 const manifest = {
-  name: "Omafit Nuvemshop",
-  short_name: "Omafit",
-  display: "standalone"
+	name: "Omafit Nuvemshop",
+	short_name: "Omafit",
+	display: "standalone",
 };
 
 writeFileSync(join(distDir, "manifest.json"), JSON.stringify(manifest, null, 2));

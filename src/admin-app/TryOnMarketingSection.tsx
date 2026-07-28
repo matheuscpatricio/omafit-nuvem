@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { cardStyle, subtleTextStyle } from "./adminUi";
+import { brandColors, cardStyle, subtleTextStyle } from "./adminUi";
 import { useI18n } from "./i18n";
 
 const META_WHATSAPP_MANAGER_URL = "https://business.facebook.com/wa/manage/home/";
@@ -16,11 +16,36 @@ type Props = {
 
 type PreviewResponse = {
 	count?: number;
+	billable_recipients?: number;
 	estimated_cost_usd?: number;
 	generation_mode?: string;
 };
 
 type CampaignMode = "personalized_tryon" | "existing_tryon";
+
+type CampaignRow = {
+	id: string;
+	name: string;
+	status: string;
+	scheduled_at?: string | null;
+	started_at?: string | null;
+	created_at?: string | null;
+};
+
+function formatCampaignStatus(status: string | null | undefined, t: (key: string) => string) {
+	const key = String(status || "").trim();
+	if (!key) return "—";
+	const translationKey = `tryOnMarketing.campaignStatus.${key}`;
+	const translated = t(translationKey);
+	return translated === translationKey ? key : translated;
+}
+
+function formatCampaignDate(campaign: CampaignRow) {
+	const raw = campaign.scheduled_at || campaign.started_at || campaign.created_at;
+	if (!raw) return null;
+	const date = new Date(raw);
+	return Number.isNaN(date.getTime()) ? null : date.toLocaleString();
+}
 
 async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
 	const response = await fetch(url, options);
@@ -53,16 +78,21 @@ export function TryOnMarketingSection({
 	const [messageCount, setMessageCount] = useState(1);
 	const [showConnectionForm, setShowConnectionForm] = useState(false);
 	const [showAdvancedConnection, setShowAdvancedConnection] = useState(false);
+	const [campaigns, setCampaigns] = useState<CampaignRow[]>([]);
 
 	const load = useCallback(async () => {
 		setLoading(true);
 		try {
-			const [conn, met] = await Promise.all([
+			const [conn, met, campRes] = await Promise.all([
 				fetchJson<{ connected?: boolean; display_phone?: string }>(withStoreQuery("/api/whatsapp/connection")),
 				fetchJson<Record<string, number>>(withStoreQuery("/api/whatsapp/metrics")),
+				fetchJson<{ campaigns?: CampaignRow[] }>(withStoreQuery("/api/whatsapp/campaigns")).catch(() => ({
+					campaigns: [],
+				})),
 			]);
 			setConnection(conn);
 			setMetrics(met);
+			setCampaigns(campRes.campaigns || []);
 		} catch (error) {
 			onError(error instanceof Error ? error.message : t("tryOnMarketing.loadError"));
 		} finally {
@@ -117,7 +147,9 @@ export function TryOnMarketingSection({
 	const capturedCustomers = metrics?.opt_in_count ?? 0;
 	const maxMessageCount = useMemo(() => {
 		if (preview == null) return 0;
-		return Math.min(Math.max(0, preview.count ?? 0), capturedCustomers);
+		const eligible = Math.max(0, preview.count ?? 0);
+		const billable = Math.max(0, preview.billable_recipients ?? eligible);
+		return Math.min(eligible, capturedCustomers, billable);
 	}, [preview, capturedCustomers]);
 	const selectedMessageCost = useMemo(
 		() => (Number(messageCount) || 0) * WHATSAPP_MESSAGE_PRICE_USD,
@@ -312,6 +344,12 @@ export function TryOnMarketingSection({
 					{t("tryOnMarketing.metricsCustomers")}: {metrics?.opt_in_count ?? 0}
 				</span>
 				<span style={subtleTextStyle}>
+					{t("tryOnMarketing.metricsCampaigns")}: {metrics?.campaigns_total ?? 0}
+				</span>
+				<span style={subtleTextStyle}>
+					{t("tryOnMarketing.metricsSent")}: {metrics?.messages_sent ?? 0}
+				</span>
+				<span style={subtleTextStyle}>
 					{t("tryOnMarketing.metricsDelivered")}: {metrics?.messages_delivered ?? 0}
 				</span>
 			</div>
@@ -409,6 +447,92 @@ export function TryOnMarketingSection({
 						{t("tryOnMarketing.createCampaign")}
 					</button>
 				</div>
+			</div>
+
+			<div style={{ ...cardStyle, display: "grid", gap: 12 }}>
+				<strong>{t("tryOnMarketing.campaignsTitle")}</strong>
+				{campaigns.length === 0 ? (
+					<span style={subtleTextStyle}>{t("tryOnMarketing.campaignsEmpty")}</span>
+				) : (
+					<div style={{ overflowX: "auto" }}>
+						<table
+							style={{
+								width: "100%",
+								borderCollapse: "collapse",
+								fontSize: 14,
+							}}
+						>
+							<thead>
+								<tr>
+									<th
+										style={{
+											textAlign: "left",
+											padding: "10px 12px",
+											borderBottom: `1px solid ${brandColors.cardBorder}`,
+											color: brandColors.textMuted,
+											fontWeight: 600,
+										}}
+									>
+										{t("tryOnMarketing.campaignNameCol")}
+									</th>
+									<th
+										style={{
+											textAlign: "left",
+											padding: "10px 12px",
+											borderBottom: `1px solid ${brandColors.cardBorder}`,
+											color: brandColors.textMuted,
+											fontWeight: 600,
+										}}
+									>
+										{t("tryOnMarketing.campaignStatusCol")}
+									</th>
+									<th
+										style={{
+											textAlign: "left",
+											padding: "10px 12px",
+											borderBottom: `1px solid ${brandColors.cardBorder}`,
+											color: brandColors.textMuted,
+											fontWeight: 600,
+										}}
+									>
+										{t("tryOnMarketing.campaignScheduledCol")}
+									</th>
+								</tr>
+							</thead>
+							<tbody>
+								{campaigns.map((campaign) => (
+									<tr key={campaign.id}>
+										<td
+											style={{
+												padding: "12px",
+												borderBottom: `1px solid ${brandColors.cardBorder}`,
+											}}
+										>
+											{campaign.name}
+										</td>
+										<td
+											style={{
+												padding: "12px",
+												borderBottom: `1px solid ${brandColors.cardBorder}`,
+											}}
+										>
+											{formatCampaignStatus(campaign.status, t)}
+										</td>
+										<td
+											style={{
+												padding: "12px",
+												borderBottom: `1px solid ${brandColors.cardBorder}`,
+												color: brandColors.textMuted,
+											}}
+										>
+											{formatCampaignDate(campaign) || t("tryOnMarketing.notScheduled")}
+										</td>
+									</tr>
+								))}
+							</tbody>
+						</table>
+					</div>
+				)}
 			</div>
 		</div>
 	);

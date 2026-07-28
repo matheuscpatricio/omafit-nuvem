@@ -17,7 +17,7 @@ import {
 	isBillingActive,
 } from "./lib/billing-growth-plus.js";
 import { reactivateWidgetKeyForShop } from "./lib/widget-keys.js";
-import { listStoreProducts, getProductByHandle } from "./lib/nuvemshop-products.js";
+import { listStoreProducts, getProductByHandle, getProductCategoryIdsByHandle } from "./lib/nuvemshop-products.js";
 import {
 	verifyCatalogSearchSignature,
 	verifyProductByHandleSignature,
@@ -37,9 +37,15 @@ import { applySelfBillingPlan } from "./lib/self-billing-plan.js";
 import { getCanonicalShopKey } from "./lib/nuvemshop-shop-keys.js";
 import {
 	buildShopRecordLoadQueries,
+	expandAnalyticsDomainCandidates,
+	resolveTryonStoreContext,
 	normalizeLoadedShopRecord,
 } from "./lib/nuvemshop-store-records.js";
 import { forwardWhatsappAdminRequest } from "./lib/whatsapp-proxy.js";
+import {
+	buildHomologacaoReadinessReport,
+	fetchStorefrontWidgetConfig,
+} from "./lib/homologacao-readiness.js";
 import {
 	isStoreWhatsappPilotAllowed,
 	isWhatsappPilotRestrictionActive,
@@ -64,6 +70,10 @@ import {
 	handleCustomerDataRequest,
 } from "./lib/compliance.js";
 import { fetchOrderMetricsFromNuvemshop } from "./lib/analytics-orders.js";
+import {
+	isStorefrontSdkWhitelisted,
+	resolveStorefrontSdkEnabled,
+} from "./lib/storefront-sdk-mode.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -351,6 +361,127 @@ function forgetTryonJob(predictionId) {
 	saveTryonJobs(jobs);
 }
 
+async function persistTryonJobRemote(predictionId, payload = {}) {
+	const normalized = resolveTryonStoreContext({
+		storeId: String(payload.storeId || "").trim(),
+		shopDomain: String(payload.shopDomain || payload.storeUrl || "").trim(),
+	});
+	if (!normalized.storeId) return null;
+	try {
+		await supabaseUpsert(
+			"nuvemshop_tryon_jobs",
+			[
+				{
+					prediction_id: String(predictionId),
+					store_id: normalized.storeId,
+					shop_domain: normalized.shopDomain,
+				},
+			],
+			{ onConflict: "prediction_id" },
+		);
+	} catch (error) {
+		console.error("[tryon-job] persist remote failed:", error?.message || error);
+	}
+	return normalized;
+}
+
+async function loadTryonJobRemote(predictionId) {
+	try {
+		const row = await supabaseSelectFirst(
+			`nuvemshop_tryon_jobs?prediction_id=eq.${encodeURIComponent(String(predictionId))}&select=prediction_id,store_id,shop_domain,billed_at&limit=1`,
+		);
+		if (!row) return null;
+		return {
+			storeId: String(row.store_id || "").trim(),
+			shopDomain: String(row.shop_domain || "").trim(),
+			storeUrl: String(row.shop_domain || "").trim(),
+			billedAt: row.billed_at || null,
+		};
+	} catch (error) {
+		console.error("[tryon-job] load remote failed:", error?.message || error);
+		return null;
+	}
+}
+
+async function resolveTryonJobContext(predictionId, queryStore = {}) {
+	const local = getTryonJob(predictionId);
+	if (local?.storeId) {
+		return resolveTryonStoreContext({
+			storeId: local.storeId,
+			shopDomain: local.shopDomain || local.storeUrl || "",
+		});
+	}
+	const remote = await loadTryonJobRemote(predictionId);
+	if (remote?.storeId) {
+		return resolveTryonStoreContext({
+			storeId: remote.storeId,
+			shopDomain: remote.shopDomain || "",
+		});
+	}
+	return resolveTryonStoreContext(queryStore);
+}
+
+async function claimTryonBillingRemote(predictionId, storeContext) {
+	const predictionKey = String(predictionId || "").trim();
+	const storeId = String(storeContext?.storeId || "").trim();
+	if (!predictionKey || !storeId) return false;
+	await persistTryonJobRemote(predictionKey, storeContext).catch(() => null);
+	try {
+		const response = await supabaseRequest(
+			`nuvemshop_tryon_jobs?prediction_id=eq.${encodeURIComponent(predictionKey)}&billed_at=is.null&select=prediction_id`,
+			{
+				method: "PATCH",
+				headers: { Prefer: "return=representation" },
+				body: JSON.stringify({ billed_at: new Date().toISOString() }),
+			},
+		);
+		if (!response.ok) {
+			const text = await response.text().catch(() => "");
+			console.error("[tryon-billing] claim failed:", response.status, text.slice(0, 200));
+			return false;
+		}
+		const rows = await response.json().catch(() => []);
+		return Array.isArray(rows) && rows.length > 0;
+	} catch (error) {
+		console.error("[tryon-billing] claim error:", error?.message || error);
+		return false;
+	}
+}
+
+async function repairSessionAnalyticsShopDomain(predictionId, storeContext) {
+	const predictionKey = String(predictionId || "").trim();
+	const storeId = String(storeContext?.storeId || "").trim();
+	if (!predictionKey || !storeId) return;
+	const shopDomain = String(
+		storeContext?.shopDomain || getCanonicalShopKey(storeId),
+	).trim();
+	if (!shopDomain) return;
+	try {
+		const session = await supabaseSelectFirst(
+			`tryon_sessions?fashn_prediction_id=eq.${encodeURIComponent(predictionKey)}&select=id&limit=1`,
+		);
+		if (!session?.id) return;
+		const response = await supabaseRequest(
+			`session_analytics?tryon_session_id=eq.${encodeURIComponent(session.id)}`,
+			{
+				method: "PATCH",
+				headers: { Prefer: "return=minimal" },
+				body: JSON.stringify({ shop_domain: shopDomain }),
+			},
+		);
+		if (!response.ok) {
+			const text = await response.text().catch(() => "");
+			console.warn(
+				"[analytics] repair shop_domain failed:",
+				response.status,
+				text.slice(0, 200),
+			);
+		}
+	} catch (error) {
+		console.warn("[analytics] repair shop_domain error:", error?.message || error);
+	}
+}
+
 function readBillingEvents() {
 	return readJsonFile(BILLING_EVENTS_FILE, {});
 }
@@ -424,24 +555,16 @@ function getAppName() {
 	return process.env.OMAFIT_APP_NAME || "Omafit";
 }
 
-function isStorefrontSdkWhitelisted(storeId) {
-	const raw = String(process.env.OMAFIT_STOREFRONT_SDK_STORE_IDS || "").trim();
-	if (!raw) return false;
-	const normalizedStoreId = String(storeId || "").trim();
-	if (!normalizedStoreId) return false;
-	return raw
-		.split(",")
-		.map((entry) => entry.trim())
-		.filter(Boolean)
-		.includes(normalizedStoreId);
+function getStorefrontSdkWhitelistRaw() {
+	return process.env.OMAFIT_STOREFRONT_SDK_STORE_IDS || "";
 }
 
-function resolveStorefrontSdkEnabled(theme, storeId) {
-	const normalizedTheme = String(theme || "").trim().toLowerCase();
-	if (normalizedTheme) {
-		return normalizedTheme === "patagonia";
-	}
-	return isStorefrontSdkWhitelisted(storeId);
+function isStorefrontSdkWhitelistedForStore(storeId) {
+	return isStorefrontSdkWhitelisted(storeId, getStorefrontSdkWhitelistRaw());
+}
+
+function resolveStorefrontSdkEnabledForStore(theme, storeId) {
+	return resolveStorefrontSdkEnabled(theme, storeId, getStorefrontSdkWhitelistRaw());
 }
 
 function getNuvemshopAppId() {
@@ -1361,6 +1484,11 @@ async function upsertStoreRecord(session, storeData = {}) {
 	);
 	const currentPlan = String(storeData.plan || storeData.billing_plan || "ondemand").toLowerCase();
 	const planDef = getPlanDefinition(currentPlan);
+	const isOnDemandStylePlan = ["ondemand", "basic", "starter", "free"].includes(currentPlan);
+	const nuvemshopTotalImagesUsed = isOnDemandStylePlan
+		? Math.min(50, Number(storeData.free_images_used || 0) || 0) +
+			(Number(storeData.images_used_month || 0) || 0)
+		: Number(storeData.images_used_month || 0) || 0;
 	const baseRecord = {
 		store_id: storeId,
 		shop_key: shopKey,
@@ -1402,7 +1530,7 @@ async function upsertStoreRecord(session, storeData = {}) {
 					plan: baseRecord.plan,
 					billing_status: baseRecord.billing_status,
 					images_included: baseRecord.images_included,
-					images_used_month: baseRecord.images_used_month,
+					images_used_month: nuvemshopTotalImagesUsed,
 					currency: baseRecord.currency,
 					is_active: storeData.is_active !== false,
 					installed_at: storeData.installed_at || session?.createdAt || baseRecord.updated_at,
@@ -1961,19 +2089,27 @@ async function parseTryonDebugInput(rawBody, contentType) {
 				body: rawBody,
 			});
 			const formData = await request.formData();
+			const resolved = resolveTryonStoreContext({
+				storeId: String(formData.get("store_id") || "").trim(),
+				shopDomain: String(formData.get("shop_domain") || formData.get("shopDomain") || "").trim(),
+			});
 			return {
 				...input,
-				storeId: String(formData.get("store_id") || "").trim(),
-				shopDomain: normalizeStoreUrl(String(formData.get("shop_domain") || "")),
+				storeId: resolved.storeId,
+				shopDomain: resolved.shopDomain,
 				publicId: String(formData.get("public_id") || "").trim(),
 			};
 		}
 		if (String(contentType).includes("application/json")) {
 			const payload = JSON.parse(rawBody.toString("utf8") || "{}");
+			const resolved = resolveTryonStoreContext({
+				storeId: String(payload.store_id || "").trim(),
+				shopDomain: String(payload.shop_domain || payload.shopDomain || payload.store_domain || "").trim(),
+			});
 			return {
 				...input,
-				storeId: String(payload.store_id || "").trim(),
-				shopDomain: normalizeStoreUrl(payload.shop_domain || payload.store_domain || ""),
+				storeId: resolved.storeId,
+				shopDomain: resolved.shopDomain,
 				publicId: String(payload.public_id || "").trim(),
 			};
 		}
@@ -2774,12 +2910,15 @@ async function resolveAnalyticsStoreContext(storeId, storeUrl = "") {
 	}
 
 	const widgetDomains = await loadWidgetKeyDomains(storeId, shopKey);
-	const domainCandidates = buildAnalyticsDomainCandidates(
+	const domainCandidates = expandAnalyticsDomainCandidates(
+		buildAnalyticsDomainCandidates(
+			shopKey,
+			resolvedStoreUrl,
+			shopRecord,
+			session,
+			widgetDomains,
+		),
 		shopKey,
-		resolvedStoreUrl,
-		shopRecord,
-		session,
-		widgetDomains,
 	);
 
 	return {
@@ -2999,25 +3138,30 @@ async function loadSessionAnalytics(
 	const userId = String(
 		shopRecord?.user_id || shopRecord?.store_id || storeId || "",
 	).trim();
+	const isNuvemshopStore = String(shopKey || "").toLowerCase().startsWith("nuvemshop/");
+	const analyticsUserId = isNuvemshopStore ? "" : userId;
 	const normalize = (value) => String(value || "").trim().toLowerCase();
 	const domainCandidates =
 		Array.isArray(domainCandidatesInput) && domainCandidatesInput.length > 0
-			? domainCandidatesInput
-			: buildAnalyticsDomainCandidates(shopKey, storeUrl, shopRecord);
+			? expandAnalyticsDomainCandidates(domainCandidatesInput, shopKey)
+			: expandAnalyticsDomainCandidates(
+					buildAnalyticsDomainCandidates(shopKey, storeUrl, shopRecord),
+					shopKey,
+				);
 	const preferSessionAnalyticsFirst = String(shopKey || "").toLowerCase().startsWith("nuvemshop/");
 
 	if (preferSessionAnalyticsFirst) {
 		const fromAnalytics = await fetchSessionAnalyticsByDomains(
 			domainCandidates,
 			normalizedSince,
-			userId,
+			analyticsUserId,
 		);
 		if (fromAnalytics.length > 0) return fromAnalytics;
 
 		const fromMeasurements = await fetchUserMeasurementsSessionsByDomains(
 			domainCandidates,
 			normalizedSince,
-			userId,
+			analyticsUserId,
 		);
 		if (fromMeasurements.length > 0) return fromMeasurements;
 	}
@@ -3028,7 +3172,7 @@ async function loadSessionAnalytics(
 			const fromMeasurements = await fetchUserMeasurementsSessionsByDomains(
 				domainCandidates,
 				normalizedSince,
-				userId,
+				analyticsUserId,
 			);
 			if (fromMeasurements.length > 0) return fromMeasurements;
 		} catch (_error) {
@@ -3095,7 +3239,11 @@ async function loadSessionAnalytics(
 
 	// 3) session_analytics by shop_domain (fallback for non-nuvemshop-first stores).
 	if (!preferSessionAnalyticsFirst) {
-		const rows = await fetchSessionAnalyticsByDomains(domainCandidates, normalizedSince, userId);
+		const rows = await fetchSessionAnalyticsByDomains(
+			domainCandidates,
+			normalizedSince,
+			analyticsUserId,
+		);
 		if (rows.length > 0) return rows;
 	}
 	return [];
@@ -3602,6 +3750,50 @@ async function handleApi(req, res, reqUrl) {
 		return true;
 	}
 
+	if (pathname === "/api/homologacao/readiness") {
+		const storeId = reqUrl.searchParams.get("store_id") || "6994912";
+		const storeUrl = reqUrl.searchParams.get("store_url") || "arrascaneta.lojavirtualnuvem.com.br";
+		const storeTheme = reqUrl.searchParams.get("theme") || "Morelia";
+		const baseUrl = getPublicBaseUrl(req).replace(/\/+$/, "");
+		const supabaseConfig = getSupabaseConfig();
+		const health = {
+			ok: true,
+			hasSupabase: Boolean(supabaseConfig),
+			hasOAuthConfig: Boolean(
+				process.env.NUVEMSHOP_APP_ID &&
+					(process.env.NUVEMSHOP_CLIENT_SECRET || process.env.NUVEMSHOP_APP_SECRET),
+			),
+		};
+		let billingSnapshot = null;
+		try {
+			billingSnapshot = await buildBillingDebugSnapshot(storeId, storeUrl);
+		} catch (_error) {
+			billingSnapshot = null;
+		}
+		let widgetConfig = null;
+		let widgetConfigError = null;
+		try {
+			widgetConfig = await fetchStorefrontWidgetConfig(baseUrl, storeId, storeUrl, storeTheme);
+		} catch (error) {
+			widgetConfigError = String(error?.message || "widget_config_failed");
+		}
+		sendJson(
+			res,
+			200,
+			buildHomologacaoReadinessReport({
+				baseUrl,
+				storeId,
+				storeUrl,
+				storeTheme,
+				health,
+				billingSnapshot,
+				widgetConfig,
+				widgetConfigError,
+			}),
+		);
+		return true;
+	}
+
 	if (pathname === "/api/config") {
 		sendJson(res, 200, {
 			appName: getAppName(),
@@ -3846,6 +4038,45 @@ async function handleApi(req, res, reqUrl) {
 		return true;
 	}
 
+	if (pathname === "/api/whatsapp/bill-pending" && method === "POST") {
+		const cronSecret =
+			process.env.WHATSAPP_BILLING_CRON_SECRET ||
+			process.env.WHATSAPP_CRON_SECRET ||
+			"";
+		const auth = String(req.headers.authorization || "");
+		const isProduction =
+			process.env.NODE_ENV === "production" || Boolean(process.env.RAILWAY_ENVIRONMENT);
+
+		if (isProduction && !cronSecret) {
+			sendJson(res, 503, { error: "WHATSAPP_CRON_SECRET is required" });
+			return true;
+		}
+		if (cronSecret && auth !== `Bearer ${cronSecret}`) {
+			sendJson(res, 401, { error: "Unauthorized" });
+			return true;
+		}
+
+		try {
+			const payload = await readJsonBody(req);
+			const storeKey = payload?.storeKey || payload?.shopDomain || null;
+			const { processPendingWhatsappMessageBilling } = await import(
+				"./lib/whatsapp-message-billing.js"
+			);
+			const result = await processPendingWhatsappMessageBilling({
+				supabaseRequest,
+				storeKey: storeKey ? String(storeKey).trim() : null,
+			});
+			sendJson(res, 200, { success: true, ...result });
+		} catch (error) {
+			console.error("[api.whatsapp.bill-pending]", error);
+			sendJson(res, 500, {
+				success: false,
+				error: error instanceof Error ? error.message : "billing_failed",
+			});
+		}
+		return true;
+	}
+
 	if (pathname.startsWith("/api/whatsapp/")) {
 		if (!session || !storeContext.storeId) {
 			sendJson(res, 401, { error: "unauthorized" });
@@ -4051,9 +4282,36 @@ async function handleApi(req, res, reqUrl) {
 		return true;
 	}
 
+	if (pathname === "/api/storefront/product-categories") {
+		const productHandle = String(reqUrl.searchParams.get("product_handle") || "").trim();
+		if (!storeContext.storeId || !productHandle) {
+			sendJson(res, 400, { error: "store_id and product_handle are required", category_ids: [] });
+			return true;
+		}
+		try {
+			const widgetSession = await resolveSession(storeContext.storeId, storeContext.storeUrl);
+			if (!widgetSession) {
+				sendJson(res, 200, { category_ids: [] });
+				return true;
+			}
+			const category_ids = await getProductCategoryIdsByHandle(
+				widgetSession,
+				nuvemshopApi,
+				productHandle,
+			);
+			sendJson(res, 200, { category_ids });
+		} catch (error) {
+			sendJson(res, 500, {
+				error: error.message || "product_categories_failed",
+				category_ids: [],
+			});
+		}
+		return true;
+	}
+
 	if (pathname === "/api/storefront/widget-config") {
 		const theme = reqUrl.searchParams.get("theme");
-		const storefront_sdk_enabled = resolveStorefrontSdkEnabled(
+		const storefront_sdk_enabled = resolveStorefrontSdkEnabledForStore(
 			theme,
 			storeContext.storeId,
 		);
@@ -4174,10 +4432,16 @@ async function handleApi(req, res, reqUrl) {
 			}
 			const parsedPayload = parseSupabaseError(payload) || {};
 			if (parsedPayload?.fal_request_id) {
-				rememberTryonJob(parsedPayload.fal_request_id, {
+				const tryonStore = resolveTryonStoreContext({
 					storeId: forwarded.storeId || tryonDebug?.incoming?.storeId || "",
-					storeUrl: forwarded.shopDomain || tryonDebug?.incoming?.shopDomain || "",
+					shopDomain: forwarded.shopDomain || tryonDebug?.incoming?.shopDomain || "",
 				});
+				rememberTryonJob(parsedPayload.fal_request_id, {
+					storeId: tryonStore.storeId,
+					storeUrl: tryonStore.shopDomain,
+					shopDomain: tryonStore.shopDomain,
+				});
+				await persistTryonJobRemote(parsedPayload.fal_request_id, tryonStore).catch(() => null);
 			}
 			sendJson(res, response.status, parsedPayload);
 		} catch (error) {
@@ -4207,13 +4471,33 @@ async function handleApi(req, res, reqUrl) {
 				parsedPayload?.status === "completed" &&
 				parsedPayload?.output
 			) {
-				const tryonJob = getTryonJob(predictionId);
-				if (tryonJob?.storeId) {
-					await recordCompletedTryonUsage(
-						tryonJob.storeId,
-						tryonJob.storeUrl || "",
+				const tryonStore = await resolveTryonJobContext(predictionId, {
+					storeId: reqUrl.searchParams.get("store_id") || "",
+					shopDomain:
+						reqUrl.searchParams.get("shop_domain") ||
+						reqUrl.searchParams.get("shopDomain") ||
+						"",
+				});
+				if (tryonStore.storeId) {
+					await repairSessionAnalyticsShopDomain(predictionId, tryonStore).catch(() => null);
+					const claimed = await claimTryonBillingRemote(predictionId, tryonStore);
+					if (claimed) {
+						await recordCompletedTryonUsage(
+							tryonStore.storeId,
+							tryonStore.shopDomain,
+							predictionId,
+						).catch((error) => {
+							console.error(
+								"[tryon-billing] record usage failed:",
+								error?.message || error,
+							);
+						});
+					}
+				} else {
+					console.warn(
+						"[tryon-billing] missing store for prediction",
 						predictionId,
-					).catch(() => null);
+					);
 				}
 				forgetTryonJob(predictionId);
 			}

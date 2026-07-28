@@ -1,5 +1,6 @@
 ﻿import { getStorefrontFontFamily, sanitizeFontFamilyForCss } from "./shared/storeFont";
 import { resolveCollectionHandleForStorefront, shouldUseFootwearWidget } from "./shared/widgetFootwearRouting";
+import { getLegacyStorefrontAppBaseUrl, OMAFIT_APP_BASE_URL_DEFAULT } from "./shared/omafitAppBaseUrl";
 
 type LegacyStorefrontConfig = {
 	link_text: string;
@@ -45,7 +46,6 @@ declare global {
 	}
 }
 
-const DEFAULT_APP_BASE = "https://omafit-nuvem-production.up.railway.app";
 const CTA_WRAPPER_ID = "omafit-legacy-footwear-wrapper";
 const CTA_BUTTON_ID = "omafit-legacy-footwear-button";
 const MODAL_ID = "omafit-legacy-footwear-modal";
@@ -56,13 +56,7 @@ function debugLog(message: string, data: Record<string, unknown>, hypothesisId: 
 }
 
 function getAppBaseUrl(): string {
-	const currentScript = document.currentScript as HTMLScriptElement | null;
-	if (currentScript?.src) return new URL(currentScript.src).origin;
-	const script = Array.from(document.scripts).find((item) =>
-		(item as HTMLScriptElement).src.includes("storefront-legacy-footwear.min.js"),
-	) as HTMLScriptElement | undefined;
-	if (script?.src) return new URL(script.src).origin;
-	return DEFAULT_APP_BASE;
+	return getLegacyStorefrontAppBaseUrl();
 }
 
 function getStoreContext(): LegacyStoreContext | null {
@@ -187,7 +181,7 @@ function buildFootwearBaseUrl(baseUrl: string): string {
 		url.pathname = "/widget-footwear.html";
 		return url.toString();
 	} catch {
-		return `${DEFAULT_APP_BASE}/widget-footwear.html`;
+		return `${OMAFIT_APP_BASE_URL_DEFAULT}/widget-footwear.html`;
 	}
 }
 
@@ -413,10 +407,7 @@ function renderButton(
 	}
 	const button = wrapper.querySelector<HTMLButtonElement>(`#${CTA_BUTTON_ID}`);
 	if (!button) return;
-	const logoMarkup = config.store_logo
-		? `<img src="${String(config.store_logo).replace(/"/g, "&quot;")}" alt="" />`
-		: "";
-	button.innerHTML = `${logoMarkup}<span>${config.link_text || "Ver meu tamanho ideal (cal├ºados)"}</span>`;
+	button.innerHTML = `<span>${config.link_text || "Ver meu tamanho ideal (calçados)"}</span>`;
 	button.onclick = () => {
 		const modal = ensureModal(widgetUrl);
 		modal.hidden = false;

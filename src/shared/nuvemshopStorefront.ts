@@ -1,6 +1,9 @@
 import type { NubeSDK, ProductDetails } from "@tiendanube/nube-sdk-types";
+import { isCategoryExcluded } from "./categoryExclusion";
+import { getStorefrontAppBaseUrl } from "./omafitAppBaseUrl";
 import { normalizeChartHandle, shouldUseFootwearWidget } from "./widgetFootwearRouting";
 import { getStorefrontFontFamily, sanitizeFontFamilyForCss } from "./storeFont";
+import { getOrCreateShopperDeviceId } from "./shopperDeviceId";
 
 export type StorefrontConfig = {
 	link_text: string;
@@ -46,8 +49,27 @@ const DEFAULT_CONFIG: StorefrontConfig = {
 };
 
 export function getOmafitAppBaseUrl(): string {
-	const fromEnv = String(import.meta.env.VITE_OMAFIT_APP_URL || "").trim();
-	return fromEnv ? fromEnv.replace(/\/$/, "") : "";
+	return getStorefrontAppBaseUrl();
+}
+
+export function getStorefrontThemeName(): string {
+	if (typeof window === "undefined") return "";
+	const themeName = (window as Window & { LS?: { theme?: { name?: string } } }).LS?.theme
+		?.name;
+	return String(themeName || "").trim();
+}
+
+export function isPatagoniaStorefrontTheme(theme?: string): boolean {
+	return String(theme ?? getStorefrontThemeName())
+		.trim()
+		.toLowerCase() === "patagonia";
+}
+
+/** SDK quando a API confirma storefront_sdk_enabled (todos os temas com slots de PDP). */
+export function shouldUseStorefrontSdk(
+	bootstrap: Pick<StorefrontBootstrap, "ready" | "storefront_sdk_enabled">,
+): boolean {
+	return bootstrap.ready && bootstrap.storefront_sdk_enabled;
 }
 
 export function buildStorefrontConfigEndpoint(
@@ -64,10 +86,7 @@ export function buildStorefrontConfigEndpoint(
 		params.set("theme", normalizedTheme);
 	}
 	const query = params.toString();
-	const base = getOmafitAppBaseUrl();
-	return base
-		? `${base}/api/storefront/widget-config?${query}`
-		: `/api/storefront/widget-config?${query}`;
+	return `${getOmafitAppBaseUrl()}/api/storefront/widget-config?${query}`;
 }
 
 export function collectionHandleFromUrl(url: string): string {
@@ -117,16 +136,18 @@ export function getProductHandle(nube: NubeSDK, product: ProductDetails): string
 	);
 }
 
+export { isCategoryExcluded };
+
 export function shouldHideForProduct(product: ProductDetails | null, config: StorefrontConfig) {
 	if (config.widget_enabled === false) return true;
 	if (!product) return false;
 	const categoryIds = (product.categories || []).map((categoryId) => String(categoryId));
-	return categoryIds.some((categoryId) => config.excluded_collections.includes(categoryId));
+	return isCategoryExcluded(categoryIds, config.excluded_collections);
 }
 
 export function isProductExcluded(product: ProductDetails, config: StorefrontConfig) {
 	const categoryIds = (product.categories || []).map((categoryId) => String(categoryId));
-	return categoryIds.some((categoryId) => config.excluded_collections.includes(categoryId));
+	return isCategoryExcluded(categoryIds, config.excluded_collections);
 }
 
 export function resolveWidgetBaseUrl(
@@ -203,7 +224,7 @@ function resolveLocalizedText(
 	return value[language] || value.pt || value.es || value.en || "";
 }
 
-function resolveImageUrls(product: ProductDetails, language: string) {
+export function resolveProductImageUrls(product: ProductDetails, language: string) {
 	const rawImages = Array.isArray(
 		(product as ProductDetails & { images?: Array<{ src?: unknown }> }).images,
 	)
@@ -236,7 +257,7 @@ export function buildWidgetUrl(
 	if (!product) return baseUrl;
 
 	const selectedVariant = product.variants?.[0] || null;
-	const imageUrls = resolveImageUrls(product, state.store.language);
+	const imageUrls = resolveProductImageUrls(product, state.store.language);
 	const productName = resolveLocalizedText(product.name, state.store.language);
 	const productHandle = getProductHandle(nube, product);
 	const tryonLayout =
@@ -248,6 +269,7 @@ export function buildWidgetUrl(
 	);
 	const shopDomain = `nuvemshop/${state.store.id}`;
 	const storeName = String(state.store.name || state.store.domain || "Omafit");
+	const shopperDeviceId = getOrCreateShopperDeviceId();
 
 	const widgetUrl = new URL(baseUrl);
 	widgetUrl.searchParams.set("platform", "nuvemshop");
@@ -308,6 +330,10 @@ export function buildWidgetUrl(
 		widgetUrl.searchParams.set("stylist_mode_enabled", "1");
 		widgetUrl.searchParams.set("stylistModeEnabled", "1");
 	}
+	if (shopperDeviceId) {
+		widgetUrl.searchParams.set("omafit_device_id", shopperDeviceId);
+		widgetUrl.searchParams.set("shopperDeviceId", shopperDeviceId);
+	}
 
 	return widgetUrl.toString();
 }
@@ -331,7 +357,7 @@ export async function loadStorefrontBootstrap(
 				...DEFAULT_CONFIG,
 				...(data.config || {}),
 			},
-			widgetUrl: String(data.widgetUrl || "/widget.html"),
+			widgetUrl: String(data.widgetUrl || `${getOmafitAppBaseUrl()}/widget.html`),
 			publicId: String(data.publicId || ""),
 			footwearCollectionHandles: footwearHandles,
 			billingPlan: String(data.billing_plan || ""),
@@ -342,9 +368,7 @@ export async function loadStorefrontBootstrap(
 		return {
 			ready: false,
 			config: DEFAULT_CONFIG,
-			widgetUrl: getOmafitAppBaseUrl()
-				? `${getOmafitAppBaseUrl()}/widget.html`
-				: "/widget.html",
+			widgetUrl: `${getOmafitAppBaseUrl()}/widget.html`,
 			publicId: "",
 			footwearCollectionHandles: [],
 			billingPlan: "",

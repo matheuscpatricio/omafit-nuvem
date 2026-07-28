@@ -72,6 +72,7 @@ Lojas em temas sem NubeSDK usam `storefront-legacy.min.js` — **não** enviar i
 | `STRIPE_PRICE_*` | Price IDs **live** (não teste) |
 | `STRIPE_WEBHOOK_SECRET` | Signing secret do webhook **live** |
 | `OMAFIT_WHATSAPP_PROXY_SECRET` | Igual ao secret no Supabase Edge Functions |
+| `WHATSAPP_CRON_SECRET` | Igual ao Supabase + Netlify (cron worker e bill-pending) |
 | `OMAFIT_STOREFRONT_SDK_STORE_IDS` | `6994912` (whitelist homolog se tema ainda não for Patagonia) |
 
 Validação rápida:

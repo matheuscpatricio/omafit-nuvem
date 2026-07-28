@@ -25,6 +25,27 @@ BEGIN
   ) THEN
     ALTER TABLE shopify_shops ADD COLUMN pending_overage_units INTEGER DEFAULT 0;
   END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'nuvemshop_stores' AND column_name = 'billing_mode'
+  ) THEN
+    ALTER TABLE nuvemshop_stores ADD COLUMN billing_mode TEXT DEFAULT 'self';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'nuvemshop_stores' AND column_name = 'pending_overage_amount'
+  ) THEN
+    ALTER TABLE nuvemshop_stores ADD COLUMN pending_overage_amount NUMERIC(10, 2) DEFAULT 0;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'nuvemshop_stores' AND column_name = 'pending_overage_units'
+  ) THEN
+    ALTER TABLE nuvemshop_stores ADD COLUMN pending_overage_units INTEGER DEFAULT 0;
+  END IF;
 END $$;
 
 CREATE TABLE IF NOT EXISTS billing_usage_charges (
