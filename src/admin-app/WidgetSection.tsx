@@ -307,19 +307,32 @@ export function WidgetSection({
 						<div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
 							{collections.map((collection) => {
 								const id = String(collection.id);
-								const active = config.excluded_collections.includes(id);
+								const handle = String(collection.handle || "").trim();
+								const active =
+									config.excluded_collections.includes(id) ||
+									(Boolean(handle) && config.excluded_collections.includes(handle));
 								return (
 									<button
 										key={id}
 										type="button"
-										onClick={() =>
+										onClick={() => {
+											const nextTokens = active
+												? config.excluded_collections.filter(
+														(item) => item !== id && item !== handle,
+													)
+												: [
+														...config.excluded_collections,
+														id,
+														...(handle ? [handle] : []),
+													].filter(
+														(item, index, list) =>
+															Boolean(item) && list.indexOf(item) === index,
+													);
 											onChange({
 												...config,
-												excluded_collections: active
-													? config.excluded_collections.filter((item) => item !== id)
-													: [...config.excluded_collections, id],
-											})
-										}
+												excluded_collections: nextTokens,
+											});
+										}}
 										style={{
 											...buttonBaseStyle,
 											padding: "8px 12px",

@@ -8,9 +8,9 @@ import {
 	getProductHandle,
 	getStorefrontCtaSlot,
 	getStorefrontThemeName,
-	isProductExcluded,
 	loadStorefrontBootstrap,
 	shouldUseStorefrontSdk,
+	shouldHideProductForConfig,
 	resolveCollectionHandleFromNube,
 	resolveProductImageUrls,
 	resolveWidgetBaseUrl,
@@ -199,7 +199,7 @@ function renderStorefrontCta(
 	);
 }
 
-function renderStorefrontWidget(
+async function renderStorefrontWidget(
 	nube: NubeSDK,
 	config: StorefrontConfig,
 	bootstrap: StorefrontBootstrap,
@@ -210,9 +210,9 @@ function renderStorefrontWidget(
 
 	if (config.widget_enabled === false) return;
 	if (!product) return;
-	if (isProductExcluded(product, config)) return;
-
 	const productHandle = getProductHandle(nube, product);
+	const state = nube.getState();
+	if (await shouldHideProductForConfig(product, config, state.store.id, productHandle)) return;
 	const collectionHandle = resolveCollectionHandleFromNube(
 		nube,
 		bootstrap.footwearCollectionHandles,
@@ -303,7 +303,7 @@ export function App(nube: NubeSDK) {
 		}
 		themeRetryCount = 0;
 		removeLegacyStorefrontCta();
-		renderStorefrontWidget(nube, bootstrap.config, bootstrap);
+		await renderStorefrontWidget(nube, bootstrap.config, bootstrap);
 	};
 
 	nube.on("cart:add:success", () => {

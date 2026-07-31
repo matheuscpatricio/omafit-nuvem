@@ -11,4 +11,9 @@ describe("categoryExclusion", () => {
 		expect(isCategoryExcluded(["12", "34"], ["99", "34"])).toBe(true);
 		expect(isCategoryExcluded(["12"], ["34"])).toBe(false);
 	});
+
+	it("matches excluded category handles case-insensitively", () => {
+		expect(isCategoryExcluded(["acessorios"], ["Acessorios"])).toBe(true);
+		expect(isCategoryExcluded(["123", "acessorios"], ["123"])).toBe(true);
+	});
 });

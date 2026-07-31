@@ -17,7 +17,7 @@ import {
 	isBillingActive,
 } from "./lib/billing-growth-plus.js";
 import { reactivateWidgetKeyForShop } from "./lib/widget-keys.js";
-import { listStoreProducts, getProductByHandle, getProductCategoryIdsByHandle } from "./lib/nuvemshop-products.js";
+import { listStoreProducts, getProductByHandle, getProductCategoryRefsByHandle } from "./lib/nuvemshop-products.js";
 import {
 	verifyCatalogSearchSignature,
 	verifyProductByHandleSignature,
@@ -2397,6 +2397,25 @@ function normalizeWidgetLayout(value, heroAllowed) {
 	return "default";
 }
 
+async function expandExcludedCategoryTokens(session, excludedCollections = []) {
+	if (!session || !Array.isArray(excludedCollections) || excludedCollections.length === 0) {
+		return [];
+	}
+	const categories = await listCategories(session).catch(() => []);
+	const tokens = new Set(
+		excludedCollections.map((value) => String(value || "").trim().toLowerCase()).filter(Boolean),
+	);
+	for (const rawId of excludedCollections) {
+		const id = String(rawId || "").trim();
+		if (!id) continue;
+		const match = categories.find((category) => String(category.id) === id);
+		if (match?.handle) {
+			tokens.add(String(match.handle).trim().toLowerCase());
+		}
+	}
+	return Array.from(tokens);
+}
+
 function normalizeWidgetConfigForClient(config, planId = "ondemand") {
 	const heroAllowed = hasGrowthPlusPlan(planId);
 	const radius = Number(config?.cta_button_border_radius);
@@ -4294,12 +4313,16 @@ async function handleApi(req, res, reqUrl) {
 				sendJson(res, 200, { category_ids: [] });
 				return true;
 			}
-			const category_ids = await getProductCategoryIdsByHandle(
+			const refs = await getProductCategoryRefsByHandle(
 				widgetSession,
 				nuvemshopApi,
 				productHandle,
 			);
-			sendJson(res, 200, { category_ids });
+			sendJson(res, 200, {
+				category_ids: refs.category_ids,
+				category_handles: refs.category_handles,
+				category_tokens: refs.category_tokens,
+			});
 		} catch (error) {
 			sendJson(res, 500, {
 				error: error.message || "product_categories_failed",
@@ -4349,9 +4372,15 @@ async function handleApi(req, res, reqUrl) {
 		const publicId = widgetActive
 			? await resolveWidgetPublicId(storeContext.storeId, resolvedStoreUrl)
 			: "";
+		const normalizedConfig = normalizeWidgetConfigForClient(config, billingPlan);
+		const excludedCollections = session
+			? await expandExcludedCategoryTokens(session, normalizedConfig.excluded_collections)
+			: normalizedConfig.excluded_collections;
 		sendJson(res, 200, {
 			config: {
 				...(config || {}),
+				...normalizedConfig,
+				excluded_collections: excludedCollections,
 				widget_enabled: widgetActive && config?.widget_enabled !== false,
 				tryon_layout: config?.tryon_layout || "default",
 				tryon_enabled: config?.tryon_enabled !== false,

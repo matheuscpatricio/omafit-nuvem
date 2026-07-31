@@ -10,7 +10,7 @@ import {
 import { resolveCollectionHandleForStorefront, shouldUseFootwearWidget } from "./shared/widgetFootwearRouting";
 import { getOrCreateShopperDeviceId } from "./shared/shopperDeviceId";
 import { getLegacyStorefrontAppBaseUrl } from "./shared/omafitAppBaseUrl";
-import { isCategoryExcluded } from "./shared/categoryExclusion";
+import { isCategoryExcluded, mergeCategoryTokens } from "./shared/categoryExclusion";
 
 startLegacyCtaFlashGuard();
 
@@ -131,7 +131,24 @@ function readProductCategoryIdsFromDom(): string[] {
 	return Array.from(ids);
 }
 
-async function resolveLegacyProductCategoryIds(
+function readProductCategoryHandlesFromDom(): string[] {
+	const handles = new Set<string>();
+	for (const link of Array.from(document.querySelectorAll("a[href]"))) {
+		const href = String(link.getAttribute("href") || "");
+		const match = href.match(/\/categorias?\/([^/?#]+)/i);
+		if (!match?.[1]) continue;
+		try {
+			const handle = decodeURIComponent(match[1]).trim();
+			if (handle) handles.add(handle);
+		} catch {
+			const handle = match[1].trim();
+			if (handle) handles.add(handle);
+		}
+	}
+	return Array.from(handles);
+}
+
+async function resolveLegacyProductCategoryTokens(
 	store: LegacyStoreContext,
 	productHandle: string,
 ): Promise<string[]> {
@@ -140,37 +157,40 @@ async function resolveLegacyProductCategoryIds(
 		return legacyProductCategoryCache.get(cacheKey) || [];
 	}
 
-	const fromDom = readProductCategoryIdsFromDom();
-	if (fromDom.length) {
-		legacyProductCategoryCache.set(cacheKey, fromDom);
-		return fromDom;
-	}
+	const domTokens = mergeCategoryTokens(
+		readProductCategoryIdsFromDom(),
+		readProductCategoryHandlesFromDom(),
+	);
 
+	let apiTokens: string[] = [];
 	try {
 		const endpoint = `${getAppBaseUrl()}/api/storefront/product-categories?store_id=${encodeURIComponent(store.id)}&product_handle=${encodeURIComponent(productHandle)}`;
 		const response = await fetch(endpoint, { mode: "cors" });
-		if (!response.ok) {
-			legacyProductCategoryCache.set(cacheKey, []);
-			return [];
+		if (response.ok) {
+			const data = (await response.json()) as {
+				category_tokens?: string[];
+				category_ids?: string[];
+				category_handles?: string[];
+			};
+			apiTokens = Array.isArray(data.category_tokens)
+				? data.category_tokens.map((value) => String(value)).filter(Boolean)
+				: mergeCategoryTokens(data.category_ids, data.category_handles);
 		}
-		const data = (await response.json()) as { category_ids?: string[] };
-		const categoryIds = Array.isArray(data.category_ids)
-			? data.category_ids.map((value) => String(value)).filter(Boolean)
-			: [];
-		legacyProductCategoryCache.set(cacheKey, categoryIds);
-		return categoryIds;
 	} catch {
-		legacyProductCategoryCache.set(cacheKey, []);
-		return [];
+		apiTokens = [];
 	}
+
+	const tokens = mergeCategoryTokens(domTokens, apiTokens);
+	legacyProductCategoryCache.set(cacheKey, tokens);
+	return tokens;
 }
 
 function shouldHideLegacyProduct(
-	categoryIds: string[],
+	categoryTokens: string[],
 	config: LegacyStorefrontConfig | null | undefined,
 ): boolean {
 	if (!config || config.widget_enabled === false) return true;
-	return isCategoryExcluded(categoryIds, config.excluded_collections);
+	return isCategoryExcluded(categoryTokens, config.excluded_collections);
 }
 
 function debugLog(message: string, data: Record<string, unknown>, hypothesisId: string) {
@@ -913,9 +933,8 @@ function remountLegacyCtaFromSnapshot(reason: string) {
 	const product = getProductContext();
 	if (!product) return false;
 	if (snapshot.config.widget_enabled === false) return false;
-	const cacheKey = `${snapshot.store.id}:${product.handle}`;
-	const categoryIds = legacyProductCategoryCache.get(cacheKey) || [];
-	if (shouldHideLegacyProduct(categoryIds, snapshot.config)) {
+	const categoryTokens = legacyProductCategoryCache.get(`${snapshot.store.id}:${product.handle}`) || [];
+	if (shouldHideLegacyProduct(categoryTokens, snapshot.config)) {
 		removeLegacyCtaIfPresent();
 		return false;
 	}
@@ -929,7 +948,7 @@ function remountLegacyCtaFromSnapshot(reason: string) {
 		snapshot.footwearCollectionHandles,
 		snapshot.billingPlan,
 		snapshot.stylistModeEnabled,
-		categoryIds,
+		categoryTokens,
 	);
 }
 
@@ -1125,7 +1144,7 @@ function renderButton(
 	footwearCollectionHandles: string[],
 	billingPlan: string,
 	stylistModeEnabled: boolean,
-	categoryIds: string[] = [],
+	categoryTokens: string[] = [],
 ): boolean {
 	if (config.widget_enabled === false) {
 		debugLog("render_skipped_disabled", { storeId: store.id }, "L2");
@@ -1133,10 +1152,10 @@ function renderButton(
 		removeLegacyCtaIfPresent();
 		return false;
 	}
-	if (shouldHideLegacyProduct(categoryIds, config)) {
+	if (shouldHideLegacyProduct(categoryTokens, config)) {
 		debugLog(
 			"render_skipped_excluded_category",
-			{ storeId: store.id, productHandle: product.handle, categoryIds },
+			{ storeId: store.id, productHandle: product.handle, categoryTokens },
 			"L2",
 		);
 		lastLegacyRenderSnapshot = null;
@@ -1281,7 +1300,7 @@ async function init() {
 		"L0",
 	);
 	if (!store || !product) return;
-	const categoryIds = await resolveLegacyProductCategoryIds(store, product.handle);
+	const categoryTokens = await resolveLegacyProductCategoryTokens(store, product.handle);
 	const appBaseUrl = getAppBaseUrl();
 	const {
 		config,
@@ -1303,12 +1322,12 @@ async function init() {
 		);
 		return;
 	}
-	if (config && shouldHideLegacyProduct(categoryIds, config)) {
+	if (config && shouldHideLegacyProduct(categoryTokens, config)) {
 		lastLegacyRenderSnapshot = null;
 		removeLegacyCtaIfPresent();
 		debugLog(
 			"legacy_init_excluded_category",
-			{ storeId: store.id, productHandle: product.handle, categoryIds },
+			{ storeId: store.id, productHandle: product.handle, categoryTokens },
 			"L0",
 		);
 		return;
@@ -1336,7 +1355,7 @@ async function init() {
 			footwearCollectionHandles,
 			billingPlan,
 			stylistModeEnabled,
-			categoryIds,
+			categoryTokens,
 		);
 	}
 	if (!configLoaded) {
@@ -1373,7 +1392,7 @@ async function init() {
 		footwearCollectionHandles,
 		billingPlan,
 		stylistModeEnabled,
-		categoryIds,
+		categoryTokens,
 	);
 }
 

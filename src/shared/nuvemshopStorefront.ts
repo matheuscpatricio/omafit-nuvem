@@ -1,5 +1,5 @@
 import type { NubeSDK, ProductDetails } from "@tiendanube/nube-sdk-types";
-import { isCategoryExcluded } from "./categoryExclusion";
+import { isCategoryExcluded, mergeCategoryTokens } from "./categoryExclusion";
 import { getStorefrontAppBaseUrl } from "./omafitAppBaseUrl";
 import { normalizeChartHandle, shouldUseFootwearWidget } from "./widgetFootwearRouting";
 import { getStorefrontFontFamily, sanitizeFontFamilyForCss } from "./storeFont";
@@ -137,6 +137,59 @@ export function getProductHandle(nube: NubeSDK, product: ProductDetails): string
 }
 
 export { isCategoryExcluded };
+
+export function getProductCategoryTokens(product: ProductDetails | null): string[] {
+	if (!product) return [];
+	return (product.categories || []).map((categoryId) => String(categoryId));
+}
+
+export function buildStorefrontProductCategoriesEndpoint(
+	storeId: number,
+	productHandle: string,
+): string {
+	const params = new URLSearchParams({
+		store_id: String(storeId),
+		product_handle: productHandle,
+	});
+	return `${getOmafitAppBaseUrl()}/api/storefront/product-categories?${params.toString()}`;
+}
+
+export async function fetchProductCategoryTokens(
+	storeId: number,
+	productHandle: string,
+): Promise<string[]> {
+	if (!storeId || !productHandle) return [];
+	try {
+		const response = await fetch(buildStorefrontProductCategoriesEndpoint(storeId, productHandle));
+		if (!response.ok) return [];
+		const data = (await response.json()) as {
+			category_tokens?: string[];
+			category_ids?: string[];
+			category_handles?: string[];
+		};
+		if (Array.isArray(data.category_tokens) && data.category_tokens.length > 0) {
+			return data.category_tokens.map((token) => String(token)).filter(Boolean);
+		}
+		return mergeCategoryTokens(data.category_ids, data.category_handles);
+	} catch {
+		return [];
+	}
+}
+
+export async function shouldHideProductForConfig(
+	product: ProductDetails | null,
+	config: StorefrontConfig,
+	storeId: number,
+	productHandle: string,
+): Promise<boolean> {
+	if (config.widget_enabled === false) return true;
+	if (!product) return false;
+	const tokens = mergeCategoryTokens(
+		getProductCategoryTokens(product),
+		await fetchProductCategoryTokens(storeId, productHandle),
+	);
+	return isCategoryExcluded(tokens, config.excluded_collections);
+}
 
 export function shouldHideForProduct(product: ProductDetails | null, config: StorefrontConfig) {
 	if (config.widget_enabled === false) return true;
