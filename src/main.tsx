@@ -31,6 +31,7 @@ let activeIframe: ReturnType<typeof Iframe> | null = null;
 let pendingCartReply:
 	| ((ok: boolean, message: string) => void)
 	| null = null;
+let lastCartRequestId: string | null = null;
 
 function replyToIframe(nube: NubeSDK, ok: boolean, message: string) {
 	if (!activeIframe) return;
@@ -49,6 +50,13 @@ function handleIframeMessage(nube: NubeSDK, event: IframeMessageEvent) {
 		return;
 	}
 	if (payload.type !== "omafit-add-to-cart-request") return;
+	if (pendingCartReply) return;
+
+	const requestId = String(payload.requestId || "").trim();
+	if (requestId) {
+		if (requestId === lastCartRequestId) return;
+		lastCartRequestId = requestId;
+	}
 
 	const product = getCurrentProduct(nube);
 	if (!product?.id) {

@@ -1284,7 +1284,6 @@ function renderButton(
 async function init() {
 	const store = getStoreContext();
 	const product = getProductContext();
-	attachMessageBridge();
 	debugLog(
 		"legacy_init",
 		{
@@ -1322,6 +1321,7 @@ async function init() {
 		);
 		return;
 	}
+	attachMessageBridge();
 	if (config && shouldHideLegacyProduct(categoryTokens, config)) {
 		lastLegacyRenderSnapshot = null;
 		removeLegacyCtaIfPresent();

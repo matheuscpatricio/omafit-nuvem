@@ -17,6 +17,7 @@ type LegacyStorefrontResponse = {
 	size_charts_count?: number;
 	footwear_rows_count?: number;
 	footwear_rows_missing_handle?: boolean;
+	storefront_sdk_enabled?: boolean;
 };
 
 type LegacyStoreContext = {
@@ -110,7 +111,9 @@ function getProductContext(): LegacyProductContext | null {
 
 async function loadConfig(appBaseUrl: string, storeId: string) {
 	const store = getStoreContext();
-	const endpoint = `${appBaseUrl}/api/storefront/widget-config?store_id=${encodeURIComponent(storeId)}&store_domain=${encodeURIComponent(store?.domain || "")}`;
+	const themeName = String(window.LS?.theme?.name || "").trim();
+	const themeQuery = themeName ? `&theme=${encodeURIComponent(themeName)}` : "";
+	const endpoint = `${appBaseUrl}/api/storefront/widget-config?store_id=${encodeURIComponent(storeId)}&store_domain=${encodeURIComponent(store?.domain || "")}${themeQuery}`;
 	try {
 		debugLog("load_config_start", { endpoint, storeId }, "F1");
 		const response = await fetch(endpoint, { mode: "cors" });
@@ -152,6 +155,7 @@ async function loadConfig(appBaseUrl: string, storeId: string) {
 			widgetUrl: String(data.widgetUrl || `${appBaseUrl}/widget.html`),
 			publicId: String(data.publicId || ""),
 			footwearCollectionHandles: footwearHandles,
+			storefrontSdkEnabled: data.storefront_sdk_enabled === true,
 		};
 	} catch (error) {
 		debugLog(
@@ -171,6 +175,7 @@ async function loadConfig(appBaseUrl: string, storeId: string) {
 			widgetUrl: `${appBaseUrl}/widget.html`,
 			publicId: "",
 			footwearCollectionHandles: [] as string[],
+			storefrontSdkEnabled: false,
 		};
 	}
 }
@@ -465,7 +470,6 @@ function renderButtonWithRetries(
 async function init() {
 	const store = getStoreContext();
 	const product = getProductContext();
-	attachMessageBridge();
 	debugLog(
 		"legacy_footwear_init",
 		{
@@ -483,7 +487,17 @@ async function init() {
 		return;
 	}
 	const appBaseUrl = getAppBaseUrl();
-	const { config, widgetUrl, publicId, footwearCollectionHandles } = await loadConfig(appBaseUrl, store.id);
+	const { config, widgetUrl, publicId, footwearCollectionHandles, storefrontSdkEnabled } =
+		await loadConfig(appBaseUrl, store.id);
+	if (storefrontSdkEnabled) {
+		debugLog(
+			"legacy_footwear_init_skipped_sdk_enabled",
+			{ storeId: store.id, themeName: String(window.LS?.theme?.name || "").trim() || null },
+			"F0",
+		);
+		return;
+	}
+	attachMessageBridge();
 	renderButtonWithRetries(store, product, config, widgetUrl, publicId, footwearCollectionHandles);
 }
 

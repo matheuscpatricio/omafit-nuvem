@@ -5654,7 +5654,9 @@ const handleSubmit = async (
     };
 
     pushVariantToBundle(primaryVariantIdResolved);
+    const currentProductId = String(product?.id || productId || '').trim();
     for (const row of Object.values(tryOnCartLinesByProductRef.current)) {
+      if (currentProductId && String(row.productId || '').trim() === currentProductId) continue;
       pushVariantToBundle(row.variantId);
     }
 
