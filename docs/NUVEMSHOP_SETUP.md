@@ -63,7 +63,7 @@ Ative a flag **Uses NubeSDK** no Partner Portal.
 
 Para homologação e publicação, siga o checklist completo em [HOMOLOGACAO_NUVEMSHOP.md](./HOMOLOGACAO_NUVEMSHOP.md).
 
-Em produção, lojas com temas que não suportam NubeSDK (ex.: Morelia) usam `storefront-legacy.min.js` — ver [storefront-modes.md](./storefront-modes.md).
+O NubeSDK vale para qualquer tema que envie o nome, inclusive Morelia. O `storefront-legacy.min.js` só entra quando `storefront_sdk_enabled` vem falso. Ver [storefront-modes.md](./storefront-modes.md).
 
 ## Billing no Partner Portal
 

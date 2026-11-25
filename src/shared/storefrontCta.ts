@@ -1,5 +1,6 @@
 export const OMAFIT_LEGACY_CTA_WRAPPER_ID = "omafit-legacy-wrapper";
 export const OMAFIT_LEGACY_CTA_BUTTON_ID = "omafit-legacy-button";
+export const OMAFIT_FOOTWEAR_CTA_WRAPPER_ID = "omafit-legacy-footwear-wrapper";
 const LEGACY_CTA_GUARD_STYLE_ID = "omafit-legacy-guard-style";
 const LEGACY_CTA_CACHE_PREFIX = "omafit_legacy_cta_v1:";
 const LEGACY_CTA_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -136,4 +137,24 @@ export function writeLegacyCtaCache(
 export function removeLegacyStorefrontCta(): void {
 	if (typeof document === "undefined") return;
 	document.getElementById(OMAFIT_LEGACY_CTA_WRAPPER_ID)?.remove();
+	document.getElementById(OMAFIT_FOOTWEAR_CTA_WRAPPER_ID)?.remove();
+}
+
+type CtaGuardWindow = Window & { __omafitSuppressLegacyCta?: boolean; __omafitLegacyCtaObserver?: boolean };
+
+/** Remove CTAs injetados por scripts antigos enquanto a categoria estiver excluída. */
+export function setLegacyStorefrontCtaSuppressed(suppressed: boolean): void {
+	if (typeof window === "undefined") return;
+	const guard = window as CtaGuardWindow;
+	guard.__omafitSuppressLegacyCta = suppressed;
+	if (suppressed) removeLegacyStorefrontCta();
+	if (guard.__omafitLegacyCtaObserver || typeof document === "undefined" || typeof MutationObserver === "undefined") {
+		return;
+	}
+	guard.__omafitLegacyCtaObserver = true;
+	const observer = new MutationObserver(() => {
+		if ((window as CtaGuardWindow).__omafitSuppressLegacyCta) removeLegacyStorefrontCta();
+	});
+	const root = document.documentElement || document.body;
+	if (root) observer.observe(root, { childList: true, subtree: true });
 }

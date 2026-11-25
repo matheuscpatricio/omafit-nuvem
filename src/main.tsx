@@ -1,7 +1,9 @@
+import { Button, Column, Iframe, Link, Text } from "@tiendanube/nube-sdk-jsx";
 /** @jsxImportSource @tiendanube/nube-sdk-jsx */
 import type { NubeSDK } from "@tiendanube/nube-sdk-types";
-import { Button, Column, Iframe, Link, Text } from "@tiendanube/nube-sdk-jsx";
 import {
+	type StorefrontBootstrap,
+	type StorefrontConfig,
 	buildWidgetUrl,
 	findVariantByRecommendedSize,
 	getCurrentProduct,
@@ -9,29 +11,33 @@ import {
 	getStorefrontCtaSlot,
 	getStorefrontThemeName,
 	loadStorefrontBootstrap,
-	shouldUseStorefrontSdk,
-	shouldHideProductForConfig,
 	resolveCollectionHandleFromNube,
 	resolveProductImageUrls,
 	resolveWidgetBaseUrl,
-	type StorefrontBootstrap,
-	type StorefrontConfig,
+	shouldHideProductForConfig,
+	shouldUseStorefrontSdk,
 } from "./shared/nuvemshopStorefront";
-import { removeLegacyStorefrontCta } from "./shared/storefrontCta";
 import {
 	adoptShopperDeviceIdFromIframe,
 	getOrCreateShopperDeviceId,
 } from "./shared/shopperDeviceId";
+import {
+	installStorefrontCartGuards,
+	markStorefrontSdkActive,
+	registerStorefrontSdkCartAdd,
+} from "./shared/storefrontCartGuard";
+import {
+	removeLegacyStorefrontCta,
+	setLegacyStorefrontCtaSuppressed,
+} from "./shared/storefrontCta";
 
 type IframeMessageEvent = {
 	value?: Record<string, unknown>;
 };
 
 let activeIframe: ReturnType<typeof Iframe> | null = null;
-let pendingCartReply:
-	| ((ok: boolean, message: string) => void)
-	| null = null;
-let lastCartRequestId: string | null = null;
+let pendingCartReply: ((ok: boolean, message: string) => void) | null = null;
+const performedCartRequestIds = new Set<string>();
 
 function replyToIframe(nube: NubeSDK, ok: boolean, message: string) {
 	if (!activeIframe) return;
@@ -42,21 +48,17 @@ function replyToIframe(nube: NubeSDK, ok: boolean, message: string) {
 	});
 }
 
-function handleIframeMessage(nube: NubeSDK, event: IframeMessageEvent) {
-	const payload = event.value || {};
-	if (payload.type === "omafit-device-id-adopt") {
-		const deviceId = String(payload.deviceId || payload.omafit_device_id || "").trim();
-		if (deviceId) adoptShopperDeviceIdFromIframe(deviceId);
-		return;
-	}
+function performStorefrontCartAdd(
+	nube: NubeSDK,
+	payload: Record<string, unknown>,
+) {
 	if (payload.type !== "omafit-add-to-cart-request") return;
-	if (pendingCartReply) return;
-
 	const requestId = String(payload.requestId || "").trim();
 	if (requestId) {
-		if (requestId === lastCartRequestId) return;
-		lastCartRequestId = requestId;
+		if (performedCartRequestIds.has(requestId)) return;
+		performedCartRequestIds.add(requestId);
 	}
+	if (pendingCartReply) return;
 
 	const product = getCurrentProduct(nube);
 	if (!product?.id) {
@@ -65,12 +67,19 @@ function handleIframeMessage(nube: NubeSDK, event: IframeMessageEvent) {
 	}
 
 	const desiredSize = String(
-		(payload.selection as { recommended_size?: string } | undefined)?.recommended_size || "",
+		(payload.selection as { recommended_size?: string } | undefined)
+			?.recommended_size || "",
 	).trim();
 	const variant =
-		findVariantByRecommendedSize(product, desiredSize) || product.variants?.[0] || null;
+		findVariantByRecommendedSize(product, desiredSize) ||
+		product.variants?.[0] ||
+		null;
 	if (!variant?.id) {
-		replyToIframe(nube, false, "Nao foi possivel identificar a variante do produto.");
+		replyToIframe(
+			nube,
+			false,
+			"Nao foi possivel identificar a variante do produto.",
+		);
 		return;
 	}
 
@@ -91,7 +100,23 @@ function handleIframeMessage(nube: NubeSDK, event: IframeMessageEvent) {
 	}));
 }
 
-function pushWidgetContext(nube: NubeSDK, bootstrap: StorefrontBootstrap, widgetUrl: string) {
+function handleIframeMessage(nube: NubeSDK, event: IframeMessageEvent) {
+	const payload = event.value || {};
+	if (payload.type === "omafit-device-id-adopt") {
+		const deviceId = String(
+			payload.deviceId || payload.omafit_device_id || "",
+		).trim();
+		if (deviceId) adoptShopperDeviceIdFromIframe(deviceId);
+		return;
+	}
+	performStorefrontCartAdd(nube, payload);
+}
+
+function pushWidgetContext(
+	nube: NubeSDK,
+	bootstrap: StorefrontBootstrap,
+	widgetUrl: string,
+) {
 	if (!activeIframe) return;
 	const product = getCurrentProduct(nube);
 	if (!product) return;
@@ -103,10 +128,13 @@ function pushWidgetContext(nube: NubeSDK, bootstrap: StorefrontBootstrap, widget
 		productHandle,
 	);
 	const tryonLayout =
-		bootstrap.config.tryon_layout === "hero" || bootstrap.config.tryon_layout === "sidebar"
+		bootstrap.config.tryon_layout === "hero" ||
+		bootstrap.config.tryon_layout === "sidebar"
 			? bootstrap.config.tryon_layout
 			: "default";
-	const tryonLayoutBackground = String(bootstrap.config.tryon_layout_background_image || "").trim();
+	const tryonLayoutBackground = String(
+		bootstrap.config.tryon_layout_background_image || "",
+	).trim();
 	const shopperDeviceId = getOrCreateShopperDeviceId();
 	const productImages = resolveProductImageUrls(product, state.store.language);
 	const productImage = productImages[0] || "";
@@ -159,10 +187,7 @@ function resolveCtaBorderRadius(config: StorefrontConfig): number {
 	return Number.isFinite(radius) ? Math.max(0, Math.min(40, radius)) : 40;
 }
 
-function renderStorefrontCta(
-	config: StorefrontConfig,
-	onOpen: () => void,
-) {
+function renderStorefrontCta(config: StorefrontConfig, onOpen: () => void) {
 	const label = config.link_text || "Ver meu tamanho ideal";
 	const primaryColor = config.primary_color || "#810707";
 	const isButton = config.cta_type === "button";
@@ -216,11 +241,25 @@ async function renderStorefrontWidget(
 	const ctaSlot = getStorefrontCtaSlot(config);
 	clearProductSlots(nube);
 
-	if (config.widget_enabled === false) return;
+	if (config.widget_enabled === false) {
+		setLegacyStorefrontCtaSuppressed(true);
+		return;
+	}
 	if (!product) return;
 	const productHandle = getProductHandle(nube, product);
 	const state = nube.getState();
-	if (await shouldHideProductForConfig(product, config, state.store.id, productHandle)) return;
+	if (
+		await shouldHideProductForConfig(
+			product,
+			config,
+			state.store.id,
+			productHandle,
+		)
+	) {
+		setLegacyStorefrontCtaSuppressed(true);
+		return;
+	}
+	setLegacyStorefrontCtaSuppressed(false);
 	const collectionHandle = resolveCollectionHandleFromNube(
 		nube,
 		bootstrap.footwearCollectionHandles,
@@ -255,7 +294,9 @@ async function renderStorefrontWidget(
 			nube.render(
 				"modal_content",
 				<Column padding="16px" gap="16px">
-					<Text>Descubra o tamanho ideal com base no contexto real deste produto.</Text>
+					<Text>
+						Descubra o tamanho ideal com base no contexto real deste produto.
+					</Text>
 					{activeIframe}
 					<Button
 						variant="secondary"
@@ -276,6 +317,11 @@ async function renderStorefrontWidget(
 export function App(nube: NubeSDK) {
 	let bootToken = 0;
 	let themeRetryCount = 0;
+	markStorefrontSdkActive(true);
+	installStorefrontCartGuards();
+	registerStorefrontSdkCartAdd((payload) =>
+		performStorefrontCartAdd(nube, payload),
+	);
 	clearProductSlots(nube);
 
 	const boot = async () => {

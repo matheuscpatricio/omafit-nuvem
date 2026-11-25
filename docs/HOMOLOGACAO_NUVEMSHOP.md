@@ -34,29 +34,52 @@ Após alterar permissões: **desinstalar e reinstalar** o app na loja demo, depo
 
 ## 2. Loja demo para homologação
 
-A revisão Nuvemshop exige vitrine com tema **Patagonia** + NubeSDK (`main.min.js`).
+A loja demo está no tema **Morelia**. O NubeSDK desenha o CTA nesse tema: o HTML da PDP já tem `data-nubesdk-slot`. Patagonia não é obrigatório.
+
+O código liga `storefront_sdk_enabled` para qualquer tema com nome (`lib/storefront-sdk-mode.js`). O script legado só entra quando a API devolve a flag falsa.
+
+### Scripts do Partner Portal
+
+Na vitrine de `arrascaneta` (nov/2026) a Nuvemshop injetava **dois** scripts `onfirstinteraction`:
+
+| URL vista na loja | O que é | Ação |
+|-------------------|---------|------|
+| `https://apps-scripts.tiendanube.com/omafit/omafit/3.js?versionId=dqXkLfeTQuyyR6M1E2Rmt3v1Ct0CiuQ9` | Cópia congelada do bundle legado (`OmafitLegacyStorefront`). Não consulta `/api/storefront/product-categories`, zera `excluded_collections` no render em cache e, no Morelia, continua clicando em Comprar. | **Remover** (ou substituir). Provável candidato: `Omafit #8130` ou um upload antigo marcado como NubeSDK. |
+| `https://omafit-nuvem-production.up.railway.app/storefront-legacy.min.js?v=20260323-legacy1` | Legado servido pelo app. Some quando o Railway está no ar e soma um segundo add ao carrinho se o SDK também estiver ativo. | **Remover** do portal. |
+
+Deixar **um** script NubeSDK, fora do modo dev, com src exatamente:
+
+`https://omafit-nuvem-production.up.railway.app/main.min.js`
+
+| Script no portal | Ação |
+|------------------|------|
+| `WIdget Omafit #8546` (NubeSDK, produção) | **Manter** se o src for `main.min.js`. Se o src for o `3.js` da Tiendanube, trocar a URL e republicar. |
+| `WIdget Omafit 2 #8548` (NubeSDK dev) | **Remover**. Um segundo app SDK também dispara `cart:add` (2 unidades). |
+| `Omafit #8130` | **Remover** se apontar para `storefront-legacy.min.js` ou para o `3.js`. |
+| `Widget Calçados #5578` | **Remover**. Bundle de calçados sem checagem de categoria e com ponte de carrinho própria. |
+
+O dono confirma o src de cada linha no portal; os ids acima são os nomes enviados na revisão, não um campo que a vitrine devolve.
 
 ### Passos na loja demo
 
-1. **Nuvemshop Admin** → Design → trocar tema para **Patagonia**.
-2. **Remover** do tema o script legado `storefront-legacy.min.js` (se existir no HTML personalizado).
-3. Garantir que o app injeta apenas `main.min.js` (Partner Portal + Uses NubeSDK).
-4. Ter **pelo menos 1 produto de vestuário** e **1 de calçado** (ex.: tênis na coleção `tenis`) com fotos e variantes de tamanho.
-5. No admin Omafit:
+1. Manter o tema **Morelia**.
+2. No portal, deixar só `main.min.js` (tabela acima) e **Uses NubeSDK** ativo.
+3. Ter **pelo menos 1 produto de vestuário** e **1 de calçado** (ex.: tênis na coleção `tenis`) com fotos e variantes de tamanho.
+4. No admin Omafit:
    - **Sincronizar loja**
    - Configurar **Widget** (CTA ativo, texto “Assistente inteligente”)
+   - Excluir a categoria **Acessórios** (o admin grava id, handle e nome)
    - Criar **tabela de medidas** vinculada à coleção
 
-### Teste na PDP (Patagonia)
+### Teste na PDP (Morelia)
 
-- [ ] Botão Omafit **acima** do comprar (sem duplicata)
+- [ ] Um único botão Omafit (sem segundo botão legado ou de calçados)
+- [ ] Produto da categoria excluída (e de subcategoria dela) **não** mostra o widget
+- [ ] Produto de outra categoria mostra o botão
 - [ ] Modal abre com widget (`widget.html` ou `widget-footwear.html`)
-- [ ] Try-on / calculadora de tamanho funciona
-- [ ] Adicionar ao carrinho via NubeSDK (`cart:add`)
+- [ ] Adicionar ao carrinho entra **1** unidade
 
-### Morelia e outros temas (pós-publicação)
-
-Lojas em temas sem NubeSDK usam `storefront-legacy.min.js` — **não** enviar isso na homologação; é só compatibilidade em produção.
+O legado `storefront-legacy.min.js` continua no repositório só para loja sem tema na requisição e fora da whitelist. Não registrar esse arquivo no portal da homologação.
 
 ---
 
@@ -100,7 +123,7 @@ Esperado: `hasStoreRecord: true`, `selfBillingReady: true`, `webhooksReady: true
 ```mermaid
 flowchart TB
   subgraph Loja["Loja Nuvemshop"]
-    PDP[PDP Patagonia]
+    PDP[PDP Morelia]
     Admin[Nuvemshop Admin iframe]
   end
 
@@ -137,13 +160,17 @@ flowchart TB
 3. Aba **Widget**: ativar, escolher posição e texto do CTA.
 4. Aba **Tabelas**: mostrar tabela de medidas.
 5. Aba **Plano**: assinar Growth (redirect Stripe) ou On-Demand.
-6. Abrir PDP no tema Patagonia → clicar **Assistente inteligente**.
+6. Abrir PDP no tema Morelia → clicar **Assistente inteligente**.
 7. Usar provador / tamanho recomendado → adicionar ao carrinho.
 8. (Opcional) Analytics e Try On Marketing.
 
 ---
 
-## 7. FAQs (copiar para o Partner Portal)
+## 7. FAQs
+
+O documento no formato exigido pela Nuvemshop está em `docs/FAQ_NUVEMSHOP_TEMPLATE_PREENCHIDO.md` e `docs/FAQ_NUVEMSHOP_TEMPLATE_PREENCHIDO.docx` (template “Marketing e demais categorias” + Guia Tutorial de Instalação). Campos que o repositório não confirma estão marcados como `[PREENCHER]`.
+
+Resumo para o portal:
 
 **O que o Omafit faz?**  
 Provador virtual e recomendação de tamanho na página do produto, reduzindo devoluções e aumentando conversão.
@@ -155,7 +182,7 @@ Não. Instale o app, configure widget e tabelas de medidas no painel Omafit.
 Modelo freemium: plano On-Demand gratuito com sessões incluídas; planos pagos (Growth, Pro) via Stripe no painel do app.
 
 **Quais temas são suportados na vitrine?**  
-Homologação e NubeSDK: tema **Patagonia**. Outros temas usam script legado compatível após publicação.
+NubeSDK em qualquer tema que envie o nome, incluindo **Morelia** (loja demo). O script legado só cobre o caso em que a API desliga o SDK.
 
 **O app acessa dados sensíveis?**  
 Apenas dados necessários: produtos, pedidos (para billing de uso) e configurações da loja via OAuth. Imagens do try-on são processadas para recomendação de tamanho.
@@ -200,5 +227,5 @@ Publicar em `https://omafit.co/privacidade` (ou URL indicada no Portal):
 | Admin Omafit | OK |
 | Billing self + Stripe live | OK |
 | `nuvemshop_stores` sincronizado | OK (após Sincronizar loja) |
-| Tema Patagonia na loja demo | **Ação manual** |
+| Tema Morelia + um script `main.min.js` | **Ação manual no portal** |
 | Artefatos Portal (vídeo, FAQs, privacidade) | **Preencher no Portal** |

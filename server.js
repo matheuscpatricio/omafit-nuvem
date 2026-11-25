@@ -18,6 +18,7 @@ import {
 } from "./lib/billing-growth-plus.js";
 import { reactivateWidgetKeyForShop } from "./lib/widget-keys.js";
 import { listStoreProducts, getProductByHandle, getProductCategoryRefsByHandle } from "./lib/nuvemshop-products.js";
+import { expandExcludedCategorySet } from "./lib/category-exclusion.js";
 import {
 	verifyCatalogSearchSignature,
 	verifyProductByHandleSignature,
@@ -1709,25 +1710,36 @@ async function fetchStoreInfo(session) {
 }
 
 async function listCategories(session) {
-	const response = await nuvemshopApi(
-		session,
-		"/categories?fields=id,name,handle,parent&per_page=200&page=1",
-		{ method: "GET" },
-	);
-	const text = await response.text();
-	if (!response.ok) {
-		throw new Error(parseSupabaseError(text)?.message || "Could not fetch categories");
-	}
-	const rows = JSON.parse(text);
 	const storeLanguage = session?.store?.language || "pt";
-	return Array.isArray(rows)
-		? rows.map((row) => ({
+	const categories = [];
+	for (let page = 1; page <= 10; page += 1) {
+		const response = await nuvemshopApi(
+			session,
+			`/categories?fields=id,name,handle,parent,subcategories&per_page=200&page=${page}`,
+			{ method: "GET" },
+		);
+		const text = await response.text();
+		if (!response.ok) {
+			if (page === 1) {
+				throw new Error(parseSupabaseError(text)?.message || "Could not fetch categories");
+			}
+			break;
+		}
+		const rows = JSON.parse(text);
+		if (!Array.isArray(rows) || rows.length === 0) break;
+		for (const row of rows) {
+			categories.push({
 				id: row.id,
 				handle: toLocalizedValue(row.handle, storeLanguage) || String(row.id),
 				title: toLocalizedValue(row.name, storeLanguage) || `Categoria ${row.id}`,
+				name: toLocalizedValue(row.name, storeLanguage) || "",
 				parent: row.parent ?? null,
-		  }))
-		: [];
+				subcategories: Array.isArray(row.subcategories) ? row.subcategories : [],
+			});
+		}
+		if (rows.length < 200) break;
+	}
+	return categories;
 }
 
 function hasOrdersScope(scopeValue = "") {
@@ -2398,22 +2410,12 @@ function normalizeWidgetLayout(value, heroAllowed) {
 }
 
 async function expandExcludedCategoryTokens(session, excludedCollections = []) {
-	if (!session || !Array.isArray(excludedCollections) || excludedCollections.length === 0) {
-		return [];
-	}
+	const fallback = Array.isArray(excludedCollections)
+		? excludedCollections.map((value) => String(value ?? "").trim()).filter(Boolean)
+		: [];
+	if (!session || fallback.length === 0) return fallback;
 	const categories = await listCategories(session).catch(() => []);
-	const tokens = new Set(
-		excludedCollections.map((value) => String(value || "").trim().toLowerCase()).filter(Boolean),
-	);
-	for (const rawId of excludedCollections) {
-		const id = String(rawId || "").trim();
-		if (!id) continue;
-		const match = categories.find((category) => String(category.id) === id);
-		if (match?.handle) {
-			tokens.add(String(match.handle).trim().toLowerCase());
-		}
-	}
-	return Array.from(tokens);
+	return expandExcludedCategorySet(fallback, categories);
 }
 
 function normalizeWidgetConfigForClient(config, planId = "ondemand") {

@@ -9,3 +9,14 @@ coverage/
 
 # Local Netlify folder
 .netlify
+
+# Logs e estado local do editor
+.cursor/
+supabase/.temp/
+
+# Arquivo vazio criado por engano na raiz
+{
+
+# Par de chaves SSH commitido por engano (o nome começa com #)
+\# pressione Enter para aceitar os locais padrão
+\# pressione Enter para aceitar os locais padrão.pub

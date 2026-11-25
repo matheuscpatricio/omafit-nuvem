@@ -1,0 +1,9 @@
+# O servidor serve a pasta dist/. O Railway precisa gerar esse build;
+# node_modules e dist não vão no git.
+[build]
+builder = "NIXPACKS"
+buildCommand = "npm install --legacy-peer-deps && npm run build"
+
+[deploy]
+startCommand = "npm start"
+restartPolicyType = "ON_FAILURE"
