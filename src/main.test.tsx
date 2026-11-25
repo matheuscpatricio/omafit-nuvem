@@ -73,18 +73,35 @@ describe("App", () => {
 						excluded_collections: [],
 						primary_color: "#810707",
 					},
-					widgetUrl: "https://omafit-nuvem-production.up.railway.app/widget.html",
+					widgetUrl:
+						"https://omafit-nuvem-production.up.railway.app/widget.html",
 					storefront_sdk_enabled: true,
 				}),
 			}),
 		);
 
-		expect(mockNube.on).toHaveBeenCalledWith("page:loaded", expect.any(Function));
-		expect(mockNube.on).toHaveBeenCalledWith("location:updated", expect.any(Function));
-		expect(mockNube.on).toHaveBeenCalledWith("cart:add:success", expect.any(Function));
-		expect(mockNube.on).toHaveBeenCalledWith("cart:add:fail", expect.any(Function));
-		expect(mockNube.clearSlot).toHaveBeenCalledWith("before_product_detail_add_to_cart");
-		expect(mockNube.clearSlot).toHaveBeenCalledWith("after_product_detail_add_to_cart");
+		expect(mockNube.on).toHaveBeenCalledWith(
+			"page:loaded",
+			expect.any(Function),
+		);
+		expect(mockNube.on).toHaveBeenCalledWith(
+			"location:updated",
+			expect.any(Function),
+		);
+		expect(mockNube.on).toHaveBeenCalledWith(
+			"cart:add:success",
+			expect.any(Function),
+		);
+		expect(mockNube.on).toHaveBeenCalledWith(
+			"cart:add:fail",
+			expect.any(Function),
+		);
+		expect(mockNube.clearSlot).toHaveBeenCalledWith(
+			"before_product_detail_add_to_cart",
+		);
+		expect(mockNube.clearSlot).toHaveBeenCalledWith(
+			"after_product_detail_add_to_cart",
+		);
 		expect(mockNube.clearSlot).toHaveBeenCalledWith("modal_content");
 	});
 
@@ -98,18 +115,56 @@ describe("App", () => {
 						widget_enabled: true,
 						excluded_collections: [],
 					},
-					widgetUrl: "https://omafit-nuvem-production.up.railway.app/widget.html",
+					widgetUrl:
+						"https://omafit-nuvem-production.up.railway.app/widget.html",
 					storefront_sdk_enabled: false,
 				}),
 			}),
 		);
 
+		const pageWindow = {
+			setTimeout: () => 0,
+		} as unknown as Window & { __omafitSdkActive?: boolean };
+		vi.stubGlobal("window", pageWindow);
+
 		await triggerPageLoaded();
+		await vi.waitFor(() => {
+			expect(pageWindow.__omafitSdkActive).toBe(false);
+		});
 
 		expect(mockNube.render).not.toHaveBeenCalled();
-		expect(mockNube.clearSlot).toHaveBeenCalledWith("before_product_detail_add_to_cart");
-		expect(mockNube.clearSlot).toHaveBeenCalledWith("after_product_detail_add_to_cart");
+		expect(mockNube.clearSlot).toHaveBeenCalledWith(
+			"before_product_detail_add_to_cart",
+		);
+		expect(mockNube.clearSlot).toHaveBeenCalledWith(
+			"after_product_detail_add_to_cart",
+		);
 		expect(mockNube.clearSlot).toHaveBeenCalledWith("modal_content");
+	});
+
+	it("does not render the CTA when the product category is excluded", async () => {
+		const { mockNube, triggerPageLoaded } = createMockNube(
+			vi.fn().mockResolvedValue({
+				ok: true,
+				json: async () => ({
+					config: {
+						link_text: "Ver meu tamanho ideal",
+						widget_enabled: true,
+						excluded_collections: ["1", "acessorios", "Acessórios"],
+					},
+					widgetUrl:
+						"https://omafit-nuvem-production.up.railway.app/widget.html",
+					storefront_sdk_enabled: true,
+				}),
+			}),
+		);
+
+		await triggerPageLoaded();
+		await vi.waitFor(() => {
+			expect(mockNube.clearSlot).toHaveBeenCalled();
+		});
+
+		expect(mockNube.render).not.toHaveBeenCalled();
 	});
 
 	it("renders SDK CTA on Morelia when API enables SDK", async () => {
@@ -133,6 +188,9 @@ describe("App", () => {
 		const { mockNube, triggerPageLoaded } = createMockNube(fetchMock);
 
 		await triggerPageLoaded();
+		await vi.waitFor(() => {
+			expect(mockNube.render).toHaveBeenCalled();
+		});
 
 		expect(fetchMock).toHaveBeenCalled();
 		const configUrl = String(fetchMock.mock.calls[0]?.[0] || "");

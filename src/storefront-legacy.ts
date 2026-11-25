@@ -11,8 +11,16 @@ import { resolveCollectionHandleForStorefront, shouldUseFootwearWidget } from ".
 import { getOrCreateShopperDeviceId } from "./shared/shopperDeviceId";
 import { getLegacyStorefrontAppBaseUrl } from "./shared/omafitAppBaseUrl";
 import { isCategoryExcluded, mergeCategoryTokens } from "./shared/categoryExclusion";
+import { readStorefrontCategoryTokensFromDom } from "./shared/storefrontCategoryDom";
+import {
+	allowNextProductFormSubmit,
+	claimStorefrontCartAdd,
+	installStorefrontCartGuards,
+	suppressProductFormSubmit,
+} from "./shared/storefrontCartGuard";
 
 startLegacyCtaFlashGuard();
+installStorefrontCartGuards();
 
 type LegacyStorefrontConfig = {
 	link_text: string;
@@ -99,53 +107,11 @@ let legacyPersistenceStarted = false;
 const legacyProductCategoryCache = new Map<string, string[]>();
 
 function readProductCategoryIdsFromDom(): string[] {
-	const ids = new Set<string>();
-	const lsCategories = window.LS?.product?.categories;
-	if (Array.isArray(lsCategories)) {
-		for (const entry of lsCategories) {
-			if (typeof entry === "number" || typeof entry === "string") {
-				const text = String(entry).trim();
-				if (text) ids.add(text);
-				continue;
-			}
-			if (entry && typeof entry === "object" && entry.id != null) {
-				const text = String(entry.id).trim();
-				if (text) ids.add(text);
-			}
-		}
-	}
-
-	for (const element of Array.from(
-		document.querySelectorAll("[data-product-category-id],[data-category-id]"),
-	)) {
-		const raw =
-			element.getAttribute("data-product-category-id") || element.getAttribute("data-category-id");
-		for (const part of String(raw || "")
-			.split(",")
-			.map((value) => value.trim())
-			.filter(Boolean)) {
-			ids.add(part);
-		}
-	}
-
-	return Array.from(ids);
+	return readStorefrontCategoryTokensFromDom();
 }
 
 function readProductCategoryHandlesFromDom(): string[] {
-	const handles = new Set<string>();
-	for (const link of Array.from(document.querySelectorAll("a[href]"))) {
-		const href = String(link.getAttribute("href") || "");
-		const match = href.match(/\/categorias?\/([^/?#]+)/i);
-		if (!match?.[1]) continue;
-		try {
-			const handle = decodeURIComponent(match[1]).trim();
-			if (handle) handles.add(handle);
-		} catch {
-			const handle = match[1].trim();
-			if (handle) handles.add(handle);
-		}
-	}
-	return Array.from(handles);
+	return [];
 }
 
 async function resolveLegacyProductCategoryTokens(
@@ -157,10 +123,7 @@ async function resolveLegacyProductCategoryTokens(
 		return legacyProductCategoryCache.get(cacheKey) || [];
 	}
 
-	const domTokens = mergeCategoryTokens(
-		readProductCategoryIdsFromDom(),
-		readProductCategoryHandlesFromDom(),
-	);
+	const domTokens = mergeCategoryTokens(readProductCategoryIdsFromDom(), readProductCategoryHandlesFromDom());
 
 	let apiTokens: string[] = [];
 	try {
@@ -731,22 +694,47 @@ function postCartResult(ok: boolean, message: string) {
 	);
 }
 
+function forceProductQuantity(form: HTMLFormElement | null) {
+	const quantity = form?.querySelector<HTMLInputElement>(
+		"input[name='quantity'], .js-quantity-input",
+	);
+	if (quantity) quantity.value = "1";
+}
+
+function addProductToCartOnce(form: HTMLFormElement): boolean {
+	forceProductQuantity(form);
+	const ls = window.LS as { addToCartEnhanced?: (form: HTMLFormElement) => unknown };
+	if (typeof ls?.addToCartEnhanced === "function") {
+		void ls.addToCartEnhanced(form);
+		return true;
+	}
+	const submitButton =
+		form.querySelector<HTMLElement>(".js-prod-submit-form") ||
+		form.querySelector<HTMLElement>("button[type='submit']") ||
+		form.querySelector<HTMLElement>("input[type='submit']");
+	if (!submitButton) return false;
+	allowNextProductFormSubmit();
+	submitButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+	return true;
+}
+
 function attachMessageBridge() {
-	if ((window as Window & { __omafitBridgeAttached?: boolean }).__omafitBridgeAttached) return;
-	(window as Window & { __omafitBridgeAttached?: boolean }).__omafitBridgeAttached = true;
+	const guard = window as Window & { __omafitBridgeAttached?: boolean; __omafitSdkActive?: boolean };
+	if (guard.__omafitBridgeAttached) return;
+	guard.__omafitBridgeAttached = true;
 
 	window.addEventListener("message", (event) => {
 		if (event.data?.type !== "omafit-add-to-cart-request") return;
+		if (guard.__omafitSdkActive) return;
+		const requestId = String(event.data?.requestId || "").trim();
+		if (!claimStorefrontCartAdd(requestId)) return;
+		suppressProductFormSubmit();
 		const desiredSize = String(event.data?.selection?.recommended_size || "").trim();
 		const sizeMatched = desiredSize ? trySelectSizeOption(desiredSize) : false;
 		const form = findProductForm();
-		const submitButton =
-			form?.querySelector<HTMLElement>(".js-prod-submit-form") ||
-			form?.querySelector<HTMLElement>('button[type="submit"]') ||
-			form?.querySelector<HTMLElement>('input[type="submit"]');
 		const beforeVariantId = getCurrentVariantId();
 
-	window.setTimeout(() => {
+		window.setTimeout(() => {
 			const noteField =
 				form?.querySelector<HTMLTextAreaElement>('textarea[name="note"]') ||
 				form?.querySelector<HTMLInputElement>('input[name="note"]');
@@ -757,21 +745,15 @@ function attachMessageBridge() {
 					noteField.value = current ? `${current} | ${marker}` : marker;
 				}
 			}
-			if (submitButton) {
-				submitButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+			if (form && addProductToCartOnce(form)) {
 				postCartResult(
 					true,
 					sizeMatched
 						? "Produto adicionado ao carrinho com o tamanho recomendado."
 						: beforeVariantId
-							? "Produto adicionado ao carrinho com a sele├º├úo atual da p├ígina."
-							: "Omafit enviou a solicita├º├úo para o carrinho.",
+							? "Produto adicionado ao carrinho com a seleção atual da página."
+							: "Omafit enviou a solicitação para o carrinho.",
 				);
-				return;
-			}
-			if (form) {
-				form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-				postCartResult(true, "Omafit enviou a solicita├º├úo para o carrinho.");
 				return;
 			}
 			postCartResult(false, "Nao foi possivel localizar o formulario de compra.");
@@ -1311,7 +1293,7 @@ async function init() {
 		stylistModeEnabled,
 		storefrontSdkEnabled,
 	} = await loadConfig(appBaseUrl, store.id);
-	if (storefrontSdkEnabled) {
+	if (storefrontSdkEnabled || (window as Window & { __omafitSdkActive?: boolean }).__omafitSdkActive) {
 		lastLegacyRenderSnapshot = null;
 		removeLegacyCtaIfPresent();
 		debugLog(

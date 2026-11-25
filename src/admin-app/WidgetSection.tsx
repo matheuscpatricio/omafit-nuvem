@@ -308,9 +308,11 @@ export function WidgetSection({
 							{collections.map((collection) => {
 								const id = String(collection.id);
 								const handle = String(collection.handle || "").trim();
-								const active =
-									config.excluded_collections.includes(id) ||
-									(Boolean(handle) && config.excluded_collections.includes(handle));
+								const title = String(collection.title || "").trim();
+								const savedTokens = [id, handle, title].filter(Boolean);
+								const active = savedTokens.some((token) =>
+									config.excluded_collections.includes(token),
+								);
 								return (
 									<button
 										key={id}
@@ -318,13 +320,9 @@ export function WidgetSection({
 										onClick={() => {
 											const nextTokens = active
 												? config.excluded_collections.filter(
-														(item) => item !== id && item !== handle,
+														(item) => !savedTokens.includes(item),
 													)
-												: [
-														...config.excluded_collections,
-														id,
-														...(handle ? [handle] : []),
-													].filter(
+												: [...config.excluded_collections, ...savedTokens].filter(
 														(item, index, list) =>
 															Boolean(item) && list.indexOf(item) === index,
 													);

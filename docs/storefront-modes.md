@@ -1,13 +1,17 @@
 # Modos da Storefront Omafit
 
-## Temas Nuvemshop
+## O que o código faz hoje
 
-| Tema | Script | Modelo |
-|------|--------|--------|
-| **Patagonia** | `main.min.js` | NubeSDK (obrigatorio na homologacao) |
-| **Morelia e demais** | `storefront-legacy.min.js` | Script legado ate a plataforma liberar SDK em todos os temas |
+`lib/storefront-sdk-mode.js` liga o NubeSDK em **qualquer tema que envie o nome** (`Morelia`, `Patagonia` ou outro). A loja demo de homologação está no tema **Morelia**, e o HTML desse tema já traz os slots `data-nubesdk-slot` (por exemplo `before_product_detail_add_to_cart`).
 
-A documentacao oficial do NubeSDK indica que o storefront via SDK funciona no tema **Patagonia**. Lojas em outros temas precisam do bundle legado (sem manipulacao direta no admin — script apontando para o app).
+| Situação | Quem desenha o botão | Carrinho |
+|----------|----------------------|----------|
+| `storefront_sdk_enabled === true` (tema informado, ou loja na whitelist com tema vazio) | `main.min.js` (NubeSDK) | `cart:add`, quantidade 1 |
+| flag falsa (requisição sem tema e loja fora de `OMAFIT_STOREFRONT_SDK_STORE_IDS`) | `storefront-legacy.min.js` | `LS.addToCartEnhanced` uma vez |
+
+O script de calçados (`storefront-legacy-footwear.min.js`) só existe como fallback antigo. Com o SDK ligado ele não deve renderizar nem escutar o carrinho. Na homologação, **um único script** deve ficar ativo no Partner Portal: `main.min.js`.
+
+Patagonia não é mais um requisito separado. Morelia não depende do bundle legado.
 
 ## NubeSDK (`src/main.tsx`)
 
@@ -15,36 +19,31 @@ A documentacao oficial do NubeSDK indica que o storefront via SDK funciona no te
 - Modal com `Iframe` + `cart:add`
 - Config via `GET /api/storefront/widget-config` na URL publica do app
 
-URL no Partner Portal (Patagonia):
+URL no Partner Portal (um script só):
 
 `https://SEU_DOMINIO/main.min.js`
 
 ## Legado (`src/storefront-legacy.ts`)
 
-- Injeta botao na PDP para temas sem suporte ao NubeSDK (ex.: Morelia)
-- Usa `postMessage` e formulario da loja para carrinho
+- Só injeta o botão quando `storefront_sdk_enabled` é falso
+- Carrinho via `LS.addToCartEnhanced` (uma vez), com trava compartilhada entre scripts
 
-URL no campo de scripts da loja / tema (Morelia):
+Não registrar esta URL na homologação:
 
 `https://SEU_DOMINIO/storefront-legacy.min.js`
 
 ## Homologacao
 
-Para homologacao Nuvemshop: loja demo com tema **Patagonia** + `main.min.js` + flag **Uses NubeSDK**.
-
-O legado permanece apenas para compatibilidade com temas antigos em producao.
+Loja demo no tema **Morelia** + um único script `main.min.js` + flag **Uses NubeSDK**. Não publicar `storefront-legacy.min.js` nem o bundle de calçados no portal.
 
 ## `storefront_sdk_enabled`
 
-`GET /api/storefront/widget-config` retorna `storefront_sdk_enabled` para o cliente NubeSDK (`main.min.js`) saber se deve renderizar o CTA:
+`GET /api/storefront/widget-config` retorna `storefront_sdk_enabled`:
 
 | Parametro `theme` | Resultado |
 |-------------------|-----------|
-| `patagonia` (case-insensitive) | `true` |
-| loja em `OMAFIT_STOREFRONT_SDK_STORE_IDS` | `true` apenas se `theme` vier **vazio** na requisição |
-| qualquer outro tema (ex.: `morelia`) | `false` — o script legado injeta o CTA com a config do admin |
-| ausente | `false`, exceto lojas em `OMAFIT_STOREFRONT_SDK_STORE_IDS` |
+| qualquer nome (`morelia`, `patagonia`, …) | `true` |
+| vazio e loja em `OMAFIT_STOREFRONT_SDK_STORE_IDS` | `true` |
+| vazio e loja fora da whitelist | `false` — aí o legado injeta o CTA |
 
-O `main.min.js` envia `theme` via `window.LS.theme.name`. O legado só deixa de injetar quando `storefront_sdk_enabled` e `true` **e** o tema no browser e Patagonia.
-
-No cliente, o SDK (`main.min.js`) so renderiza CTA em tema **Patagonia**; em Morelia nao remove o botao legado. A whitelist **nao** desativa o legado em temas como Morelia: nesses temas o NubeSDK nao expõe slots na PDP, entao o botao correto vem do `storefront-legacy.min.js`.
+O `main.min.js` envia `theme` via `window.LS.theme.name`. Com a flag verdadeira ele renderiza o CTA em qualquer tema que tenha slot de PDP e remove o botão legado do DOM. O legado (e o de calçados) não injeta e não escuta o carrinho quando a flag é verdadeira ou quando `window.__omafitSdkActive` já foi marcado pelo SDK.

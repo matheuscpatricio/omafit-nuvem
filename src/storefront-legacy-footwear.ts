@@ -1,12 +1,23 @@
 ﻿import { getStorefrontFontFamily, sanitizeFontFamilyForCss } from "./shared/storeFont";
 import { resolveCollectionHandleForStorefront, shouldUseFootwearWidget } from "./shared/widgetFootwearRouting";
 import { getLegacyStorefrontAppBaseUrl, OMAFIT_APP_BASE_URL_DEFAULT } from "./shared/omafitAppBaseUrl";
+import { isCategoryExcluded } from "./shared/categoryExclusion";
+import { readStorefrontCategoryTokensFromDom } from "./shared/storefrontCategoryDom";
+import {
+	allowNextProductFormSubmit,
+	claimStorefrontCartAdd,
+	installStorefrontCartGuards,
+	suppressProductFormSubmit,
+} from "./shared/storefrontCartGuard";
+
+installStorefrontCartGuards();
 
 type LegacyStorefrontConfig = {
 	link_text: string;
 	store_logo?: string | null;
 	primary_color?: string;
 	widget_enabled: boolean;
+	excluded_collections?: string[];
 };
 
 type LegacyStorefrontResponse = {
@@ -260,35 +271,51 @@ function postCartResult(ok: boolean, message: string) {
 	iframe.contentWindow.postMessage({ type: "omafit-add-to-cart-result", ok, message }, "*");
 }
 
+function addProductToCartOnce(form: HTMLFormElement): boolean {
+	const quantity = form.querySelector<HTMLInputElement>("input[name='quantity'], .js-quantity-input");
+	if (quantity) quantity.value = "1";
+	const ls = window.LS as { addToCartEnhanced?: (form: HTMLFormElement) => unknown };
+	if (typeof ls?.addToCartEnhanced === "function") {
+		void ls.addToCartEnhanced(form);
+		return true;
+	}
+	const submitButton =
+		form.querySelector<HTMLElement>(".js-prod-submit-form") ||
+		form.querySelector<HTMLElement>("button[type='submit']") ||
+		form.querySelector<HTMLElement>("input[type='submit']");
+	if (!submitButton) return false;
+	allowNextProductFormSubmit();
+	submitButton.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+	return true;
+}
+
 function attachMessageBridge() {
-	if ((window as Window & { __omafitFootwearBridgeAttached?: boolean }).__omafitFootwearBridgeAttached) return;
-	(window as Window & { __omafitFootwearBridgeAttached?: boolean }).__omafitFootwearBridgeAttached = true;
+	const guard = window as Window & {
+		__omafitFootwearBridgeAttached?: boolean;
+		__omafitSdkActive?: boolean;
+	};
+	if (guard.__omafitFootwearBridgeAttached) return;
+	guard.__omafitFootwearBridgeAttached = true;
 	window.addEventListener("message", (event) => {
 		if (event.data?.type !== "omafit-add-to-cart-request") return;
+		if (guard.__omafitSdkActive) return;
+		const requestId = String(event.data?.requestId || "").trim();
+		if (!claimStorefrontCartAdd(requestId)) return;
+		suppressProductFormSubmit();
 		const desiredSize = String(event.data?.selection?.recommended_size || "").trim();
 		const sizeMatched = desiredSize ? trySelectSizeOption(desiredSize) : false;
 		const form = findProductForm();
-		const submitButton =
-			form?.querySelector<HTMLElement>(".js-prod-submit-form") ||
-			form?.querySelector<HTMLElement>('button[type="submit"]') ||
-			form?.querySelector<HTMLElement>('input[type="submit"]');
 		const beforeVariantId = getCurrentVariantId();
 		window.setTimeout(() => {
-			if (submitButton) {
-				submitButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+			if (form && addProductToCartOnce(form)) {
 				postCartResult(
 					true,
 					sizeMatched
 						? "Produto adicionado ao carrinho com o tamanho recomendado."
 						: beforeVariantId
-							? "Produto adicionado ao carrinho com a sele├º├úo atual da p├ígina."
-							: "Omafit enviou a solicita├º├úo para o carrinho.",
+							? "Produto adicionado ao carrinho com a seleção atual da página."
+							: "Omafit enviou a solicitação para o carrinho.",
 				);
-				return;
-			}
-			if (form) {
-				form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-				postCartResult(true, "Omafit enviou a solicita├º├úo para o carrinho.");
 				return;
 			}
 			postCartResult(false, "Nao foi possivel localizar o formulario de compra.");
@@ -359,6 +386,12 @@ function renderButton(
 ) {
 	if (config.widget_enabled === false) {
 		debugLog("render_skipped_disabled", { storeId: store.id }, "F2");
+		document.getElementById(CTA_WRAPPER_ID)?.remove();
+		return;
+	}
+	if (isCategoryExcluded(readStorefrontCategoryTokensFromDom(), config.excluded_collections || [])) {
+		debugLog("render_skipped_excluded_category", { storeId: store.id, productHandle: product.handle }, "F2");
+		document.getElementById(CTA_WRAPPER_ID)?.remove();
 		return;
 	}
 	const collectionHandle = resolveCollectionHandleForStorefront(footwearCollectionHandles, product.handle);
@@ -489,12 +522,18 @@ async function init() {
 	const appBaseUrl = getAppBaseUrl();
 	const { config, widgetUrl, publicId, footwearCollectionHandles, storefrontSdkEnabled } =
 		await loadConfig(appBaseUrl, store.id);
-	if (storefrontSdkEnabled) {
+	if (storefrontSdkEnabled || (window as Window & { __omafitSdkActive?: boolean }).__omafitSdkActive) {
+		document.getElementById(CTA_WRAPPER_ID)?.remove();
 		debugLog(
 			"legacy_footwear_init_skipped_sdk_enabled",
 			{ storeId: store.id, themeName: String(window.LS?.theme?.name || "").trim() || null },
 			"F0",
 		);
+		return;
+	}
+	if (isCategoryExcluded(readStorefrontCategoryTokensFromDom(), config?.excluded_collections || [])) {
+		document.getElementById(CTA_WRAPPER_ID)?.remove();
+		debugLog("legacy_footwear_init_excluded_category", { storeId: store.id, productHandle: product.handle }, "F0");
 		return;
 	}
 	attachMessageBridge();

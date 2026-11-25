@@ -1,9 +1,17 @@
 import type { NubeSDK, ProductDetails } from "@tiendanube/nube-sdk-types";
-import { isCategoryExcluded, mergeCategoryTokens } from "./categoryExclusion";
+import {
+	isCategoryExcluded,
+	mergeCategoryTokens,
+	tokensFromCategoryEntry,
+} from "./categoryExclusion";
 import { getStorefrontAppBaseUrl } from "./omafitAppBaseUrl";
-import { normalizeChartHandle, shouldUseFootwearWidget } from "./widgetFootwearRouting";
-import { getStorefrontFontFamily, sanitizeFontFamilyForCss } from "./storeFont";
 import { getOrCreateShopperDeviceId } from "./shopperDeviceId";
+import { getStorefrontFontFamily, sanitizeFontFamilyForCss } from "./storeFont";
+import { readStorefrontCategoryTokensFromDom } from "./storefrontCategoryDom";
+import {
+	normalizeChartHandle,
+	shouldUseFootwearWidget,
+} from "./widgetFootwearRouting";
 
 export type StorefrontConfig = {
 	link_text: string;
@@ -54,15 +62,17 @@ export function getOmafitAppBaseUrl(): string {
 
 export function getStorefrontThemeName(): string {
 	if (typeof window === "undefined") return "";
-	const themeName = (window as Window & { LS?: { theme?: { name?: string } } }).LS?.theme
-		?.name;
+	const themeName = (window as Window & { LS?: { theme?: { name?: string } } })
+		.LS?.theme?.name;
 	return String(themeName || "").trim();
 }
 
 export function isPatagoniaStorefrontTheme(theme?: string): boolean {
-	return String(theme ?? getStorefrontThemeName())
-		.trim()
-		.toLowerCase() === "patagonia";
+	return (
+		String(theme ?? getStorefrontThemeName())
+			.trim()
+			.toLowerCase() === "patagonia"
+	);
 }
 
 /** SDK quando a API confirma storefront_sdk_enabled (todos os temas com slots de PDP). */
@@ -114,7 +124,9 @@ export function resolveCollectionHandleFromNube(
 	const normalizedProduct = normalizeChartHandle(productHandle);
 	if (!normalizedProduct || !footwearHandles.length) return "";
 	const footwearSet = new Set(
-		footwearHandles.map((handle) => normalizeChartHandle(handle)).filter(Boolean),
+		footwearHandles
+			.map((handle) => normalizeChartHandle(handle))
+			.filter(Boolean),
 	);
 	return footwearSet.has(normalizedProduct) ? normalizedProduct : "";
 }
@@ -125,7 +137,10 @@ export function getCurrentProduct(nube: NubeSDK): ProductDetails | null {
 	return page.data.product;
 }
 
-export function getProductHandle(nube: NubeSDK, product: ProductDetails): string {
+export function getProductHandle(
+	nube: NubeSDK,
+	product: ProductDetails,
+): string {
 	const language = nube.getState().store.language;
 	return (
 		product.handle?.[language] ||
@@ -138,9 +153,15 @@ export function getProductHandle(nube: NubeSDK, product: ProductDetails): string
 
 export { isCategoryExcluded };
 
-export function getProductCategoryTokens(product: ProductDetails | null): string[] {
+export function getProductCategoryTokens(
+	product: ProductDetails | null,
+): string[] {
 	if (!product) return [];
-	return (product.categories || []).map((categoryId) => String(categoryId));
+	return mergeCategoryTokens(
+		(product.categories || []).flatMap((entry) =>
+			tokensFromCategoryEntry(entry),
+		),
+	);
 }
 
 export function buildStorefrontProductCategoriesEndpoint(
@@ -160,14 +181,19 @@ export async function fetchProductCategoryTokens(
 ): Promise<string[]> {
 	if (!storeId || !productHandle) return [];
 	try {
-		const response = await fetch(buildStorefrontProductCategoriesEndpoint(storeId, productHandle));
+		const response = await fetch(
+			buildStorefrontProductCategoriesEndpoint(storeId, productHandle),
+		);
 		if (!response.ok) return [];
 		const data = (await response.json()) as {
 			category_tokens?: string[];
 			category_ids?: string[];
 			category_handles?: string[];
 		};
-		if (Array.isArray(data.category_tokens) && data.category_tokens.length > 0) {
+		if (
+			Array.isArray(data.category_tokens) &&
+			data.category_tokens.length > 0
+		) {
 			return data.category_tokens.map((token) => String(token)).filter(Boolean);
 		}
 		return mergeCategoryTokens(data.category_ids, data.category_handles);
@@ -186,20 +212,33 @@ export async function shouldHideProductForConfig(
 	if (!product) return false;
 	const tokens = mergeCategoryTokens(
 		getProductCategoryTokens(product),
+		readStorefrontCategoryTokensFromDom(),
 		await fetchProductCategoryTokens(storeId, productHandle),
 	);
 	return isCategoryExcluded(tokens, config.excluded_collections);
 }
 
-export function shouldHideForProduct(product: ProductDetails | null, config: StorefrontConfig) {
+export function shouldHideForProduct(
+	product: ProductDetails | null,
+	config: StorefrontConfig,
+) {
 	if (config.widget_enabled === false) return true;
 	if (!product) return false;
-	const categoryIds = (product.categories || []).map((categoryId) => String(categoryId));
+	const categoryIds = mergeCategoryTokens(
+		getProductCategoryTokens(product),
+		readStorefrontCategoryTokensFromDom(),
+	);
 	return isCategoryExcluded(categoryIds, config.excluded_collections);
 }
 
-export function isProductExcluded(product: ProductDetails, config: StorefrontConfig) {
-	const categoryIds = (product.categories || []).map((categoryId) => String(categoryId));
+export function isProductExcluded(
+	product: ProductDetails,
+	config: StorefrontConfig,
+) {
+	const categoryIds = mergeCategoryTokens(
+		getProductCategoryTokens(product),
+		readStorefrontCategoryTokensFromDom(),
+	);
 	return isCategoryExcluded(categoryIds, config.excluded_collections);
 }
 
@@ -211,7 +250,11 @@ export function resolveWidgetBaseUrl(
 ) {
 	try {
 		const resolved = new URL(baseUrl);
-		resolved.pathname = shouldUseFootwearWidget(collectionHandle, productHandle, footwearHandles)
+		resolved.pathname = shouldUseFootwearWidget(
+			collectionHandle,
+			productHandle,
+			footwearHandles,
+		)
 			? "/widget-footwear.html"
 			: "/widget.html";
 		return resolved.toString();
@@ -254,7 +297,10 @@ function variantSizeCandidates(variant: Record<string, unknown>): string[] {
 	return values;
 }
 
-export function findVariantByRecommendedSize(product: ProductDetails, recommendedSize: string) {
+export function findVariantByRecommendedSize(
+	product: ProductDetails,
+	recommendedSize: string,
+) {
 	const desired = normalizeSizeText(recommendedSize);
 	if (!desired) return null;
 	const variants = Array.isArray(product.variants) ? product.variants : [];
@@ -277,7 +323,10 @@ function resolveLocalizedText(
 	return value[language] || value.pt || value.es || value.en || "";
 }
 
-export function resolveProductImageUrls(product: ProductDetails, language: string) {
+export function resolveProductImageUrls(
+	product: ProductDetails,
+	language: string,
+) {
 	const rawImages = Array.isArray(
 		(product as ProductDetails & { images?: Array<{ src?: unknown }> }).images,
 	)
@@ -289,7 +338,13 @@ export function resolveProductImageUrls(product: ProductDetails, language: strin
 			if (typeof source === "string") return source;
 			if (source && typeof source === "object") {
 				const localized = source as Record<string, string | undefined>;
-				return localized[language] || localized.pt || localized.es || localized.en || "";
+				return (
+					localized[language] ||
+					localized.pt ||
+					localized.es ||
+					localized.en ||
+					""
+				);
 			}
 			return "";
 		})
@@ -368,7 +423,10 @@ export function buildWidgetUrl(
 		widgetUrl.searchParams.set("store_font", storeFont);
 		widgetUrl.searchParams.set("fontFamily", storeFont);
 	}
-	if (config.tryon_layout_background_image && widgetUrl.toString().length < 2400) {
+	if (
+		config.tryon_layout_background_image &&
+		widgetUrl.toString().length < 2400
+	) {
 		widgetUrl.searchParams.set(
 			"tryon_layout_background_image",
 			String(config.tryon_layout_background_image),
@@ -402,7 +460,9 @@ export async function loadStorefrontBootstrap(
 		if (!response.ok) throw new Error("request failed");
 		const data = (await response.json()) as StorefrontApiResponse;
 		const footwearHandles = Array.isArray(data.footwear_collection_handles)
-			? data.footwear_collection_handles.map((handle) => String(handle || "").trim()).filter(Boolean)
+			? data.footwear_collection_handles
+					.map((handle) => String(handle || "").trim())
+					.filter(Boolean)
 			: [];
 		return {
 			ready: true,
@@ -410,7 +470,9 @@ export async function loadStorefrontBootstrap(
 				...DEFAULT_CONFIG,
 				...(data.config || {}),
 			},
-			widgetUrl: String(data.widgetUrl || `${getOmafitAppBaseUrl()}/widget.html`),
+			widgetUrl: String(
+				data.widgetUrl || `${getOmafitAppBaseUrl()}/widget.html`,
+			),
 			publicId: String(data.publicId || ""),
 			footwearCollectionHandles: footwearHandles,
 			billingPlan: String(data.billing_plan || ""),
