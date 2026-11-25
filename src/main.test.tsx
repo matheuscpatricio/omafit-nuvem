@@ -122,7 +122,15 @@ describe("App", () => {
 			}),
 		);
 
+		const pageWindow = {
+			setTimeout: () => 0,
+		} as unknown as Window & { __omafitSdkActive?: boolean };
+		vi.stubGlobal("window", pageWindow);
+
 		await triggerPageLoaded();
+		await vi.waitFor(() => {
+			expect(pageWindow.__omafitSdkActive).toBe(false);
+		});
 
 		expect(mockNube.render).not.toHaveBeenCalled();
 		expect(mockNube.clearSlot).toHaveBeenCalledWith(
@@ -152,6 +160,9 @@ describe("App", () => {
 		);
 
 		await triggerPageLoaded();
+		await vi.waitFor(() => {
+			expect(mockNube.clearSlot).toHaveBeenCalled();
+		});
 
 		expect(mockNube.render).not.toHaveBeenCalled();
 	});
@@ -177,6 +188,9 @@ describe("App", () => {
 		const { mockNube, triggerPageLoaded } = createMockNube(fetchMock);
 
 		await triggerPageLoaded();
+		await vi.waitFor(() => {
+			expect(mockNube.render).toHaveBeenCalled();
+		});
 
 		expect(fetchMock).toHaveBeenCalled();
 		const configUrl = String(fetchMock.mock.calls[0]?.[0] || "");

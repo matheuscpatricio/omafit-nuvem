@@ -317,7 +317,6 @@ async function renderStorefrontWidget(
 export function App(nube: NubeSDK) {
 	let bootToken = 0;
 	let themeRetryCount = 0;
-	markStorefrontSdkActive(true);
 	installStorefrontCartGuards();
 	registerStorefrontSdkCartAdd((payload) =>
 		performStorefrontCartAdd(nube, payload),
@@ -328,6 +327,7 @@ export function App(nube: NubeSDK) {
 		const token = ++bootToken;
 		const state = nube.getState();
 		if (state.location.page.type !== "product") {
+			markStorefrontSdkActive(false);
 			clearProductSlots(nube);
 			themeRetryCount = 0;
 			return;
@@ -341,6 +341,7 @@ export function App(nube: NubeSDK) {
 		);
 		if (token !== bootToken) return;
 		if (!shouldUseStorefrontSdk(bootstrap)) {
+			markStorefrontSdkActive(false);
 			clearProductSlots(nube);
 			if (
 				!themeName &&
@@ -356,6 +357,7 @@ export function App(nube: NubeSDK) {
 			return;
 		}
 		themeRetryCount = 0;
+		markStorefrontSdkActive(true);
 		removeLegacyStorefrontCta();
 		await renderStorefrontWidget(nube, bootstrap.config, bootstrap);
 	};
